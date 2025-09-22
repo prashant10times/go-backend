@@ -1,0 +1,30 @@
+# Binaries
+/bin/
+/build/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go cache / vendor
+/pkg/
+/vendor/
+
+# Environment files
+.env
+*.local
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Air (live reload)
+.air.toml
+tmp/
