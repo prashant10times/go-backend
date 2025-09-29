@@ -1315,14 +1315,51 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 		return []interface{}{}
 	}
 
+	// Debug: Log the data type and structure
+	log.Printf("DEBUG: parseClickHouseGroupArrayInterface received data type: %T", data)
+	log.Printf("DEBUG: parseClickHouseGroupArrayInterface received data: %+v", data)
+
 	switch v := data.(type) {
 	case []map[string]interface{}:
-		// Handle ClickHouse groupArray format: [map[:[value count] [value count]]]
+		// Handle ClickHouse groupArray format where tuples are converted to maps
 		var result []interface{}
 
 		for i, item := range v {
-			// Look for empty string key which contains the month data
-			if monthData, exists := item[""]; exists {
+			log.Printf("DEBUG: Processing map item %d: %+v", i, item)
+
+			// Check if this is a tuple converted to map format (field1Name, field1Count, field2Data)
+			if field1Name, hasField1Name := item["field1Name"]; hasField1Name {
+				field1Count := s.parseIntFromInterface(item["field1Count"])
+				field2Data := item["field2Data"]
+
+				log.Printf("DEBUG: Found tuple-as-map format - field1Name: %v, field1Count: %d, field2Data: %+v", field1Name, field1Count, field2Data)
+
+				// The issue is that field1Name is coming as "City_0" instead of the actual city name
+				// This suggests the ClickHouse driver is not properly parsing the tuple
+				// Let's try to extract the actual field name from the map keys
+				var actualFieldName string
+				for key, value := range item {
+					if key != "field1Name" && key != "field1Count" && key != "field2Data" && key != "" {
+						actualFieldName = fmt.Sprintf("%v", value)
+						break
+					}
+				}
+
+				if actualFieldName == "" {
+					actualFieldName = fmt.Sprintf("%v", field1Name)
+				}
+
+				log.Printf("DEBUG: Using actual field name: %s", actualFieldName)
+
+				// Parse the nested field data
+				parsedField2Data := s.parseNestedFieldDataFromInterface(field2Data)
+
+				result = append(result, map[string]interface{}{
+					"field1Name":  actualFieldName,
+					"field1Count": field1Count,
+					"field2Data":  parsedField2Data,
+				})
+			} else if monthData, exists := item[""]; exists {
 				// Parse the month data directly from the string format
 				parsedMonthData := s.parseMonthDataFromString(monthData)
 
@@ -1339,10 +1376,33 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 				// For this case, we need to extract city name from somewhere else
 				// The city name is missing from this structure, so we'll use a placeholder
 				result = append(result, map[string]interface{}{
-					"field1Name":  fmt.Sprintf("City_%d", i), // Placeholder since city name is not in this structure
-					"field1Count": totalCount,                // Calculate from month data
+					"field1Name":  fmt.Sprintf("City_%d", i),
+					"field1Count": totalCount,
 					"field2Data":  parsedMonthData,
 				})
+			} else {
+				// Try to extract field name and count from the map keys
+				var fieldName string
+				var fieldCount int
+
+				for key, value := range item {
+					if key == "" {
+						continue // Skip empty key
+					}
+					if strings.HasSuffix(key, "Count") {
+						fieldCount = s.parseIntFromInterface(value)
+					} else if !strings.HasSuffix(key, "Data") {
+						fieldName = fmt.Sprintf("%v", value)
+					}
+				}
+
+				if fieldName != "" {
+					result = append(result, map[string]interface{}{
+						"field1Name":  fieldName,
+						"field1Count": fieldCount,
+						"field2Data":  []interface{}{},
+					})
+				}
 			}
 		}
 		return result
@@ -1352,17 +1412,19 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 		var result []interface{}
 
 		for _, item := range v {
-			// Unwrap nested arrays to get to the actual tuple
-			unwrapped := s.unwrapNestedArrays(item)
-
-			if tupleArray, ok := unwrapped.([]interface{}); ok {
+			log.Printf("DEBUG: Processing interface item: %+v (type: %T)", item, item)
+			// Handle tuple format directly: ('Online',8935,['2025-10|4013','2025-11|1956',...])
+			if tupleArray, ok := item.([]interface{}); ok {
+				log.Printf("DEBUG: Found tuple array: %+v", tupleArray)
 				// Handle ClickHouse tuple format: [field1, field1Count, field2Data]
 				if len(tupleArray) >= 3 {
 					field1Name := fmt.Sprintf("%v", tupleArray[0])
 					field1Count := s.parseIntFromInterface(tupleArray[1])
 					field2Data := tupleArray[2]
 
-					// Parse the nested field data which may be in format map[:[value count] [value count]]
+					log.Printf("DEBUG: Parsed tuple - field1Name: %s, field1Count: %d, field2Data: %+v", field1Name, field1Count, field2Data)
+
+					// Parse the nested field data which may be in format ['value|count', 'value|count', ...]
 					parsedField2Data := s.parseNestedFieldDataFromInterface(field2Data)
 
 					result = append(result, map[string]interface{}{
@@ -1370,11 +1432,54 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 						"field1Count": field1Count,
 						"field2Data":  parsedField2Data,
 					})
+				} else if len(tupleArray) >= 2 {
+					// Handle simpler tuple format: [field1, field1Count]
+					field1Name := fmt.Sprintf("%v", tupleArray[0])
+					field1Count := s.parseIntFromInterface(tupleArray[1])
+
+					result = append(result, map[string]interface{}{
+						"field1Name":  field1Name,
+						"field1Count": field1Count,
+						"field2Data":  []interface{}{},
+					})
 				} else {
 					result = append(result, tupleArray)
 				}
 			} else {
-				result = append(result, item)
+				// Unwrap nested arrays to get to the actual tuple
+				unwrapped := s.unwrapNestedArrays(item)
+
+				if tupleArray, ok := unwrapped.([]interface{}); ok {
+					// Handle ClickHouse tuple format: [field1, field1Count, field2Data]
+					if len(tupleArray) >= 3 {
+						field1Name := fmt.Sprintf("%v", tupleArray[0])
+						field1Count := s.parseIntFromInterface(tupleArray[1])
+						field2Data := tupleArray[2]
+
+						// Parse the nested field data which may be in format ['value|count', 'value|count', ...]
+						parsedField2Data := s.parseNestedFieldDataFromInterface(field2Data)
+
+						result = append(result, map[string]interface{}{
+							"field1Name":  field1Name,
+							"field1Count": field1Count,
+							"field2Data":  parsedField2Data,
+						})
+					} else if len(tupleArray) >= 2 {
+						// Handle simpler tuple format: [field1, field1Count]
+						field1Name := fmt.Sprintf("%v", tupleArray[0])
+						field1Count := s.parseIntFromInterface(tupleArray[1])
+
+						result = append(result, map[string]interface{}{
+							"field1Name":  field1Name,
+							"field1Count": field1Count,
+							"field2Data":  []interface{}{},
+						})
+					} else {
+						result = append(result, tupleArray)
+					}
+				} else {
+					result = append(result, item)
+				}
 			}
 		}
 		return result
@@ -1385,11 +1490,30 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 	case []string:
 		var result []interface{}
 		for _, str := range v {
-			parts := strings.Split(str, "|")
-			if len(parts) >= 2 {
-				name := parts[0]
-				if count, err := strconv.Atoi(parts[1]); err == nil {
-					result = append(result, []interface{}{name, count})
+			// Handle the new format: "cityName|||count|||monthData"
+			if strings.Contains(str, "|||") {
+				parts := strings.Split(str, "|||")
+				if len(parts) >= 3 {
+					cityName := parts[0]
+					if count, err := strconv.Atoi(parts[1]); err == nil {
+						monthData := parts[2]
+						parsedMonthData := s.parseMonthDataFromString(monthData)
+
+						result = append(result, map[string]interface{}{
+							"field1Name":  cityName,
+							"field1Count": count,
+							"field2Data":  parsedMonthData,
+						})
+					}
+				}
+			} else {
+				// Handle the old format: "name|count"
+				parts := strings.Split(str, "|")
+				if len(parts) >= 2 {
+					name := parts[0]
+					if count, err := strconv.Atoi(parts[1]); err == nil {
+						result = append(result, []interface{}{name, count})
+					}
 				}
 			}
 		}
@@ -1509,9 +1633,27 @@ func (s *SearchEventService) parseNestedFieldDataFromInterface(data interface{})
 		}
 	}
 
-	// Handle direct array format
+	// Handle direct array format - this is the main case for tuple data
 	if dataArray, ok := data.([]interface{}); ok {
 		return s.parseNestedFieldArrayFromInterface(dataArray)
+	}
+
+	// Handle string array format
+	if stringArray, ok := data.([]string); ok {
+		var result []interface{}
+		for _, str := range stringArray {
+			parts := strings.Split(str, "|")
+			if len(parts) >= 2 {
+				fieldValue := strings.TrimSpace(parts[0])
+				if fieldCount, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+					result = append(result, map[string]interface{}{
+						"value": fieldValue,
+						"count": fieldCount,
+					})
+				}
+			}
+		}
+		return result
 	}
 
 	return []interface{}{}
@@ -1527,11 +1669,17 @@ func (s *SearchEventService) parseNestedFieldArrayFromInterface(data interface{}
 	if dataArray, ok := data.([]interface{}); ok {
 		for _, item := range dataArray {
 			if itemStr, ok := item.(string); ok {
-				// Parse format like "value count"
-				parts := strings.Fields(itemStr)
+				// Parse format like "value|count" (pipe-separated) or "value count" (space-separated)
+				var parts []string
+				if strings.Contains(itemStr, "|") {
+					parts = strings.Split(itemStr, "|")
+				} else {
+					parts = strings.Fields(itemStr)
+				}
+
 				if len(parts) >= 2 {
-					fieldValue := parts[0]
-					if fieldCount, err := strconv.Atoi(parts[1]); err == nil {
+					fieldValue := strings.TrimSpace(parts[0])
+					if fieldCount, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
 						result = append(result, map[string]interface{}{
 							"value": fieldValue,
 							"count": fieldCount,
@@ -1542,10 +1690,16 @@ func (s *SearchEventService) parseNestedFieldArrayFromInterface(data interface{}
 		}
 	} else if dataStr, ok := data.(string); ok {
 		// Handle single string format
-		parts := strings.Fields(dataStr)
+		var parts []string
+		if strings.Contains(dataStr, "|") {
+			parts = strings.Split(dataStr, "|")
+		} else {
+			parts = strings.Fields(dataStr)
+		}
+
 		if len(parts) >= 2 {
-			fieldValue := parts[0]
-			if fieldCount, err := strconv.Atoi(parts[1]); err == nil {
+			fieldValue := strings.TrimSpace(parts[0])
+			if fieldCount, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
 				result = append(result, map[string]interface{}{
 					"value": fieldValue,
 					"count": fieldCount,
@@ -1563,26 +1717,82 @@ func (s *SearchEventService) parseClickHouseStringArray(str string) []interface{
 	if strings.Contains(str, ",") {
 		pairs := strings.Split(str, ",")
 		for _, pair := range pairs {
-			parts := strings.Split(strings.TrimSpace(pair), "|")
-			if len(parts) >= 2 {
-				name := strings.TrimSpace(parts[0])
-				if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-					result = append(result, []interface{}{name, count})
+			trimmedPair := strings.TrimSpace(pair)
+			// Handle the new format: "cityName|||count|||monthData"
+			if strings.Contains(trimmedPair, "|||") {
+				parts := strings.Split(trimmedPair, "|||")
+				if len(parts) >= 3 {
+					cityName := strings.TrimSpace(parts[0])
+					if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+						monthData := strings.TrimSpace(parts[2])
+						parsedMonthData := s.parseMonthDataFromString(monthData)
+
+						result = append(result, map[string]interface{}{
+							"field1Name":  cityName,
+							"field1Count": count,
+							"field2Data":  parsedMonthData,
+						})
+					}
+				}
+			} else {
+				// Handle the old format: "name|count"
+				parts := strings.Split(trimmedPair, "|")
+				if len(parts) >= 2 {
+					name := strings.TrimSpace(parts[0])
+					if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+						result = append(result, []interface{}{name, count})
+					}
 				}
 			}
 		}
 	} else if strings.Contains(str, " ") {
 		pairs := strings.Fields(str)
 		for _, pair := range pairs {
-			parts := strings.Split(pair, "|")
-			if len(parts) >= 2 {
-				name := strings.TrimSpace(parts[0])
-				if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-					result = append(result, []interface{}{name, count})
+			// Handle the new format: "cityName|||count|||monthData"
+			if strings.Contains(pair, "|||") {
+				parts := strings.Split(pair, "|||")
+				if len(parts) >= 3 {
+					cityName := strings.TrimSpace(parts[0])
+					if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+						monthData := strings.TrimSpace(parts[2])
+						parsedMonthData := s.parseMonthDataFromString(monthData)
+
+						result = append(result, map[string]interface{}{
+							"field1Name":  cityName,
+							"field1Count": count,
+							"field2Data":  parsedMonthData,
+						})
+					}
+				}
+			} else {
+				// Handle the old format: "name|count"
+				parts := strings.Split(pair, "|")
+				if len(parts) >= 2 {
+					name := strings.TrimSpace(parts[0])
+					if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+						result = append(result, []interface{}{name, count})
+					}
 				}
 			}
 		}
+	} else if strings.Contains(str, "|||") {
+		// Handle the new format: "cityName|||count|||monthData"
+		parts := strings.Split(str, "|||")
+		if len(parts) >= 3 {
+			cityName := strings.TrimSpace(parts[0])
+			if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+				monthData := strings.TrimSpace(parts[2])
+				parsedMonthData := s.parseMonthDataFromString(monthData)
+
+				result = append(result, map[string]interface{}{
+					"field1Name":  cityName,
+					"field1Count": count,
+					"field2Data":  parsedMonthData,
+				})
+			}
+		}
 	} else if strings.Contains(str, "|") {
+		// Handle the old format: "name|count"
 		parts := strings.Split(str, "|")
 		if len(parts) >= 2 {
 			name := strings.TrimSpace(parts[0])

@@ -1301,10 +1301,18 @@ func (s *SharedFunctionService) processLevel2Data(item map[string]interface{}, r
 
 	// Parse the nested data array
 	if dataSlice, ok := nestedDataArray.([]interface{}); ok {
-
 		for _, item := range dataSlice {
+			// Handle the new parsed format from parseClickHouseGroupArrayInterface
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				itemName, _ := itemMap["field1Name"].(string)
+				itemCount := s.parseIntFromInterface(itemMap["field1Count"])
 
-			if itemArray, ok := item.([]interface{}); ok && len(itemArray) >= 2 {
+				if itemName != "" {
+					itemData := orderedmap.NewOrderedMap()
+					itemData.Set(fmt.Sprintf("%sCount", level1Field), itemCount)
+					level1Map.Set(itemName, itemData)
+				}
+			} else if itemArray, ok := item.([]interface{}); ok && len(itemArray) >= 2 {
 				itemName := fmt.Sprintf("%v", itemArray[0])
 				itemCount := s.parseIntFromInterface(itemArray[1])
 				itemData := orderedmap.NewOrderedMap()
@@ -1848,7 +1856,7 @@ func (s *SharedFunctionService) containsCTE(cteClauses []string, cteName string)
 // 								SELECT
 // 									%s,
 // 					sum(%sCount) AS %sCount,
-// 					groupArray(tuple(%s, %sCount, %sData)) AS %sData
+// 					groupArray(arrayStringConcat(array(%s, toString(%sCount), arrayStringConcat(%sData, ' ')), '|||')) AS %sData
 // 				FROM (
 // 								SELECT
 // 									%s,
@@ -1979,7 +1987,7 @@ func (s *SharedFunctionService) buildHierarchyStructure(parentField string, nest
 				SELECT
 					%s,
 					sum(%sCount) AS %sCount,
-					groupArray(tuple(%s, %sCount, %sData)) AS %sData
+					groupArray(arrayStringConcat(array(%s, toString(%sCount), arrayStringConcat(%sData, ' ')), '|||')) AS %sData
 				FROM top_level1_per_parent
 				GROUP BY %s
 				ORDER BY %sCount DESC
