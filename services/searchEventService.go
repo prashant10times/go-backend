@@ -632,8 +632,6 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		GROUP BY event_id
 	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
 
-	log.Printf("Related Data Query: %s", relatedDataQuery)
-
 	// Execute related data query
 	relatedDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), relatedDataQuery)
 	if err != nil {
@@ -882,8 +880,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		fieldsString, finalGroupByClause, finalGroupByClause, finalGroupByClause,
 		s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true))
 
-	log.Printf("Main Event Query: %s", eventDataQuery)
-
 	eventDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), eventDataQuery)
 	if err != nil {
 		log.Printf("ClickHouse query error: %v", err)
@@ -1010,8 +1006,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		GROUP BY event_id
 	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
 
-	log.Printf("Related Data Query: %s", relatedDataQuery)
-
 	relatedDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), relatedDataQuery)
 	if err != nil {
 		log.Printf("Related data query error: %v", err)
@@ -1089,14 +1083,11 @@ func (s *SearchEventService) buildGroupByClause(fields []string) string {
 
 // 	nestedQuery, err := s.sharedFunctionService.HandleNestedAggregation(filterFields, pagination)
 // 	if err != nil {
-// 		log.Printf("Error building nested aggregation query: %v", err)
 // 		return &AggregationResult{
 // 			StatusCode: 500,
 // 			Error:      err,
 // 		}, err
 // 	}
-
-// 	log.Printf("Nested Aggregation Query: %s", nestedQuery)
 
 // 	startTime := time.Now()
 // 	rows, err := s.clickhouseService.ExecuteQuery(ctx, nestedQuery)
@@ -1185,7 +1176,6 @@ func (s *SearchEventService) buildGroupByClause(fields []string) string {
 // 			aggregationFields = append(aggregationFields, strings.TrimSpace(field))
 // 		}
 // 	}
-// 	log.Printf("DEBUG: Extracted aggregation fields: %v", aggregationFields)
 
 // 	transformedData, err := s.sharedFunctionService.transformAggregationDataToNested(nestedData, aggregationFields)
 // 	if err != nil {
@@ -1207,7 +1197,6 @@ func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields mo
 
 	nestedQuery, err := s.sharedFunctionService.HandleNestedAggregation(filterFields, pagination)
 	if err != nil {
-		log.Printf("Error building nested aggregation query: %v", err)
 		return &AggregationResult{StatusCode: 500, Error: err}, err
 	}
 
@@ -1266,18 +1255,6 @@ func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields mo
 		nestedData = append(nestedData, rowData)
 	}
 
-	// Log the raw data from ClickHouse
-	log.Printf("Raw data from ClickHouse (%d rows):", len(nestedData))
-	for i, row := range nestedData {
-		log.Printf("Row %d: %+v", i+1, row)
-	}
-
-	// Debug: Log the parsed cityData specifically
-	for i, row := range nestedData {
-		if cityData, exists := row["cityData"]; exists {
-			log.Printf("Row %d cityData type: %T, value: %+v", i+1, cityData, cityData)
-		}
-	}
 
 	aggregationFields := s.extractAggregationFields(filterFields.ToAggregate)
 	log.Printf("Aggregation fields: %v", aggregationFields)
@@ -1287,9 +1264,6 @@ func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields mo
 		log.Printf("Error transforming aggregation data: %v", err)
 		return &AggregationResult{StatusCode: 500, Error: err}, err
 	}
-
-	// Log the final transformed data
-	log.Printf("Final transformed data: %+v", transformedData)
 
 	return &AggregationResult{StatusCode: 200, Response: transformedData}, nil
 }
@@ -1310,14 +1284,45 @@ func (s *SearchEventService) extractAggregationFields(toAggregate string) []stri
 	return result
 }
 
+func (s *SearchEventService) parseGenericEntry(entryString string, result *[]interface{}) {
+	// Parse format: "field1|||field1Count|||field2Data"
+	parts := strings.Split(entryString, "|||")
+	if len(parts) >= 3 {
+		fieldName := parts[0]
+		if fieldCount, err := strconv.Atoi(parts[1]); err == nil {
+			nestedData := parts[2]
+
+			// Parse the nested field data
+			var parsedNestedData []interface{}
+			nestedParts := strings.Fields(nestedData)
+			for _, nestedPart := range nestedParts {
+				if strings.Contains(nestedPart, "|") {
+					nestedPartsArray := strings.Split(nestedPart, "|")
+					if len(nestedPartsArray) >= 2 {
+						nestedName := nestedPartsArray[0]
+						if nestedCount, err := strconv.Atoi(nestedPartsArray[1]); err == nil {
+							parsedNestedData = append(parsedNestedData, map[string]interface{}{
+								"value": nestedName,
+								"count": nestedCount,
+							})
+						}
+					}
+				}
+			}
+
+			*result = append(*result, map[string]interface{}{
+				"field2Name":  fieldName,
+				"field2Count": fieldCount,
+				"field3Data":  parsedNestedData,
+			})
+		}
+	}
+}
+
 func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}) []interface{} {
 	if data == nil {
 		return []interface{}{}
 	}
-
-	// Debug: Log the data type and structure
-	log.Printf("DEBUG: parseClickHouseGroupArrayInterface received data type: %T", data)
-	log.Printf("DEBUG: parseClickHouseGroupArrayInterface received data: %+v", data)
 
 	switch v := data.(type) {
 	case []map[string]interface{}:
@@ -1325,14 +1330,11 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 		var result []interface{}
 
 		for i, item := range v {
-			log.Printf("DEBUG: Processing map item %d: %+v", i, item)
 
 			// Check if this is a tuple converted to map format (field1Name, field1Count, field2Data)
 			if field1Name, hasField1Name := item["field1Name"]; hasField1Name {
 				field1Count := s.parseIntFromInterface(item["field1Count"])
 				field2Data := item["field2Data"]
-
-				log.Printf("DEBUG: Found tuple-as-map format - field1Name: %v, field1Count: %d, field2Data: %+v", field1Name, field1Count, field2Data)
 
 				// The issue is that field1Name is coming as "City_0" instead of the actual city name
 				// This suggests the ClickHouse driver is not properly parsing the tuple
@@ -1349,8 +1351,6 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 					actualFieldName = fmt.Sprintf("%v", field1Name)
 				}
 
-				log.Printf("DEBUG: Using actual field name: %s", actualFieldName)
-
 				// Parse the nested field data
 				parsedField2Data := s.parseNestedFieldDataFromInterface(field2Data)
 
@@ -1361,7 +1361,7 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 				})
 			} else if monthData, exists := item[""]; exists {
 				// Parse the month data directly from the string format
-				parsedMonthData := s.parseMonthDataFromString(monthData)
+				parsedMonthData := s.parseNestedDataFromString(monthData)
 
 				// Calculate total count from month data
 				totalCount := 0
@@ -1412,20 +1412,17 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 		var result []interface{}
 
 		for _, item := range v {
-			log.Printf("DEBUG: Processing interface item: %+v (type: %T)", item, item)
 			// Handle tuple format directly: ('Online',8935,['2025-10|4013','2025-11|1956',...])
 			if tupleArray, ok := item.([]interface{}); ok {
-				log.Printf("DEBUG: Found tuple array: %+v", tupleArray)
 				// Handle ClickHouse tuple format: [field1, field1Count, field2Data]
 				if len(tupleArray) >= 3 {
 					field1Name := fmt.Sprintf("%v", tupleArray[0])
 					field1Count := s.parseIntFromInterface(tupleArray[1])
 					field2Data := tupleArray[2]
 
-					log.Printf("DEBUG: Parsed tuple - field1Name: %s, field1Count: %d, field2Data: %+v", field1Name, field1Count, field2Data)
-
-					// Parse the nested field data which may be in format ['value|count', 'value|count', ...]
-					parsedField2Data := s.parseNestedFieldDataFromInterface(field2Data)
+					// For 4-level data, use parseNestedDataFromString to handle the complex nested structure
+					field2DataStr := fmt.Sprintf("%v", field2Data)
+					parsedField2Data := s.parseNestedDataFromString(field2DataStr)
 
 					result = append(result, map[string]interface{}{
 						"field1Name":  field1Name,
@@ -1456,8 +1453,14 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 						field1Count := s.parseIntFromInterface(tupleArray[1])
 						field2Data := tupleArray[2]
 
-						// Parse the nested field data which may be in format ['value|count', 'value|count', ...]
-						parsedField2Data := s.parseNestedFieldDataFromInterface(field2Data)
+						// For 4-level data, use parseNestedDataFromString to handle the complex "|||||" format
+						var parsedField2Data []interface{}
+						if field2DataStr, ok := field2Data.(string); ok && strings.Contains(field2DataStr, "|||") {
+							parsedField2Data = s.parseNestedDataFromString(field2DataStr)
+						} else {
+							// Fallback to the original parsing for simpler formats
+							parsedField2Data = s.parseNestedFieldDataFromInterface(field2Data)
+						}
 
 						result = append(result, map[string]interface{}{
 							"field1Name":  field1Name,
@@ -1490,14 +1493,30 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 	case []string:
 		var result []interface{}
 		for _, str := range v {
-			// Handle the new format: "cityName|||count|||monthData"
-			if strings.Contains(str, "|||") {
+			// Handle the 4-level format: "cityName|||||cityCount|||||monthData"
+			if strings.Contains(str, "|||||") {
+				parts := strings.Split(str, "|||||")
+				if len(parts) >= 3 {
+					cityName := parts[0]
+					if count, err := strconv.Atoi(parts[1]); err == nil {
+						monthData := parts[2]
+						parsedMonthData := s.parseNestedDataFromString(monthData)
+
+						result = append(result, map[string]interface{}{
+							"field1Name":  cityName,
+							"field1Count": count,
+							"field2Data":  parsedMonthData,
+						})
+					}
+				}
+			} else if strings.Contains(str, "|||") {
+				// Handle the 3-level format: "cityName|||count|||monthData"
 				parts := strings.Split(str, "|||")
 				if len(parts) >= 3 {
 					cityName := parts[0]
 					if count, err := strconv.Atoi(parts[1]); err == nil {
 						monthData := parts[2]
-						parsedMonthData := s.parseMonthDataFromString(monthData)
+						parsedMonthData := s.parseNestedDataFromString(monthData)
 
 						result = append(result, map[string]interface{}{
 							"field1Name":  cityName,
@@ -1527,24 +1546,54 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 	}
 }
 
-func (s *SearchEventService) parseMonthDataFromString(data interface{}) []interface{} {
+func (s *SearchEventService) parseNestedDataFromString(data interface{}) []interface{} {
 	var result []interface{}
 
-	// Handle different data types that might contain month data
+	// Handle different data types that might contain nested field data
 	switch v := data.(type) {
 	case string:
-		// Parse format like "2025-10|4013 2025-11|1956 2025-12|1288 2025-09|1138"
-		parts := strings.Fields(v)
-		for _, part := range parts {
-			if strings.Contains(part, "|") {
-				monthParts := strings.Split(part, "|")
-				if len(monthParts) >= 2 {
-					monthName := monthParts[0]
-					if count, err := strconv.Atoi(monthParts[1]); err == nil {
-						result = append(result, map[string]interface{}{
-							"value": monthName,
-							"count": count,
-						})
+		if strings.Contains(v, "|||") {
+			// Parse entries separated by spaces, each entry in format: "field1|||count1|||field2Data"
+			parts := strings.Fields(v)
+			var currentEntry strings.Builder
+
+			for i, part := range parts {
+				if strings.Contains(part, "|||") && strings.Count(part, "|||") >= 2 {
+					// This is the start of a new entry
+					if currentEntry.Len() > 0 {
+						// Process the previous entry
+						entryStr := strings.TrimSpace(currentEntry.String())
+						s.parseGenericEntry(entryStr, &result)
+						currentEntry.Reset()
+					}
+					currentEntry.WriteString(part)
+				} else {
+					// This is part of the current entry's nested data
+					if currentEntry.Len() > 0 {
+						currentEntry.WriteString(" " + part)
+					}
+				}
+
+				// If this is the last part, process the current entry
+				if i == len(parts)-1 && currentEntry.Len() > 0 {
+					entryStr := strings.TrimSpace(currentEntry.String())
+					s.parseGenericEntry(entryStr, &result)
+				}
+			}
+		} else {
+			// Parse 3-level format like "field1|count1 field2|count2 field3|count3"
+			parts := strings.Fields(v)
+			for _, part := range parts {
+				if strings.Contains(part, "|") {
+					fieldParts := strings.Split(part, "|")
+					if len(fieldParts) >= 2 {
+						fieldName := fieldParts[0]
+						if count, err := strconv.Atoi(fieldParts[1]); err == nil {
+							result = append(result, map[string]interface{}{
+								"value": fieldName,
+								"count": count,
+							})
+						}
 					}
 				}
 			}
@@ -1553,12 +1602,12 @@ func (s *SearchEventService) parseMonthDataFromString(data interface{}) []interf
 		// Handle []string format - this is what ClickHouse is actually sending
 		for _, itemStr := range v {
 			if strings.Contains(itemStr, "|") {
-				monthParts := strings.Split(itemStr, "|")
-				if len(monthParts) >= 2 {
-					monthName := monthParts[0]
-					if count, err := strconv.Atoi(monthParts[1]); err == nil {
+				fieldParts := strings.Split(itemStr, "|")
+				if len(fieldParts) >= 2 {
+					fieldName := fieldParts[0]
+					if count, err := strconv.Atoi(fieldParts[1]); err == nil {
 						result = append(result, map[string]interface{}{
-							"value": monthName,
+							"value": fieldName,
 							"count": count,
 						})
 					}
@@ -1570,12 +1619,12 @@ func (s *SearchEventService) parseMonthDataFromString(data interface{}) []interf
 		for _, item := range v {
 			if itemStr, ok := item.(string); ok {
 				if strings.Contains(itemStr, "|") {
-					monthParts := strings.Split(itemStr, "|")
-					if len(monthParts) >= 2 {
-						monthName := monthParts[0]
-						if count, err := strconv.Atoi(monthParts[1]); err == nil {
+					fieldParts := strings.Split(itemStr, "|")
+					if len(fieldParts) >= 2 {
+						fieldName := fieldParts[0]
+						if count, err := strconv.Atoi(fieldParts[1]); err == nil {
 							result = append(result, map[string]interface{}{
-								"value": monthName,
+								"value": fieldName,
 								"count": count,
 							})
 						}
@@ -1718,19 +1767,35 @@ func (s *SearchEventService) parseClickHouseStringArray(str string) []interface{
 		pairs := strings.Split(str, ",")
 		for _, pair := range pairs {
 			trimmedPair := strings.TrimSpace(pair)
-			// Handle the new format: "cityName|||count|||monthData"
-			if strings.Contains(trimmedPair, "|||") {
-				parts := strings.Split(trimmedPair, "|||")
+			// Handle the 4-level format: "field1Name|||||field1Count|||||field2Data"
+			if strings.Contains(trimmedPair, "|||||") {
+				parts := strings.Split(trimmedPair, "|||||")
 				if len(parts) >= 3 {
-					cityName := strings.TrimSpace(parts[0])
+					field1Name := strings.TrimSpace(parts[0])
 					if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-						monthData := strings.TrimSpace(parts[2])
-						parsedMonthData := s.parseMonthDataFromString(monthData)
+						field2Data := strings.TrimSpace(parts[2])
+						parsedField2Data := s.parseNestedDataFromString(field2Data)
 
 						result = append(result, map[string]interface{}{
-							"field1Name":  cityName,
+							"field1Name":  field1Name,
 							"field1Count": count,
-							"field2Data":  parsedMonthData,
+							"field2Data":  parsedField2Data,
+						})
+					}
+				}
+			} else if strings.Contains(trimmedPair, "|||") {
+				// Handle the 3-level format: "field1Name|||count|||field2Data"
+				parts := strings.Split(trimmedPair, "|||")
+				if len(parts) >= 3 {
+					field1Name := strings.TrimSpace(parts[0])
+					if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+						field2Data := strings.TrimSpace(parts[2])
+						parsedField2Data := s.parseNestedDataFromString(field2Data)
+
+						result = append(result, map[string]interface{}{
+							"field1Name":  field1Name,
+							"field1Count": count,
+							"field2Data":  parsedField2Data,
 						})
 					}
 				}
@@ -1748,19 +1813,19 @@ func (s *SearchEventService) parseClickHouseStringArray(str string) []interface{
 	} else if strings.Contains(str, " ") {
 		pairs := strings.Fields(str)
 		for _, pair := range pairs {
-			// Handle the new format: "cityName|||count|||monthData"
+			// Handle the new format: "field1Name|||count|||field2Data"
 			if strings.Contains(pair, "|||") {
 				parts := strings.Split(pair, "|||")
 				if len(parts) >= 3 {
-					cityName := strings.TrimSpace(parts[0])
+					field1Name := strings.TrimSpace(parts[0])
 					if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-						monthData := strings.TrimSpace(parts[2])
-						parsedMonthData := s.parseMonthDataFromString(monthData)
+						field2Data := strings.TrimSpace(parts[2])
+						parsedField2Data := s.parseNestedDataFromString(field2Data)
 
 						result = append(result, map[string]interface{}{
-							"field1Name":  cityName,
+							"field1Name":  field1Name,
 							"field1Count": count,
-							"field2Data":  parsedMonthData,
+							"field2Data":  parsedField2Data,
 						})
 					}
 				}
@@ -1776,18 +1841,18 @@ func (s *SearchEventService) parseClickHouseStringArray(str string) []interface{
 			}
 		}
 	} else if strings.Contains(str, "|||") {
-		// Handle the new format: "cityName|||count|||monthData"
+		// Handle the new format: "field1Name|||count|||field2Data"
 		parts := strings.Split(str, "|||")
 		if len(parts) >= 3 {
-			cityName := strings.TrimSpace(parts[0])
+			field1Name := strings.TrimSpace(parts[0])
 			if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
-				monthData := strings.TrimSpace(parts[2])
-				parsedMonthData := s.parseMonthDataFromString(monthData)
+				field2Data := strings.TrimSpace(parts[2])
+				parsedField2Data := s.parseNestedDataFromString(field2Data)
 
 				result = append(result, map[string]interface{}{
-					"field1Name":  cityName,
+					"field1Name":  field1Name,
 					"field1Count": count,
-					"field2Data":  parsedMonthData,
+					"field2Data":  parsedField2Data,
 				})
 			}
 		}

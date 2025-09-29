@@ -1232,8 +1232,8 @@ func (s *SharedFunctionService) transformNestedQueryData(flatData []map[string]i
 	}()
 
 	// Validate aggregation fields once at the beginning
-	if len(aggregationFields) > 3 {
-		log.Printf("WARNING: Aggregation with %d fields is not supported. Maximum supported is 3 fields.", len(aggregationFields))
+	if len(aggregationFields) > 4 {
+		log.Printf("WARNING: Aggregation with %d fields is not supported. Maximum supported is 4 fields.", len(aggregationFields))
 		return map[string]interface{}{}, nil
 	}
 
@@ -1271,6 +1271,8 @@ func (s *SharedFunctionService) transformNestedQueryData(flatData []map[string]i
 				s.processLevel2Data(item, result, parentValueStr, aggregationFields)
 			case 3:
 				s.processLevel3Data(item, result, parentValueStr, aggregationFields)
+			case 4:
+				s.processLevel4Data(item, result, parentValueStr, aggregationFields)
 			}
 		}()
 	}
@@ -1359,7 +1361,6 @@ func (s *SharedFunctionService) processLevel3Data(item map[string]interface{}, r
 
 	if dataSlice, ok := level1DataArray.([]interface{}); ok {
 		for _, level1Item := range dataSlice {
-			// Handle the new parsed format from parseClickHouseGroupArrayInterface
 			if level1DataMap, ok := level1Item.(map[string]interface{}); ok {
 				level1Name, _ := level1DataMap["field1Name"].(string)
 				level1Count := s.parseIntFromInterface(level1DataMap["field1Count"])
@@ -1369,7 +1370,6 @@ func (s *SharedFunctionService) processLevel3Data(item map[string]interface{}, r
 					level1Entry := orderedmap.NewOrderedMap()
 					level1Entry.Set(fmt.Sprintf("%sCount", level1Field), level1Count)
 
-					// Process level2 data (nested field)
 					if len(level2Data) > 0 {
 						level2Map := orderedmap.NewOrderedMap()
 						for _, level2Item := range level2Data {
@@ -1392,10 +1392,173 @@ func (s *SharedFunctionService) processLevel3Data(item map[string]interface{}, r
 					level1Map.Set(level1Name, level1Entry)
 				}
 			} else {
-				// Fallback to original unwrapping logic for backward compatibility
 				unwrappedData := s.unwrapNestedArrays(level1Item)
 				if level1ItemMap, ok := unwrappedData.(map[string]interface{}); ok {
 					s.parseNestedLevel(level1ItemMap, level1Map, level1Field, level2Field)
+				}
+			}
+		}
+	}
+}
+
+func (s *SharedFunctionService) processLevel4Data(item map[string]interface{}, result *orderedmap.OrderedMap, parentKey string, aggregationFields []string) {
+	if len(aggregationFields) < 4 {
+		return
+	}
+
+	level1Field := aggregationFields[1]
+	level2Field := aggregationFields[2]
+	level3Field := aggregationFields[3]
+	level1DataKey := fmt.Sprintf("%sData", level1Field)
+
+	level1DataArray, exists := item[level1DataKey]
+	if !exists {
+		return
+	}
+
+	parentMapValue, _ := result.Get(parentKey)
+	parentMap := parentMapValue.(*orderedmap.OrderedMap)
+
+	if _, exists := parentMap.Get(level1Field); !exists {
+		parentMap.Set(level1Field, orderedmap.NewOrderedMap())
+	}
+
+	level1MapValue, _ := parentMap.Get(level1Field)
+	level1Map := level1MapValue.(*orderedmap.OrderedMap)
+
+	if dataSlice, ok := level1DataArray.([]interface{}); ok {
+		for _, level1Item := range dataSlice {
+			if level1DataMap, ok := level1Item.(map[string]interface{}); ok {
+				level1Name, _ := level1DataMap["field1Name"].(string)
+				level1Count := s.parseIntFromInterface(level1DataMap["field1Count"])
+				level2Data, _ := level1DataMap["field2Data"].([]interface{})
+
+				if level1Name != "" {
+					level1Entry := orderedmap.NewOrderedMap()
+					level1Entry.Set(fmt.Sprintf("%sCount", level1Field), level1Count)
+
+					if len(level2Data) > 0 {
+						level2Map := orderedmap.NewOrderedMap()
+						for _, level2Item := range level2Data {
+							if level2ItemMap, ok := level2Item.(map[string]interface{}); ok {
+								level2Name, _ := level2ItemMap["field2Name"].(string)
+								level2Count := s.parseIntFromInterface(level2ItemMap["field2Count"])
+								level3Data, _ := level2ItemMap["field3Data"].([]interface{})
+
+								if level2Name == "" {
+									level2Name, _ = level2ItemMap["value"].(string)
+									level2Count = s.parseIntFromInterface(level2ItemMap["count"])
+								}
+
+								if level2Name != "" {
+									level2Entry := orderedmap.NewOrderedMap()
+									level2Entry.Set(fmt.Sprintf("%sCount", level2Field), level2Count)
+
+									if len(level3Data) > 0 {
+										level3Map := orderedmap.NewOrderedMap()
+										for _, level3Item := range level3Data {
+											if level3ItemMap, ok := level3Item.(map[string]interface{}); ok {
+												level3Name, _ := level3ItemMap["value"].(string)
+												level3Count := s.parseIntFromInterface(level3ItemMap["count"])
+
+												if level3Name != "" {
+													level3Entry := orderedmap.NewOrderedMap()
+													level3Entry.Set(fmt.Sprintf("%sCount", level3Field), level3Count)
+													level3Map.Set(level3Name, level3Entry)
+												}
+											}
+										}
+										if level3Map.Len() > 0 {
+											level2Entry.Set(level3Field, level3Map)
+										}
+									}
+
+									level2Map.Set(level2Name, level2Entry)
+								}
+							}
+						}
+						if level2Map.Len() > 0 {
+							level1Entry.Set(level2Field, level2Map)
+						}
+					}
+
+					level1Map.Set(level1Name, level1Entry)
+				}
+			} else if level1Str, ok := level1Item.(string); ok {
+				if strings.Contains(level1Str, "|||||") {
+					parts := strings.Split(level1Str, "|||||")
+					if len(parts) >= 3 {
+						level1Name := strings.TrimSpace(parts[0])
+						if level1Count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+							level2DataStr := strings.TrimSpace(parts[2])
+							level1Entry := orderedmap.NewOrderedMap()
+							level1Entry.Set(fmt.Sprintf("%sCount", level1Field), level1Count)
+
+							if level2DataStr != "" {
+								level2Map := orderedmap.NewOrderedMap()
+								level2CountKey := fmt.Sprintf("%sCount", level2Field)
+
+								level2Items := strings.Split(level2DataStr, " ")
+								for _, level2ItemStr := range level2Items {
+									level2ItemStr = strings.TrimSpace(level2ItemStr)
+									if level2ItemStr == "" {
+										continue
+									}
+
+									if strings.Contains(level2ItemStr, "|||") {
+										level2Parts := strings.Split(level2ItemStr, "|||")
+										if len(level2Parts) >= 3 {
+											level2Name := strings.TrimSpace(level2Parts[0])
+											if level2Count, err := strconv.Atoi(strings.TrimSpace(level2Parts[1])); err == nil {
+												level3DataStr := strings.TrimSpace(level2Parts[2])
+												level2Entry := orderedmap.NewOrderedMap()
+												level2Entry.Set(level2CountKey, level2Count)
+
+												if level3DataStr != "" {
+													level3Map := orderedmap.NewOrderedMap()
+													level3CountKey := fmt.Sprintf("%sCount", level3Field)
+
+													// Parse date entries separated by spaces
+													level3Items := strings.Fields(level3DataStr)
+													for _, level3Item := range level3Items {
+														if strings.Contains(level3Item, "|") {
+															level3Parts := strings.Split(level3Item, "|")
+															if len(level3Parts) >= 2 {
+																level3Name := strings.TrimSpace(level3Parts[0])
+																if level3Count, err := strconv.Atoi(strings.TrimSpace(level3Parts[1])); err == nil {
+																	level3Entry := orderedmap.NewOrderedMap()
+																	level3Entry.Set(level3CountKey, level3Count)
+																	level3Map.Set(level3Name, level3Entry)
+																}
+															}
+														}
+													}
+
+													if level3Map.Len() > 0 {
+														level2Entry.Set(level3Field, level3Map)
+													}
+												}
+
+												level2Map.Set(level2Name, level2Entry)
+											}
+										}
+									}
+								}
+
+								if level2Map.Len() > 0 {
+									level1Entry.Set(level2Field, level2Map)
+								}
+							}
+
+							level1Map.Set(level1Name, level1Entry)
+						}
+					}
+				}
+			} else {
+				// Fallback for older data formats
+				unwrappedData := s.unwrapNestedArrays(level1Item)
+				if level1ItemMap, ok := unwrappedData.(map[string]interface{}); ok {
+					s.parseNestedLevel4(level1ItemMap, level1Map, level1Field, level2Field, level3Field)
 				}
 			}
 		}
@@ -1533,6 +1696,145 @@ func (s *SharedFunctionService) parseNestedLevel(itemMap map[string]interface{},
 	parentMap.Set(itemName, itemData)
 }
 
+func (s *SharedFunctionService) parseNestedLevel4(itemMap map[string]interface{}, parentMap *orderedmap.OrderedMap, level1Field, level2Field, level3Field string) {
+	var itemName string
+	var itemCount int
+	var nestedData []interface{}
+
+	level1CountKey := fmt.Sprintf("%sCount", level1Field)
+	level2DataKey := fmt.Sprintf("%sData", level2Field)
+
+	for key, value := range itemMap {
+		if key == level1CountKey {
+			itemCount = s.parseIntFromInterface(value)
+		} else if key == level2DataKey {
+			if arr, ok := value.([]interface{}); ok {
+				nestedData = arr
+			}
+		} else if key == "" {
+			if arr, ok := value.([]interface{}); ok {
+				nestedData = arr
+			}
+		} else if key != "country" && !strings.HasSuffix(key, "Count") && !strings.HasSuffix(key, "Data") {
+			itemName = fmt.Sprintf("%v", value)
+		}
+	}
+
+	if itemName == "" {
+		for key, value := range itemMap {
+			if key != "country" && key != "" &&
+				!strings.HasSuffix(key, "Count") &&
+				!strings.HasSuffix(key, "Data") {
+				itemName = fmt.Sprintf("%v", value)
+				break
+			}
+		}
+	}
+
+	if itemName == "" {
+		return
+	}
+
+	// Create item entry
+	itemData := orderedmap.NewOrderedMap()
+	itemData.Set(level1CountKey, itemCount)
+
+	// Parse nested level2 data
+	if len(nestedData) > 0 {
+		level2Map := orderedmap.NewOrderedMap()
+		level2CountKey := fmt.Sprintf("%sCount", level2Field)
+
+		for _, level2Item := range nestedData {
+			if level2Str, ok := level2Item.(string); ok {
+				// Handle the new format: "level2Name|||count|||level3Data"
+				if strings.Contains(level2Str, "|||") {
+					parts := strings.Split(level2Str, "|||")
+					if len(parts) >= 3 {
+						level2Name := strings.TrimSpace(parts[0])
+						if level2Count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+							level3DataStr := strings.TrimSpace(parts[2])
+							level2Entry := orderedmap.NewOrderedMap()
+							level2Entry.Set(level2CountKey, level2Count)
+
+							// Parse level3 data
+							if level3DataStr != "" {
+								level3Map := orderedmap.NewOrderedMap()
+								level3CountKey := fmt.Sprintf("%sCount", level3Field)
+
+								// Parse level3 data from string format
+								level3Items := strings.Fields(level3DataStr)
+								for _, level3Item := range level3Items {
+									if strings.Contains(level3Item, "|") {
+										level3Parts := strings.Split(level3Item, "|")
+										if len(level3Parts) >= 2 {
+											level3Name := strings.TrimSpace(level3Parts[0])
+											if level3Count, err := strconv.Atoi(strings.TrimSpace(level3Parts[1])); err == nil {
+												level3Entry := orderedmap.NewOrderedMap()
+												level3Entry.Set(level3CountKey, level3Count)
+												level3Map.Set(level3Name, level3Entry)
+											}
+										}
+									}
+								}
+
+								if level3Map.Len() > 0 {
+									level2Entry.Set(level3Field, level3Map)
+								}
+							}
+
+							level2Map.Set(level2Name, level2Entry)
+						}
+					}
+				} else {
+					// Handle old format: "value|count"
+					var parts []string
+					if strings.Contains(level2Str, "|") {
+						parts = strings.Split(level2Str, "|")
+					} else {
+						parts = strings.Fields(level2Str)
+					}
+
+					if len(parts) >= 2 {
+						level2Name := strings.TrimSpace(parts[0])
+						if level2Count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+							level2Entry := orderedmap.NewOrderedMap()
+							level2Entry.Set(level2CountKey, level2Count)
+							level2Map.Set(level2Name, level2Entry)
+						}
+					}
+				}
+			} else if level2MapItem, ok := level2Item.(map[string]interface{}); ok {
+				// Handle if it comes as a map with "" key containing "name count" pairs
+				for _, v := range level2MapItem {
+					if vStr, ok := v.(string); ok {
+						var parts []string
+						if strings.Contains(vStr, "|") {
+							parts = strings.Split(vStr, "|")
+						} else {
+							parts = strings.Fields(vStr)
+						}
+
+						if len(parts) >= 2 {
+							level2Name := strings.TrimSpace(parts[0])
+							if level2Count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+								level2Entry := orderedmap.NewOrderedMap()
+								level2Entry.Set(level2CountKey, level2Count)
+								level2Map.Set(level2Name, level2Entry)
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if level2Map.Len() > 0 {
+			itemData.Set(level2Field, level2Map)
+		}
+	}
+
+	parentMap.Set(itemName, itemData)
+}
+
 // Fixed convertOrderedMapToSlice method
 func (s *SharedFunctionService) convertOrderedMapToSlice(om *orderedmap.OrderedMap) []map[string]interface{} {
 	var result []map[string]interface{}
@@ -1609,7 +1911,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_exhibitors AS (SELECT event_id FROM testing_db.event_exhibitor_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.ExhibitorWhereConditions, " AND ")))
 	}
 	if queryResult.NeedsSponsorJoin {
-		cteClauses = append(cteClauses, fmt.Sprintf("filtered_sponsors AS (SELECT event_id FROM testing_db.event_sponsor_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.SponsorWhereConditions, " AND ")))
+		cteClauses = append(cteClauses, fmt.Sprintf("filtered_sponsors AS (SELECT event_id FROM testing_db.event_sponsors_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.SponsorWhereConditions, " AND ")))
 	}
 	if queryResult.NeedsCategoryJoin {
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_categories AS (SELECT event FROM testing_db.event_category_ch WHERE %s GROUP BY event)", strings.Join(queryResult.CategoryWhereConditions, " AND ")))
@@ -1631,15 +1933,15 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 	}
 
 	if queryResult.WhereClause != "" && strings.TrimSpace(queryResult.WhereClause) != "" {
-		correctedWhereClause := strings.ReplaceAll(queryResult.WhereClause, "e.", "ee.")
-		correctedWhereClause = strings.ReplaceAll(correctedWhereClause, "ee.", "ee.")
+		correctedWhereClause := queryResult.WhereClause
+		correctedWhereClause = regexp.MustCompile(`\be\.`).ReplaceAllString(correctedWhereClause, "ee.")
 		correctedWhereClause = strings.TrimPrefix(strings.TrimPrefix(correctedWhereClause, "AND "), "and ")
 		editionFilterConditions = append(editionFilterConditions, correctedWhereClause)
 	}
 
 	if queryResult.SearchClause != "" && strings.TrimSpace(queryResult.SearchClause) != "" {
-		correctedSearchClause := strings.ReplaceAll(queryResult.SearchClause, "e.", "ee.")
-		correctedSearchClause = strings.ReplaceAll(correctedSearchClause, "ee.", "ee.")
+		correctedSearchClause := queryResult.SearchClause
+		correctedSearchClause = regexp.MustCompile(`\be\.`).ReplaceAllString(correctedSearchClause, "ee.")
 		correctedSearchClause = strings.TrimPrefix(strings.TrimPrefix(correctedSearchClause, "AND "), "and ")
 		editionFilterConditions = append(editionFilterConditions, correctedSearchClause)
 	}
@@ -1752,10 +2054,16 @@ func (s *SharedFunctionService) buildSingleFieldSelect(field string, fieldMappin
 func (s *SharedFunctionService) buildFieldFrom(fields []string, cteClauses []string) string {
 	from := "FROM testing_db.event_edition_ch ee"
 
-	if s.contains(fields, "category") {
+	hasCategory := s.contains(fields, "category")
+	hasTag := s.contains(fields, "tag")
+
+	if hasCategory && hasTag {
+		// When both category and tag are needed, use separate joins with different aliases
+		from += " INNER JOIN testing_db.event_category_ch c ON ee.event_id = c.event AND c.is_group = 1"
+		from += " INNER JOIN testing_db.event_category_ch t ON ee.event_id = t.event AND t.is_group = 0"
+	} else if hasCategory {
 		from += " INNER JOIN testing_db.event_category_ch c ON ee.event_id = c.event"
-	}
-	if s.contains(fields, "tag") {
+	} else if hasTag {
 		from += " INNER JOIN testing_db.event_category_ch t ON ee.event_id = t.event"
 	}
 
@@ -1790,16 +2098,22 @@ func (s *SharedFunctionService) buildFieldWhere(fields []string, editionFilterCo
 		condition = strings.ReplaceAll(condition, "end_date", "ee.end_date")
 		condition = strings.ReplaceAll(condition, "start_date", "ee.start_date")
 		condition = strings.ReplaceAll(condition, "event_avgRating", "ee.event_avgRating")
+		condition = strings.ReplaceAll(condition, "event_frequency", "ee.event_frequency")
 		condition = strings.ReplaceAll(condition, "ee.ee.", "ee.")
 		conditionsWithAliases[i] = condition
 	}
 
 	where := fmt.Sprintf("WHERE %s", strings.Join(conditionsWithAliases, "\n      AND "))
 
-	if s.contains(fields, "category") {
+	hasCategory := s.contains(fields, "category")
+	hasTag := s.contains(fields, "tag")
+
+	// Only add is_group conditions when we don't have both category and tag
+	// (because when both are present, the condition is moved to the JOIN clause)
+	if hasCategory && !hasTag {
 		where += "\n      AND c.is_group = 1"
 	}
-	if s.contains(fields, "tag") {
+	if hasTag && !hasCategory {
 		where += "\n      AND t.is_group = 0"
 	}
 
@@ -1828,7 +2142,7 @@ func (s *SharedFunctionService) containsCTE(cteClauses []string, cteName string)
 // 	if len(nestedFields) == 0 {
 // 		return ""
 // 	} else if len(nestedFields) == 1 {
-// 		log.Printf("Building hierarchy structure for 1 nested field: %v", nestedFields)
+// 		//log.Printf("Building hierarchy structure for 1 nested field: %v", nestedFields)
 // 		return fmt.Sprintf(`,
 // 			hierarchical_nested AS (
 // 							SELECT
@@ -1850,7 +2164,7 @@ func (s *SharedFunctionService) containsCTE(cteClauses []string, cteName string)
 // 				LIMIT %d OFFSET %d
 // 			)`, parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[0], parentField, nestedFields[0], nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedLimit, parentField, parentField, parentField, parentLimit, parentOffset)
 // 	} else if len(nestedFields) == 2 {
-// 		log.Printf("Building hierarchy structure for 2 nested fields: %v", nestedFields)
+// 		//log.Printf("Building hierarchy structure for 2 nested fields: %v", nestedFields)
 // 		return fmt.Sprintf(`,
 // 			hierarchical_nested AS (
 // 								SELECT
@@ -1887,7 +2201,7 @@ func (s *SharedFunctionService) buildHierarchyStructure(parentField string, nest
 	if len(nestedFields) == 0 {
 		return ""
 	} else if len(nestedFields) == 1 {
-		log.Printf("Building hierarchy structure for 1 nested field: %v", nestedFields)
+		//log.Printf("Building hierarchy structure for 1 nested field: %v", nestedFields)
 		return fmt.Sprintf(`,
 			base_counts AS (
 				SELECT
@@ -1929,7 +2243,7 @@ func (s *SharedFunctionService) buildHierarchyStructure(parentField string, nest
 			parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[0],
 			parentField, parentField, parentLimit, parentOffset)
 	} else if len(nestedFields) == 2 {
-		log.Printf("Building hierarchy structure for 2 nested fields: %v", nestedFields)
+		//log.Printf("Building hierarchy structure for 2 nested fields: %v", nestedFields)
 		return fmt.Sprintf(`,
 			base_counts AS (
 				SELECT
@@ -2004,15 +2318,136 @@ func (s *SharedFunctionService) buildHierarchyStructure(parentField string, nest
 			nestedLimit,
 			parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[1], nestedFields[0],
 			parentField, parentField, parentLimit, parentOffset)
+	} else if len(nestedFields) == 3 {
+		//log.Printf("Building hierarchy structure for 3 nested fields: %v", nestedFields)
+		return fmt.Sprintf(`,
+			base_counts AS (
+				SELECT
+					%s,
+					%s,
+					%s,
+					%s,
+					count(*) AS %sCount
+				FROM base_data
+				GROUP BY %s, %s, %s, %s
+			),
+			top_level3_per_level2 AS (
+				SELECT
+					%s,
+					%s,
+					%s,
+					%s,
+					%sCount
+				FROM (
+					SELECT
+						%s,
+						%s,
+						%s,
+						%s,
+						%sCount,
+						row_number() OVER (PARTITION BY %s, %s, %s ORDER BY %sCount DESC) as rn
+					FROM base_counts
+				)
+				WHERE rn <= %d
+			),
+			level2_aggregated AS (
+				SELECT
+					%s,
+					%s,
+					%s,
+					sum(%sCount) AS %sCount,
+					groupArray(arrayStringConcat(array(%s, toString(%sCount)), '|')) AS %sData
+				FROM top_level3_per_level2
+				GROUP BY %s, %s, %s
+			),
+			top_level2_per_level1 AS (
+				SELECT
+					%s,
+					%s,
+					%s,
+					%sCount,
+					%sData
+				FROM (
+					SELECT
+						%s,
+						%s,
+						%s,
+						%sCount,
+						%sData,
+						row_number() OVER (PARTITION BY %s, %s ORDER BY %sCount DESC) as rn
+					FROM level2_aggregated
+				)
+				WHERE rn <= %d
+			),
+			level1_aggregated AS (
+				SELECT
+					%s,
+					%s,
+					sum(%sCount) AS %sCount,
+					groupArray(arrayStringConcat(array(%s, toString(%sCount), arrayStringConcat(%sData, ' ')), '|||')) AS %sData
+				FROM top_level2_per_level1
+				GROUP BY %s, %s
+			),
+			top_level1_per_parent AS (
+				SELECT
+					%s,
+					%s,
+					%sCount,
+					%sData
+				FROM (
+					SELECT
+						%s,
+						%s,
+						%sCount,
+						%sData,
+						row_number() OVER (PARTITION BY %s ORDER BY %sCount DESC) as rn
+					FROM level1_aggregated
+				)
+				WHERE rn <= %d
+			),
+			hierarchical_nested AS (
+				SELECT
+					%s,
+					sum(%sCount) AS %sCount,
+					groupArray(arrayStringConcat(array(%s, toString(%sCount), arrayStringConcat(%sData, ' ')), '|||||')) AS %sData
+				FROM top_level1_per_parent
+				GROUP BY %s
+				ORDER BY %sCount DESC
+				LIMIT %d OFFSET %d
+			)`,
+			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[2],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[2],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[2],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[2],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[2],
+			nestedLimit,
+			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[1],
+			nestedFields[2], nestedFields[2], nestedFields[2],
+			parentField, nestedFields[0], nestedFields[1],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[1], nestedFields[2],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[1], nestedFields[2],
+			parentField, nestedFields[0], nestedFields[1],
+			nestedLimit,
+			parentField, nestedFields[0], nestedFields[1], nestedFields[0],
+			nestedFields[1], nestedFields[1], nestedFields[2], nestedFields[1],
+			parentField, nestedFields[0],
+			parentField, nestedFields[0], nestedFields[0], nestedFields[1],
+			parentField, nestedFields[0], nestedFields[0], nestedFields[1],
+			parentField, nestedFields[0],
+			nestedLimit,
+			parentField, nestedFields[0], parentField,
+			nestedFields[0], nestedFields[0], nestedFields[1], nestedFields[0],
+			parentField, parentField,
+			parentLimit, parentOffset)
 	} else {
-		log.Printf("WARNING: Aggregation with %d nested fields is not supported. Maximum supported is 2 nested fields (2 total fields).", len(nestedFields))
+		log.Printf("WARNING: Aggregation with %d nested fields is not supported. Maximum supported is 3 nested fields (4 total fields).", len(nestedFields))
 	}
 
 	return ""
 }
 
 func (s *SharedFunctionService) detectAggregationFields(sampleItem map[string]interface{}) []string {
-	possibleFields := []string{"country", "city", "month", "date", "category", "tag"}
+	possibleFields := []string{"country", "city", "month", "date", "category", "tag", "type", "status", "edition_type"}
 	var detectedFields []string
 
 	for _, field := range possibleFields {
@@ -2037,7 +2472,7 @@ func (s *SharedFunctionService) detectAggregationFields(sampleItem map[string]in
 		}
 	}
 
-	fieldOrder := []string{"country", "city", "month", "date", "category", "tag"}
+	fieldOrder := []string{"country", "city", "month", "date", "category", "tag", "type", "status", "edition_type"}
 	for i := 0; i < len(detectedFields)-1; i++ {
 		for j := i + 1; j < len(detectedFields); j++ {
 			indexA := s.indexOf(fieldOrder, detectedFields[i])
