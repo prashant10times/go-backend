@@ -30,3 +30,12 @@ Thumbs.db
 tmp/
 
 /search-event-api
+
+docker-compose.yml
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+ecosystem.config.js
