@@ -457,6 +457,8 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		%s
 	`, today, pagination.Limit, pagination.Offset, fieldsString, groupByClause, groupByClause, groupByClause, s.sharedFunctionService.fixOrderByForCTE(orderByClause, false))
 
+	log.Printf("Event data query: %s", eventDataQuery)
+
 	eventDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), eventDataQuery)
 	if err != nil {
 		log.Printf("ClickHouse query error: %v", err)
