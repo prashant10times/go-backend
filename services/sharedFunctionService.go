@@ -1,12 +1,14 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log"
 	"reflect"
 	"regexp"
 	"search-event-go/models"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +22,42 @@ import (
 
 type SharedFunctionService struct {
 	db *gorm.DB
+}
+
+// OrderedJSONMap is a custom type that preserves key order during JSON marshaling
+type OrderedJSONMap struct {
+	Keys   []string
+	Values map[string]interface{}
+}
+
+// MarshalJSON implements json.Marshaler to preserve key order
+func (o OrderedJSONMap) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteString("{")
+
+	for i, key := range o.Keys {
+		if i > 0 {
+			buf.WriteString(",")
+		}
+
+		// Marshal the key
+		keyBytes, err := json.Marshal(key)
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(keyBytes)
+		buf.WriteString(":")
+
+		// Marshal the value
+		valueBytes, err := json.Marshal(o.Values[key])
+		if err != nil {
+			return nil, err
+		}
+		buf.Write(valueBytes)
+	}
+
+	buf.WriteString("}")
+	return buf.Bytes(), nil
 }
 
 func NewSharedFunctionService(db *gorm.DB) *SharedFunctionService {
@@ -1237,11 +1275,14 @@ func (s *SharedFunctionService) transformNestedQueryData(flatData []map[string]i
 		return map[string]interface{}{}, nil
 	}
 
+	// Sort flat data by parent field count to ensure proper ordering
+	parentField := aggregationFields[0]
+	s.sortFlatDataByCount(flatData, parentField)
+
 	result := orderedmap.NewOrderedMap()
 
 	for itemIndex, item := range flatData {
 
-		parentField := aggregationFields[0]
 		parentValue, exists := item[parentField]
 		if !exists || parentValue == nil {
 			continue
@@ -1278,8 +1319,7 @@ func (s *SharedFunctionService) transformNestedQueryData(flatData []map[string]i
 	}
 
 	// Convert to serializable format
-	orderedResult := s.convertOrderedMapToSlice(result)
-	return orderedResult, nil
+	return s.convertOrderedMapToSlice(result), nil
 }
 
 func (s *SharedFunctionService) processLevel2Data(item map[string]interface{}, result *orderedmap.OrderedMap, parentKey string, aggregationFields []string) {
@@ -1303,7 +1343,10 @@ func (s *SharedFunctionService) processLevel2Data(item map[string]interface{}, r
 
 	// Parse the nested data array
 	if dataSlice, ok := nestedDataArray.([]interface{}); ok {
-		for _, item := range dataSlice {
+		// Sort the data slice by count before processing (for array format [name, count])
+		sortedDataSlice := s.sortArrayDataByCount(dataSlice)
+
+		for _, item := range sortedDataSlice {
 			// Handle the new parsed format from parseClickHouseGroupArrayInterface
 			if itemMap, ok := item.(map[string]interface{}); ok {
 				itemName, _ := itemMap["field1Name"].(string)
@@ -1360,7 +1403,10 @@ func (s *SharedFunctionService) processLevel3Data(item map[string]interface{}, r
 	level1Map := level1MapValue.(*orderedmap.OrderedMap)
 
 	if dataSlice, ok := level1DataArray.([]interface{}); ok {
-		for _, level1Item := range dataSlice {
+		// Sort the data slice by count before processing
+		sortedDataSlice := s.sortDataSliceByCount(dataSlice, "field1Count")
+
+		for _, level1Item := range sortedDataSlice {
 			if level1DataMap, ok := level1Item.(map[string]interface{}); ok {
 				level1Name, _ := level1DataMap["field1Name"].(string)
 				level1Count := s.parseIntFromInterface(level1DataMap["field1Count"])
@@ -1372,7 +1418,10 @@ func (s *SharedFunctionService) processLevel3Data(item map[string]interface{}, r
 
 					if len(level2Data) > 0 {
 						level2Map := orderedmap.NewOrderedMap()
-						for _, level2Item := range level2Data {
+						// Sort level2Data by count before processing
+						sortedLevel2Data := s.sortDataSliceByCount(level2Data, "count")
+
+						for _, level2Item := range sortedLevel2Data {
 							if level2ItemMap, ok := level2Item.(map[string]interface{}); ok {
 								level2Name, _ := level2ItemMap["value"].(string)
 								level2Count := s.parseIntFromInterface(level2ItemMap["count"])
@@ -1646,7 +1695,10 @@ func (s *SharedFunctionService) parseNestedLevel(itemMap map[string]interface{},
 		level2Map := orderedmap.NewOrderedMap()
 		level2CountKey := fmt.Sprintf("%sCount", level2Field)
 
-		for _, level2Item := range nestedData {
+		// Sort the nested data by count before processing
+		sortedNestedData := s.sortStringArrayByCount(nestedData)
+
+		for _, level2Item := range sortedNestedData {
 			if level2Str, ok := level2Item.(string); ok {
 				// Format: "value|count" or "value count"
 				var parts []string
@@ -1744,7 +1796,10 @@ func (s *SharedFunctionService) parseNestedLevel4(itemMap map[string]interface{}
 		level2Map := orderedmap.NewOrderedMap()
 		level2CountKey := fmt.Sprintf("%sCount", level2Field)
 
-		for _, level2Item := range nestedData {
+		// Sort the nested data by count before processing
+		sortedNestedData := s.sortStringArrayByCount(nestedData)
+
+		for _, level2Item := range sortedNestedData {
 			if level2Str, ok := level2Item.(string); ok {
 				// Handle the new format: "level2Name|||count|||level3Data"
 				if strings.Contains(level2Str, "|||") {
@@ -1835,7 +1890,7 @@ func (s *SharedFunctionService) parseNestedLevel4(itemMap map[string]interface{}
 	parentMap.Set(itemName, itemData)
 }
 
-// Fixed convertOrderedMapToSlice method
+// Simple method to convert OrderedMap to slice without additional sorting
 func (s *SharedFunctionService) convertOrderedMapToSlice(om *orderedmap.OrderedMap) []map[string]interface{} {
 	var result []map[string]interface{}
 
@@ -1844,7 +1899,7 @@ func (s *SharedFunctionService) convertOrderedMapToSlice(om *orderedmap.OrderedM
 		keyStr := fmt.Sprintf("%v", key)
 
 		item := map[string]interface{}{
-			keyStr: s.convertValueToSerializable(value),
+			keyStr: s.convertOrderedMapToRegularMap(value),
 		}
 		result = append(result, item)
 	}
@@ -1852,21 +1907,232 @@ func (s *SharedFunctionService) convertOrderedMapToSlice(om *orderedmap.OrderedM
 	return result
 }
 
-// Fixed convertValueToSerializable method
-func (s *SharedFunctionService) convertValueToSerializable(value interface{}) interface{} {
-	if nestedOM, ok := value.(*orderedmap.OrderedMap); ok {
-		regularMap := make(map[string]interface{})
+// Helper method to sort flat data by parent field count
+func (s *SharedFunctionService) sortFlatDataByCount(flatData []map[string]interface{}, parentField string) {
+	countKey := fmt.Sprintf("%sCount", parentField)
 
-		for _, key := range nestedOM.Keys() {
-			nestedValue, _ := nestedOM.Get(key)
-			keyStr := fmt.Sprintf("%v", key)
-			regularMap[keyStr] = s.convertValueToSerializable(nestedValue)
+	sort.Slice(flatData, func(i, j int) bool {
+		countI := 0
+		countJ := 0
+
+		if countValue, exists := flatData[i][countKey]; exists {
+			if countInt, ok := countValue.(int); ok {
+				countI = countInt
+			}
 		}
 
-		return regularMap
+		if countValue, exists := flatData[j][countKey]; exists {
+			if countInt, ok := countValue.(int); ok {
+				countJ = countInt
+			}
+		}
+
+		return countI > countJ // Descending order
+	})
+}
+
+// Helper method to sort data slice by count field
+func (s *SharedFunctionService) sortDataSliceByCount(dataSlice []interface{}, countFieldName string) []interface{} {
+	// Create a copy to avoid modifying the original
+	sortedSlice := make([]interface{}, len(dataSlice))
+	copy(sortedSlice, dataSlice)
+
+	sort.Slice(sortedSlice, func(i, j int) bool {
+		countI := 0
+		countJ := 0
+
+		// Extract count from item i
+		if itemMap, ok := sortedSlice[i].(map[string]interface{}); ok {
+			if countValue, exists := itemMap[countFieldName]; exists {
+				countI = s.parseIntFromInterface(countValue)
+			}
+		} else if itemArray, ok := sortedSlice[i].([]interface{}); ok && len(itemArray) >= 2 {
+			countI = s.parseIntFromInterface(itemArray[1])
+		}
+
+		// Extract count from item j
+		if itemMap, ok := sortedSlice[j].(map[string]interface{}); ok {
+			if countValue, exists := itemMap[countFieldName]; exists {
+				countJ = s.parseIntFromInterface(countValue)
+			}
+		} else if itemArray, ok := sortedSlice[j].([]interface{}); ok && len(itemArray) >= 2 {
+			countJ = s.parseIntFromInterface(itemArray[1])
+		}
+
+		return countI > countJ // Descending order
+	})
+
+	return sortedSlice
+}
+
+// Helper method to sort string array by count (for "name|count" format)
+func (s *SharedFunctionService) sortStringArrayByCount(dataSlice []interface{}) []interface{} {
+	// Create a copy to avoid modifying the original
+	sortedSlice := make([]interface{}, len(dataSlice))
+	copy(sortedSlice, dataSlice)
+
+	sort.Slice(sortedSlice, func(i, j int) bool {
+		countI := 0
+		countJ := 0
+
+		// Extract count from string format "name|count"
+		if strI, ok := sortedSlice[i].(string); ok {
+			var parts []string
+			if strings.Contains(strI, "|") {
+				parts = strings.Split(strI, "|")
+			} else {
+				parts = strings.Fields(strI)
+			}
+			if len(parts) >= 2 {
+				if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+					countI = count
+				}
+			}
+		}
+
+		if strJ, ok := sortedSlice[j].(string); ok {
+			var parts []string
+			if strings.Contains(strJ, "|") {
+				parts = strings.Split(strJ, "|")
+			} else {
+				parts = strings.Fields(strJ)
+			}
+			if len(parts) >= 2 {
+				if count, err := strconv.Atoi(strings.TrimSpace(parts[1])); err == nil {
+					countJ = count
+				}
+			}
+		}
+
+		return countI > countJ // Descending order
+	})
+
+	return sortedSlice
+}
+
+// Helper method to sort array data by count (for [name, count] format)
+func (s *SharedFunctionService) sortArrayDataByCount(dataSlice []interface{}) []interface{} {
+	// Create a copy to avoid modifying the original
+	sortedSlice := make([]interface{}, len(dataSlice))
+	copy(sortedSlice, dataSlice)
+
+	sort.Slice(sortedSlice, func(i, j int) bool {
+		countI := 0
+		countJ := 0
+
+		// Extract count from array format [name, count]
+		if arrayI, ok := sortedSlice[i].([]interface{}); ok && len(arrayI) >= 2 {
+			countI = s.parseIntFromInterface(arrayI[1])
+		}
+
+		if arrayJ, ok := sortedSlice[j].([]interface{}); ok && len(arrayJ) >= 2 {
+			countJ = s.parseIntFromInterface(arrayJ[1])
+		}
+
+		return countI > countJ // Descending order
+	})
+
+	return sortedSlice
+}
+
+// Helper method to convert OrderedMap to regular map with sorted nested data
+func (s *SharedFunctionService) convertOrderedMapToRegularMap(value interface{}) interface{} {
+	if nestedOM, ok := value.(*orderedmap.OrderedMap); ok {
+		result := make(map[string]interface{})
+
+		// Separate count fields from nested data fields and sort nested fields
+		var countFields []string
+		var nestedFields []string
+
+		for _, key := range nestedOM.Keys() {
+			keyStr := fmt.Sprintf("%v", key)
+			if strings.HasSuffix(keyStr, "Count") {
+				countFields = append(countFields, keyStr)
+			} else {
+				nestedFields = append(nestedFields, keyStr)
+			}
+		}
+
+		// Add count fields first
+		for _, key := range countFields {
+			nestedValue, _ := nestedOM.Get(key)
+			result[key] = nestedValue
+		}
+
+		// Process nested fields with sorting
+		for _, key := range nestedFields {
+			nestedValue, _ := nestedOM.Get(key)
+			if nestedNestedOM, ok := nestedValue.(*orderedmap.OrderedMap); ok {
+				// Sort nested data and convert to regular map
+				sortedNested := s.convertNestedOrderedMapToSortedRegularMap(nestedNestedOM)
+				result[key] = sortedNested
+			} else {
+				result[key] = s.convertOrderedMapToRegularMap(nestedValue)
+			}
+		}
+
+		return result
 	}
 
 	return value
+}
+
+func (s *SharedFunctionService) convertNestedOrderedMapToSortedRegularMap(om *orderedmap.OrderedMap) interface{} {
+	type KeyValue struct {
+		Key   string
+		Value interface{}
+		Count int
+	}
+
+	var keyValues []KeyValue
+
+	// Extract key-value pairs with their counts
+	for _, key := range om.Keys() {
+		value, _ := om.Get(key)
+		keyStr := fmt.Sprintf("%v", key)
+
+		// Extract count from the nested data
+		count := 0
+		if nestedOM, ok := value.(*orderedmap.OrderedMap); ok {
+			// Look for any field ending with "Count"
+			for _, nestedKey := range nestedOM.Keys() {
+				nestedKeyStr := fmt.Sprintf("%v", nestedKey)
+				if strings.HasSuffix(nestedKeyStr, "Count") {
+					if countValue, exists := nestedOM.Get(nestedKey); exists {
+						if countInt, ok := countValue.(int); ok {
+							count = countInt
+							break
+						}
+					}
+				}
+			}
+		}
+
+		keyValues = append(keyValues, KeyValue{
+			Key:   keyStr,
+			Value: value,
+			Count: count,
+		})
+	}
+
+	// Sort by count in descending order
+	sort.Slice(keyValues, func(i, j int) bool {
+		return keyValues[i].Count > keyValues[j].Count
+	})
+
+	// Use custom OrderedJSONMap to preserve key order during JSON marshaling
+	orderedKeys := make([]string, len(keyValues))
+	values := make(map[string]interface{})
+
+	for i, kv := range keyValues {
+		orderedKeys[i] = kv.Key
+		values[kv.Key] = s.convertOrderedMapToRegularMap(kv.Value)
+	}
+
+	return OrderedJSONMap{
+		Keys:   orderedKeys,
+		Values: values,
+	}
 }
 
 func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, nestedFields []string, pagination models.PaginationDto, filterFields models.FilterDataDto) (string, error) {
