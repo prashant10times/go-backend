@@ -2,10 +2,10 @@ package handlers
 
 import (
 	"log"
+	"search-event-go/middleware"
 	"search-event-go/models"
 	"search-event-go/services"
 	"strings"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
@@ -44,22 +44,10 @@ func NewSearchEventsHandler(workerCount int, searchEventService *services.Search
 func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 	var request models.SearchEventsRequest
 
-	startTime := time.Now()
-
 	log.Printf("Raw query string: %s", c.Request().URI().QueryString())
 
 	if err := c.QueryParser(&request); err != nil {
-		return c.Status(400).JSON(fiber.Map{
-			"statusCode": 400,
-			"message":    "VALIDATION_ERROR",
-			"data": fiber.Map{
-				"message": "Invalid query parameters",
-				"error":   err.Error(),
-			},
-			"meta": fiber.Map{
-				"responseTime": time.Since(startTime).Seconds(),
-			},
-		})
+		return middleware.NewValidationError("Invalid query parameters", err.Error())
 	}
 
 	request.StartGte = c.Query("start.gte")
@@ -92,59 +80,21 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 
 	if err := (&request).Validate(); err != nil {
 		log.Printf("Validation error: %v", err)
-		return c.Status(400).JSON(fiber.Map{
-			"statusCode": 400,
-			"message":    "VALIDATION_ERROR",
-			"data": fiber.Map{
-				"message": "Request validation failed",
-				"error":   err.Error(),
-			},
-			"meta": fiber.Map{
-				"responseTime": time.Since(startTime).Seconds(),
-			},
-		})
+		return middleware.NewValidationError("Request validation failed", err.Error())
 	}
 
 	result, err := h.searchEventService.GetEventDataV2(UserID, request.APIID, request.FilterDataDto, request.PaginationDto, request.ResponseDataDto, c)
 	if err != nil {
-		statusCode := 500
-		message := "INTERNAL_SERVER_ERROR"
-
 		if strings.Contains(err.Error(), "unauthorized filters") {
-			statusCode = 403
-			message = "FORBIDDEN"
+			return middleware.NewForbiddenError("Unauthorized filters", err.Error())
 		} else if strings.Contains(err.Error(), "unauthorized advanced parameters") {
-			statusCode = 403
-			message = "FORBIDDEN"
+			return middleware.NewForbiddenError("Unauthorized advanced parameters", err.Error())
 		} else if strings.Contains(err.Error(), "Daily limit reached") {
-			statusCode = 429
-			message = "TOO_MANY_REQUESTS"
+			return middleware.NewTooManyRequestsError("Daily limit reached", err.Error())
 		}
 
-		return c.Status(statusCode).JSON(fiber.Map{
-			"statusCode": statusCode,
-			"message":    message,
-			"data": fiber.Map{
-				"message": "Error getting event data",
-				"error":   err.Error(),
-			},
-			"meta": fiber.Map{
-				"responseTime": time.Since(startTime).Seconds(),
-			},
-		})
+		return middleware.NewInternalServerError("Error getting event data", err.Error())
 	}
-
-	// Placeholder response - replace with actual ElasticSearch service call
-	// result := fiber.Map{
-	// 	"status": "success",
-	// 	"data": fiber.Map{
-	// 		"user_id":       UserID,
-	// 		"api_id":        request.APIID,
-	// 		"filter_fields": request.FilterFields,
-	// 		"pagination":    request.Pagination,
-	// 	},
-	// 	"message": "Search events endpoint called with validated data",
-	// }
 
 	return c.JSON(result)
 }

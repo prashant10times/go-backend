@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"reflect"
+	"search-event-go/middleware"
 	"search-event-go/models"
 	"strconv"
 	"strings"
@@ -42,9 +43,9 @@ func NewSearchEventService(workerCount int, db *gorm.DB, sharedFunctionService *
 
 func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, c *fiber.Ctx) (interface{}, error) {
 	startTime := time.Now()
+	ipAddress := c.IP()
 	statusCode := 200
 	var errorMessage *string
-	ipAddress := c.IP()
 
 	log.Printf("Starting GetEventDataV2 for user %s, api %s", userId, apiId)
 
@@ -114,10 +115,10 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	result, err := s.sharedFunctionService.quotaAndFilterVerification(userId, apiId)
 	if err != nil {
 		log.Printf("Quota and filter verification failed: %v", err)
+		statusCode = http.StatusTooManyRequests
 		msg := "Daily API limit exceeded"
 		errorMessage = &msg
-		statusCode = http.StatusTooManyRequests
-		return nil, err
+		return nil, middleware.NewTooManyRequestsError("Daily API limit exceeded", err.Error())
 	}
 	log.Printf("Quota and filter verification successful")
 
@@ -161,10 +162,10 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	}
 
 	if len(unauthorizedFilters) > 0 {
+		statusCode = http.StatusForbidden
 		msg := "The requested filters are not allowed in your current plan, please upgrade your plan to access these filters: " + strings.Join(unauthorizedFilters, ", ")
 		errorMessage = &msg
-		statusCode = http.StatusForbidden
-		return nil, fmt.Errorf("unauthorized filters: %s", strings.Join(unauthorizedFilters, ", "))
+		return nil, middleware.NewForbiddenError("Unauthorized filters", fmt.Sprintf("The requested filters are not allowed in your current plan, please upgrade your plan to access these filters: %s", strings.Join(unauthorizedFilters, ", ")))
 	}
 
 	var requestedAdvancedParameters []string
@@ -190,10 +191,10 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		}
 	}
 	if len(unauthorizedAdvancedParameters) > 0 {
+		statusCode = http.StatusForbidden
 		msg := "The requested parameters are not allowed in your current plan, please upgrade your plan to access these advanced parameters: " + strings.Join(unauthorizedAdvancedParameters, ", ")
 		errorMessage = &msg
-		statusCode = http.StatusForbidden
-		return nil, fmt.Errorf("unauthorized advanced parameters: %s", strings.Join(unauthorizedAdvancedParameters, ", "))
+		return nil, middleware.NewForbiddenError("Unauthorized advanced parameters", fmt.Sprintf("The requested parameters are not allowed in your current plan, please upgrade your plan to access these advanced parameters: %s", strings.Join(unauthorizedAdvancedParameters, ", ")))
 	}
 
 	var selectedAdvancedKeys []string
@@ -214,20 +215,20 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	sortClause, err := s.sharedFunctionService.parseSortFields(pagination.Sort, filterFields)
 	if err != nil {
 		log.Printf("Error parsing sort fields: %v", err)
+		statusCode = http.StatusBadRequest
 		msg := err.Error()
 		errorMessage = &msg
-		statusCode = http.StatusBadRequest
-		return nil, err
+		return nil, middleware.NewBadRequestError("Invalid sort fields", err.Error())
 	}
 
 	// Determine query type
 	queryType, err := s.sharedFunctionService.determineQueryType(filterFields)
 	if err != nil {
 		log.Printf("Error determining query type: %v", err)
+		statusCode = http.StatusBadRequest
 		msg := err.Error()
 		errorMessage = &msg
-		statusCode = http.StatusBadRequest
-		return nil, err
+		return nil, middleware.NewBadRequestError("Invalid query type", err.Error())
 	}
 
 	var eventData interface{}
@@ -238,43 +239,20 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		result, err := s.getDefaultListData(pagination, sortClause)
 		if err != nil {
 			log.Printf("Error getting default list data: %v", err)
+			statusCode = http.StatusInternalServerError
 			msg := err.Error()
 			errorMessage = &msg
-			statusCode = http.StatusInternalServerError
-			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-				"status": "error",
-				"meta": fiber.Map{
-					"responseTime": time.Since(startTime).Seconds(),
-				},
-				"statusCode": http.StatusInternalServerError,
-				"message":    "INTERNAL_SERVER_ERROR",
-				"data": fiber.Map{
-					"message":      "Database query failed",
-					"queryType":    "DEFAULT_LIST",
-					"chStatusCode": 500,
-				},
-			}), nil
+			return nil, middleware.NewInternalServerError("Database query failed", err.Error())
 		}
 
 		if result.StatusCode != 200 {
-			errorMessage = &result.ErrorMessage
 			statusCode = http.StatusInternalServerError
-			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-				"statusCode": http.StatusInternalServerError,
-				"message":    "INTERNAL_SERVER_ERROR",
-				"data": fiber.Map{
-					"message":      result.ErrorMessage,
-					"queryType":    "DEFAULT_LIST",
-					"chStatusCode": result.StatusCode,
-				},
-				"meta": fiber.Map{
-					"responseTime": time.Since(startTime).Seconds(),
-				},
-			}), nil
+			msg := result.ErrorMessage
+			errorMessage = &msg
+			return nil, middleware.NewInternalServerError("Database query failed", result.ErrorMessage)
 		}
 
 		eventData = result.Data
-		statusCode = result.StatusCode
 
 		var eventDataSlice []map[string]interface{}
 		if dataSlice, ok := eventData.([]map[string]interface{}); ok {
@@ -302,20 +280,20 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		result, err := s.getFilteredListData(pagination, sortClause, filterFields)
 		if err != nil {
 			log.Printf("Error getting filtered list data: %v", err)
+			statusCode = http.StatusInternalServerError
 			msg := err.Error()
 			errorMessage = &msg
-			statusCode = http.StatusInternalServerError
-			return nil, err
+			return nil, middleware.NewInternalServerError("Database query failed", err.Error())
 		}
 
 		if result.StatusCode != 200 {
-			errorMessage = &result.ErrorMessage
 			statusCode = http.StatusInternalServerError
-			return nil, fmt.Errorf("filtered list query failed: %s", result.ErrorMessage)
+			msg := result.ErrorMessage
+			errorMessage = &msg
+			return nil, middleware.NewInternalServerError("Database query failed", result.ErrorMessage)
 		}
 
 		eventData = result.Data
-		statusCode = result.StatusCode
 
 		var eventDataSlice []map[string]interface{}
 		if dataSlice, ok := eventData.([]map[string]interface{}); ok {
@@ -343,53 +321,26 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		result, err := s.getDefaultAggregationDataClickHouse(filterFields, pagination)
 		if err != nil {
 			log.Printf("Error getting default aggregation data: %v", err)
-			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-				"statusCode": http.StatusInternalServerError,
-				"message":    "INTERNAL_SERVER_ERROR",
-				"data": fiber.Map{
-					"message":      "Database aggregation query failed",
-					"queryType":    "DEFAULT_AGGREGATION",
-					"chStatusCode": 500,
-				},
-				"meta": fiber.Map{
-					"responseTime": time.Since(startTime).Seconds(),
-				},
-			}), nil
+			statusCode = http.StatusInternalServerError
+			msg := err.Error()
+			errorMessage = &msg
+			return nil, middleware.NewInternalServerError("Database aggregation query failed", err.Error())
 		}
 
 		if result.StatusCode != 200 {
-			return c.Status(http.StatusInternalServerError).JSON(fiber.Map{
-				"statusCode": http.StatusInternalServerError,
-				"message":    "INTERNAL_SERVER_ERROR",
-				"data": fiber.Map{
-					"message":      result.Error.Error(),
-					"queryType":    "DEFAULT_AGGREGATION",
-					"chStatusCode": result.StatusCode,
-				},
-				"meta": fiber.Map{
-					"responseTime": time.Since(startTime).Seconds(),
-				},
-			}), nil
+			statusCode = http.StatusInternalServerError
+			msg := result.Error.Error()
+			errorMessage = &msg
+			return nil, middleware.NewInternalServerError("Database aggregation query failed", result.Error.Error())
 		}
 
 		response = result.Response
-		statusCode = result.StatusCode
 
 	default:
-		msg := "Invalid query type: " + queryType
-		errorMessage = &msg
 		statusCode = http.StatusBadRequest
-		return c.Status(http.StatusBadRequest).JSON(fiber.Map{
-			"statusCode": http.StatusBadRequest,
-			"message":    "VALIDATION_ERROR",
-			"data": fiber.Map{
-				"message":   "Invalid query type",
-				"queryType": queryType,
-			},
-			"meta": fiber.Map{
-				"responseTime": time.Since(startTime).Seconds(),
-			},
-		}), nil
+		msg := fmt.Sprintf("Invalid query type: %s", queryType)
+		errorMessage = &msg
+		return nil, middleware.NewBadRequestError("Invalid query type", fmt.Sprintf("Invalid query type: %s", queryType))
 	}
 
 	responseTime := time.Since(startTime).Seconds()
@@ -1078,120 +1029,6 @@ func (s *SearchEventService) buildGroupByClause(fields []string) string {
 	return strings.Join(groupByFields, ",\n                        ")
 }
 
-// func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields models.FilterDataDto, pagination models.PaginationDto) (*AggregationResult, error) {
-// 	ctx := context.Background()
-
-// 	nestedQuery, err := s.sharedFunctionService.HandleNestedAggregation(filterFields, pagination)
-// 	if err != nil {
-// 		return &AggregationResult{
-// 			StatusCode: 500,
-// 			Error:      err,
-// 		}, err
-// 	}
-
-// 	startTime := time.Now()
-// 	rows, err := s.clickhouseService.ExecuteQuery(ctx, nestedQuery)
-// 	if err != nil {
-// 		log.Printf("ClickHouse aggregation query error: %v", err)
-// 		return &AggregationResult{
-// 			StatusCode: 500,
-// 			Error:      err,
-// 		}, err
-// 	}
-// 	defer rows.Close()
-
-// 	log.Printf("Default Aggregation query executed in: %v", time.Since(startTime))
-
-// 	var nestedData []map[string]interface{}
-// 	for rows.Next() {
-// 		columns := rows.Columns()
-
-// 		values := make([]interface{}, len(columns))
-// 		for i, col := range columns {
-// 			switch col {
-// 			case "country", "city", "category", "tag":
-// 				values[i] = new(string)
-// 			case "countryCount", "cityCount", "categoryCount", "tagCount":
-// 				values[i] = new(uint64)
-// 			case "cityData", "categoryData", "tagData":
-// 				// ClickHouse groupArray returns arrays, scan as interface{} and parse manually
-// 				values[i] = new(interface{})
-// 			default:
-// 				if strings.HasSuffix(col, "Count") {
-// 					values[i] = new(uint64)
-// 				} else if strings.HasSuffix(col, "Data") {
-// 					// ClickHouse groupArray returns arrays, scan as interface{} and parse manually
-// 					values[i] = new(interface{})
-// 				} else {
-// 					values[i] = new(string)
-// 				}
-// 			}
-// 		}
-
-// 		if err := rows.Scan(values...); err != nil {
-// 			log.Printf("Error scanning aggregation row: %v", err)
-// 			continue
-// 		}
-
-// 		rowData := make(map[string]interface{})
-// 		for i, col := range columns {
-// 			val := values[i]
-
-// 			switch col {
-// 			case "countryCount", "cityCount", "categoryCount", "tagCount":
-// 				if ptr, ok := val.(*uint64); ok && ptr != nil {
-// 					rowData[col] = *ptr
-// 				}
-// 			case "cityData", "categoryData", "tagData":
-// 				if ptr, ok := val.(*interface{}); ok && ptr != nil {
-// 					parsedData := s.parseClickHouseGroupArrayInterface(*ptr)
-// 					rowData[col] = parsedData
-// 				}
-// 			default:
-// 				if strings.HasSuffix(col, "Count") {
-// 					if ptr, ok := val.(*uint64); ok && ptr != nil {
-// 						rowData[col] = *ptr
-// 					}
-// 				} else if strings.HasSuffix(col, "Data") {
-// 					if ptr, ok := val.(*interface{}); ok && ptr != nil {
-// 						// Parse ClickHouse groupArray interface{} format
-// 						parsedData := s.parseClickHouseGroupArrayInterface(*ptr)
-// 						rowData[col] = parsedData
-// 					}
-// 				} else {
-// 					if ptr, ok := val.(*string); ok && ptr != nil {
-// 						rowData[col] = *ptr
-// 					}
-// 				}
-// 			}
-// 		}
-// 		nestedData = append(nestedData, rowData)
-// 	}
-
-// 	// Extract aggregation fields from filterFields.ToAggregate
-// 	aggregationFields := []string{}
-// 	if filterFields.ToAggregate != "" {
-// 		fields := strings.Split(filterFields.ToAggregate, ",")
-// 		for _, field := range fields {
-// 			aggregationFields = append(aggregationFields, strings.TrimSpace(field))
-// 		}
-// 	}
-
-// 	transformedData, err := s.sharedFunctionService.transformAggregationDataToNested(nestedData, aggregationFields)
-// 	if err != nil {
-// 		log.Printf("Error transforming aggregation data: %v", err)
-// 		return &AggregationResult{
-// 			StatusCode: 500,
-// 			Error:      err,
-// 		}, err
-// 	}
-
-// 	return &AggregationResult{
-// 		StatusCode: 200,
-// 		Response:   transformedData,
-// 	}, nil
-// }
-
 func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields models.FilterDataDto, pagination models.PaginationDto) (*AggregationResult, error) {
 	ctx := context.Background()
 
@@ -1201,6 +1038,7 @@ func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields mo
 	}
 
 	log.Printf("Nested Aggregation Query: %s", nestedQuery)
+	log.Printf("Query length: %d characters", len(nestedQuery))
 
 	startTime := time.Now()
 	rows, err := s.clickhouseService.ExecuteQuery(ctx, nestedQuery)
@@ -1253,9 +1091,17 @@ func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields mo
 		}
 
 		nestedData = append(nestedData, rowData)
+		log.Printf("Processed row %d: %+v", len(nestedData), rowData)
 	}
 
+	log.Printf("Finished processing all rows. Total rows: %d", len(nestedData))
+	// Check for any errors that occurred during row iteration
+	if err := rows.Err(); err != nil {
+		log.Printf("ClickHouse row iteration error: %v", err)
+		return &AggregationResult{StatusCode: 500, Error: err}, err
+	}
 
+	log.Printf("No row iteration errors found. Processed %d rows", len(nestedData))
 	aggregationFields := s.extractAggregationFields(filterFields.ToAggregate)
 	log.Printf("Aggregation fields: %v", aggregationFields)
 

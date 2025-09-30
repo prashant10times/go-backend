@@ -23,14 +23,11 @@ import (
 type SharedFunctionService struct {
 	db *gorm.DB
 }
-
-// OrderedJSONMap is a custom type that preserves key order during JSON marshaling
 type OrderedJSONMap struct {
 	Keys   []string
 	Values map[string]interface{}
 }
 
-// MarshalJSON implements json.Marshaler to preserve key order
 func (o OrderedJSONMap) MarshalJSON() ([]byte, error) {
 	var buf bytes.Buffer
 	buf.WriteString("{")
@@ -40,7 +37,6 @@ func (o OrderedJSONMap) MarshalJSON() ([]byte, error) {
 			buf.WriteString(",")
 		}
 
-		// Marshal the key
 		keyBytes, err := json.Marshal(key)
 		if err != nil {
 			return nil, err
@@ -48,7 +44,6 @@ func (o OrderedJSONMap) MarshalJSON() ([]byte, error) {
 		buf.Write(keyBytes)
 		buf.WriteString(":")
 
-		// Marshal the value
 		valueBytes, err := json.Marshal(o.Values[key])
 		if err != nil {
 			return nil, err
@@ -68,7 +63,6 @@ func NewSharedFunctionService(db *gorm.DB) *SharedFunctionService {
 
 func (s *SharedFunctionService) logApiUsage(userId, apiId, endpoint string, responseTime float64, ipAddress string, statusCode int, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, errorMessage *string) error {
 
-	// Create payload with filter fields, response fields, and pagination
 	payload := map[string]interface{}{
 		"filterFields":   filterFields,
 		"responseFields": responseFields,
@@ -126,7 +120,7 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 		}
 
 		if updated == 0 {
-			return gorm.ErrRecordNotFound // This will be handled as "Daily limit reached"
+			return gorm.ErrRecordNotFound
 		}
 
 		var basicFilters []models.APIFilter
@@ -164,7 +158,6 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 
 		result.AllowedFilters = append(basicFilterNames, allowedAdvancedFilters...)
 
-		// Get permitted advanced parameters
 		var userParameterAccess []struct {
 			HasAccess bool
 			Parameter models.APIParameter `gorm:"embedded;embeddedPrefix:parameter_"`
@@ -179,7 +172,6 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 			return err
 		}
 
-		// Extract allowed advanced parameters (only paid ones)
 		for _, access := range userParameterAccess {
 			if access.Parameter.IsPaid {
 				result.AllowedAdvancedParameters = append(result.AllowedAdvancedParameters, access.Parameter.ParameterName)
@@ -191,7 +183,6 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 
 	if err != nil {
 		if err == gorm.ErrRecordNotFound {
-			// Convert to "Daily limit reached" error
 			return nil, &QuotaExceededError{Message: "Daily limit reached"}
 		}
 		return nil, err
@@ -430,7 +421,6 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 	return "DEFAULT_LIST", nil
 }
 
-// ClickHouseQueryResult represents the result of buildClickHouseQuery
 type ClickHouseQueryResult struct {
 	WhereClause              string
 	SearchClause             string
@@ -655,13 +645,11 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	return result, nil
 }
 
-// CTEAndJoinResult represents the result of buildFilterCTEsAndJoins
 type CTEAndJoinResult struct {
 	CTEClauses     []string
 	JoinConditions []string
 }
 
-// buildFilterCTEsAndJoins builds CTEs and join conditions for filtering
 func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsVisitorJoin bool,
 	needsSpeakerJoin bool,
@@ -681,7 +669,6 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		JoinConditions: make([]string, 0),
 	}
 
-	// Build chained CTEs where each one references the previous one
 	previousCTE := ""
 
 	if needsVisitorJoin {
@@ -1262,20 +1249,17 @@ func (s *SharedFunctionService) transformAggregationDataToNested(flatData []map[
 }
 
 func (s *SharedFunctionService) transformNestedQueryData(flatData []map[string]interface{}, aggregationFields []string) (interface{}, error) {
-	// Add panic recovery
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Panic recovered in transformNestedQueryData: %v", r)
 		}
 	}()
 
-	// Validate aggregation fields once at the beginning
 	if len(aggregationFields) > 4 {
 		log.Printf("WARNING: Aggregation with %d fields is not supported. Maximum supported is 4 fields.", len(aggregationFields))
 		return map[string]interface{}{}, nil
 	}
 
-	// Sort flat data by parent field count to ensure proper ordering
 	parentField := aggregationFields[0]
 	s.sortFlatDataByCount(flatData, parentField)
 
@@ -1291,7 +1275,6 @@ func (s *SharedFunctionService) transformNestedQueryData(flatData []map[string]i
 		parentValueStr := fmt.Sprintf("%v", parentValue)
 		parentCount := s.getCountFromItem(item, parentField)
 
-		// Initialize parent entry if not exists
 		if _, exists := result.Get(parentValueStr); !exists {
 			parentData := orderedmap.NewOrderedMap()
 			parentData.Set(fmt.Sprintf("%sCount", parentField), parentCount)
@@ -1318,7 +1301,6 @@ func (s *SharedFunctionService) transformNestedQueryData(flatData []map[string]i
 		}()
 	}
 
-	// Convert to serializable format
 	return s.convertOrderedMapToSlice(result), nil
 }
 
@@ -1341,13 +1323,10 @@ func (s *SharedFunctionService) processLevel2Data(item map[string]interface{}, r
 	level1MapValue, _ := parentMap.Get(level1Field)
 	level1Map := level1MapValue.(*orderedmap.OrderedMap)
 
-	// Parse the nested data array
 	if dataSlice, ok := nestedDataArray.([]interface{}); ok {
-		// Sort the data slice by count before processing (for array format [name, count])
 		sortedDataSlice := s.sortArrayDataByCount(dataSlice)
 
 		for _, item := range sortedDataSlice {
-			// Handle the new parsed format from parseClickHouseGroupArrayInterface
 			if itemMap, ok := item.(map[string]interface{}); ok {
 				itemName, _ := itemMap["field1Name"].(string)
 				itemCount := s.parseIntFromInterface(itemMap["field1Count"])
@@ -1403,7 +1382,6 @@ func (s *SharedFunctionService) processLevel3Data(item map[string]interface{}, r
 	level1Map := level1MapValue.(*orderedmap.OrderedMap)
 
 	if dataSlice, ok := level1DataArray.([]interface{}); ok {
-		// Sort the data slice by count before processing
 		sortedDataSlice := s.sortDataSliceByCount(dataSlice, "field1Count")
 
 		for _, level1Item := range sortedDataSlice {
@@ -1418,7 +1396,6 @@ func (s *SharedFunctionService) processLevel3Data(item map[string]interface{}, r
 
 					if len(level2Data) > 0 {
 						level2Map := orderedmap.NewOrderedMap()
-						// Sort level2Data by count before processing
 						sortedLevel2Data := s.sortDataSliceByCount(level2Data, "count")
 
 						for _, level2Item := range sortedLevel2Data {
@@ -1567,7 +1544,6 @@ func (s *SharedFunctionService) processLevel4Data(item map[string]interface{}, r
 													level3Map := orderedmap.NewOrderedMap()
 													level3CountKey := fmt.Sprintf("%sCount", level3Field)
 
-													// Parse date entries separated by spaces
 													level3Items := strings.Fields(level3DataStr)
 													for _, level3Item := range level3Items {
 														if strings.Contains(level3Item, "|") {
@@ -1604,7 +1580,6 @@ func (s *SharedFunctionService) processLevel4Data(item map[string]interface{}, r
 					}
 				}
 			} else {
-				// Fallback for older data formats
 				unwrappedData := s.unwrapNestedArrays(level1Item)
 				if level1ItemMap, ok := unwrappedData.(map[string]interface{}); ok {
 					s.parseNestedLevel4(level1ItemMap, level1Map, level1Field, level2Field, level3Field)
@@ -1635,7 +1610,6 @@ func (s *SharedFunctionService) parseIntFromInterface(value interface{}) int {
 func (s *SharedFunctionService) unwrapNestedArrays(data interface{}) interface{} {
 	current := data
 
-	// Keep unwrapping while we have arrays
 	for {
 		if arr, ok := current.([]interface{}); ok && len(arr) > 0 {
 			current = arr[0]
@@ -1686,21 +1660,17 @@ func (s *SharedFunctionService) parseNestedLevel(itemMap map[string]interface{},
 		return
 	}
 
-	// Create item entry
 	itemData := orderedmap.NewOrderedMap()
 	itemData.Set(level1CountKey, itemCount)
 
-	// Parse nested level2 data
 	if len(nestedData) > 0 {
 		level2Map := orderedmap.NewOrderedMap()
 		level2CountKey := fmt.Sprintf("%sCount", level2Field)
 
-		// Sort the nested data by count before processing
 		sortedNestedData := s.sortStringArrayByCount(nestedData)
 
 		for _, level2Item := range sortedNestedData {
 			if level2Str, ok := level2Item.(string); ok {
-				// Format: "value|count" or "value count"
 				var parts []string
 				if strings.Contains(level2Str, "|") {
 					parts = strings.Split(level2Str, "|")
@@ -1717,7 +1687,6 @@ func (s *SharedFunctionService) parseNestedLevel(itemMap map[string]interface{},
 					}
 				}
 			} else if level2MapItem, ok := level2Item.(map[string]interface{}); ok {
-				// Handle if it comes as a map with "" key containing "name count" pairs
 				for _, v := range level2MapItem {
 					if vStr, ok := v.(string); ok {
 						var parts []string
@@ -1787,21 +1756,17 @@ func (s *SharedFunctionService) parseNestedLevel4(itemMap map[string]interface{}
 		return
 	}
 
-	// Create item entry
 	itemData := orderedmap.NewOrderedMap()
 	itemData.Set(level1CountKey, itemCount)
 
-	// Parse nested level2 data
 	if len(nestedData) > 0 {
 		level2Map := orderedmap.NewOrderedMap()
 		level2CountKey := fmt.Sprintf("%sCount", level2Field)
 
-		// Sort the nested data by count before processing
 		sortedNestedData := s.sortStringArrayByCount(nestedData)
 
 		for _, level2Item := range sortedNestedData {
 			if level2Str, ok := level2Item.(string); ok {
-				// Handle the new format: "level2Name|||count|||level3Data"
 				if strings.Contains(level2Str, "|||") {
 					parts := strings.Split(level2Str, "|||")
 					if len(parts) >= 3 {
@@ -1811,12 +1776,10 @@ func (s *SharedFunctionService) parseNestedLevel4(itemMap map[string]interface{}
 							level2Entry := orderedmap.NewOrderedMap()
 							level2Entry.Set(level2CountKey, level2Count)
 
-							// Parse level3 data
 							if level3DataStr != "" {
 								level3Map := orderedmap.NewOrderedMap()
 								level3CountKey := fmt.Sprintf("%sCount", level3Field)
 
-								// Parse level3 data from string format
 								level3Items := strings.Fields(level3DataStr)
 								for _, level3Item := range level3Items {
 									if strings.Contains(level3Item, "|") {
@@ -1841,7 +1804,6 @@ func (s *SharedFunctionService) parseNestedLevel4(itemMap map[string]interface{}
 						}
 					}
 				} else {
-					// Handle old format: "value|count"
 					var parts []string
 					if strings.Contains(level2Str, "|") {
 						parts = strings.Split(level2Str, "|")
@@ -1859,7 +1821,6 @@ func (s *SharedFunctionService) parseNestedLevel4(itemMap map[string]interface{}
 					}
 				}
 			} else if level2MapItem, ok := level2Item.(map[string]interface{}); ok {
-				// Handle if it comes as a map with "" key containing "name count" pairs
 				for _, v := range level2MapItem {
 					if vStr, ok := v.(string); ok {
 						var parts []string
@@ -1890,7 +1851,6 @@ func (s *SharedFunctionService) parseNestedLevel4(itemMap map[string]interface{}
 	parentMap.Set(itemName, itemData)
 }
 
-// Simple method to convert OrderedMap to slice without additional sorting
 func (s *SharedFunctionService) convertOrderedMapToSlice(om *orderedmap.OrderedMap) []map[string]interface{} {
 	var result []map[string]interface{}
 
@@ -1907,7 +1867,6 @@ func (s *SharedFunctionService) convertOrderedMapToSlice(om *orderedmap.OrderedM
 	return result
 }
 
-// Helper method to sort flat data by parent field count
 func (s *SharedFunctionService) sortFlatDataByCount(flatData []map[string]interface{}, parentField string) {
 	countKey := fmt.Sprintf("%sCount", parentField)
 
@@ -1927,13 +1886,12 @@ func (s *SharedFunctionService) sortFlatDataByCount(flatData []map[string]interf
 			}
 		}
 
-		return countI > countJ // Descending order
+		return countI > countJ
 	})
 }
 
-// Helper method to sort data slice by count field
 func (s *SharedFunctionService) sortDataSliceByCount(dataSlice []interface{}, countFieldName string) []interface{} {
-	// Create a copy to avoid modifying the original
+
 	sortedSlice := make([]interface{}, len(dataSlice))
 	copy(sortedSlice, dataSlice)
 
@@ -1941,7 +1899,7 @@ func (s *SharedFunctionService) sortDataSliceByCount(dataSlice []interface{}, co
 		countI := 0
 		countJ := 0
 
-		// Extract count from item i
+		
 		if itemMap, ok := sortedSlice[i].(map[string]interface{}); ok {
 			if countValue, exists := itemMap[countFieldName]; exists {
 				countI = s.parseIntFromInterface(countValue)
@@ -1950,7 +1908,7 @@ func (s *SharedFunctionService) sortDataSliceByCount(dataSlice []interface{}, co
 			countI = s.parseIntFromInterface(itemArray[1])
 		}
 
-		// Extract count from item j
+
 		if itemMap, ok := sortedSlice[j].(map[string]interface{}); ok {
 			if countValue, exists := itemMap[countFieldName]; exists {
 				countJ = s.parseIntFromInterface(countValue)
@@ -1959,15 +1917,13 @@ func (s *SharedFunctionService) sortDataSliceByCount(dataSlice []interface{}, co
 			countJ = s.parseIntFromInterface(itemArray[1])
 		}
 
-		return countI > countJ // Descending order
+		return countI > countJ
 	})
 
 	return sortedSlice
 }
 
-// Helper method to sort string array by count (for "name|count" format)
 func (s *SharedFunctionService) sortStringArrayByCount(dataSlice []interface{}) []interface{} {
-	// Create a copy to avoid modifying the original
 	sortedSlice := make([]interface{}, len(dataSlice))
 	copy(sortedSlice, dataSlice)
 
@@ -1975,7 +1931,6 @@ func (s *SharedFunctionService) sortStringArrayByCount(dataSlice []interface{}) 
 		countI := 0
 		countJ := 0
 
-		// Extract count from string format "name|count"
 		if strI, ok := sortedSlice[i].(string); ok {
 			var parts []string
 			if strings.Contains(strI, "|") {
@@ -2004,15 +1959,13 @@ func (s *SharedFunctionService) sortStringArrayByCount(dataSlice []interface{}) 
 			}
 		}
 
-		return countI > countJ // Descending order
+		return countI > countJ
 	})
 
 	return sortedSlice
 }
 
-// Helper method to sort array data by count (for [name, count] format)
 func (s *SharedFunctionService) sortArrayDataByCount(dataSlice []interface{}) []interface{} {
-	// Create a copy to avoid modifying the original
 	sortedSlice := make([]interface{}, len(dataSlice))
 	copy(sortedSlice, dataSlice)
 
@@ -2020,7 +1973,6 @@ func (s *SharedFunctionService) sortArrayDataByCount(dataSlice []interface{}) []
 		countI := 0
 		countJ := 0
 
-		// Extract count from array format [name, count]
 		if arrayI, ok := sortedSlice[i].([]interface{}); ok && len(arrayI) >= 2 {
 			countI = s.parseIntFromInterface(arrayI[1])
 		}
@@ -2029,18 +1981,15 @@ func (s *SharedFunctionService) sortArrayDataByCount(dataSlice []interface{}) []
 			countJ = s.parseIntFromInterface(arrayJ[1])
 		}
 
-		return countI > countJ // Descending order
+		return countI > countJ
 	})
 
 	return sortedSlice
 }
 
-// Helper method to convert OrderedMap to regular map with sorted nested data
 func (s *SharedFunctionService) convertOrderedMapToRegularMap(value interface{}) interface{} {
 	if nestedOM, ok := value.(*orderedmap.OrderedMap); ok {
 		result := make(map[string]interface{})
-
-		// Separate count fields from nested data fields and sort nested fields
 		var countFields []string
 		var nestedFields []string
 
@@ -2053,17 +2002,14 @@ func (s *SharedFunctionService) convertOrderedMapToRegularMap(value interface{})
 			}
 		}
 
-		// Add count fields first
 		for _, key := range countFields {
 			nestedValue, _ := nestedOM.Get(key)
 			result[key] = nestedValue
 		}
 
-		// Process nested fields with sorting
 		for _, key := range nestedFields {
 			nestedValue, _ := nestedOM.Get(key)
 			if nestedNestedOM, ok := nestedValue.(*orderedmap.OrderedMap); ok {
-				// Sort nested data and convert to regular map
 				sortedNested := s.convertNestedOrderedMapToSortedRegularMap(nestedNestedOM)
 				result[key] = sortedNested
 			} else {
@@ -2085,16 +2031,12 @@ func (s *SharedFunctionService) convertNestedOrderedMapToSortedRegularMap(om *or
 	}
 
 	var keyValues []KeyValue
-
-	// Extract key-value pairs with their counts
 	for _, key := range om.Keys() {
 		value, _ := om.Get(key)
 		keyStr := fmt.Sprintf("%v", key)
 
-		// Extract count from the nested data
 		count := 0
 		if nestedOM, ok := value.(*orderedmap.OrderedMap); ok {
-			// Look for any field ending with "Count"
 			for _, nestedKey := range nestedOM.Keys() {
 				nestedKeyStr := fmt.Sprintf("%v", nestedKey)
 				if strings.HasSuffix(nestedKeyStr, "Count") {
@@ -2115,12 +2057,10 @@ func (s *SharedFunctionService) convertNestedOrderedMapToSortedRegularMap(om *or
 		})
 	}
 
-	// Sort by count in descending order
 	sort.Slice(keyValues, func(i, j int) bool {
 		return keyValues[i].Count > keyValues[j].Count
 	})
 
-	// Use custom OrderedJSONMap to preserve key order during JSON marshaling
 	orderedKeys := make([]string, len(keyValues))
 	values := make(map[string]interface{})
 
@@ -2218,7 +2158,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 }
 
 func (s *SharedFunctionService) buildHierarchicalNestedQuery(parentField string, nestedFields []string, parentLimit int, parentOffset int, nestedLimit int, cteClauses []string, fieldMapping map[string]string, editionFilterConditions []string) (string, error) {
-	query := "WITH "
+	query := ""
 	allFields := append([]string{parentField}, nestedFields...)
 
 	if len(cteClauses) > 0 {
@@ -2324,7 +2264,6 @@ func (s *SharedFunctionService) buildFieldFrom(fields []string, cteClauses []str
 	hasTag := s.contains(fields, "tag")
 
 	if hasCategory && hasTag {
-		// When both category and tag are needed, use separate joins with different aliases
 		from += " INNER JOIN testing_db.event_category_ch c ON ee.event_id = c.event AND c.is_group = 1"
 		from += " INNER JOIN testing_db.event_category_ch t ON ee.event_id = t.event AND t.is_group = 0"
 	} else if hasCategory {
@@ -2374,8 +2313,6 @@ func (s *SharedFunctionService) buildFieldWhere(fields []string, editionFilterCo
 	hasCategory := s.contains(fields, "category")
 	hasTag := s.contains(fields, "tag")
 
-	// Only add is_group conditions when we don't have both category and tag
-	// (because when both are present, the condition is moved to the JOIN clause)
 	if hasCategory && !hasTag {
 		where += "\n      AND c.is_group = 1"
 	}
@@ -2404,70 +2341,10 @@ func (s *SharedFunctionService) containsCTE(cteClauses []string, cteName string)
 	return false
 }
 
-// func (s *SharedFunctionService) buildHierarchyStructure(parentField string, nestedFields []string, parentLimit int, parentOffset int, nestedLimit int) string {
-// 	if len(nestedFields) == 0 {
-// 		return ""
-// 	} else if len(nestedFields) == 1 {
-// 		//log.Printf("Building hierarchy structure for 1 nested field: %v", nestedFields)
-// 		return fmt.Sprintf(`,
-// 			hierarchical_nested AS (
-// 							SELECT
-// 					%s,
-// 					sum(%sCount) AS %sCount,
-// 					groupArray(arrayStringConcat(array(%s, toString(%sCount)), '|')) AS %sData
-// 				FROM (
-// 								SELECT
-// 									%s,
-// 						%s,
-// 						count(*) AS %sCount
-// 					FROM base_data
-// 					GROUP BY %s, %s
-// 					ORDER BY %sCount DESC
-// 					LIMIT %d BY %s
-// 				)
-// 				GROUP BY %s
-// 				ORDER BY %sCount DESC
-// 				LIMIT %d OFFSET %d
-// 			)`, parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[0], parentField, nestedFields[0], nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedLimit, parentField, parentField, parentField, parentLimit, parentOffset)
-// 	} else if len(nestedFields) == 2 {
-// 		//log.Printf("Building hierarchy structure for 2 nested fields: %v", nestedFields)
-// 		return fmt.Sprintf(`,
-// 			hierarchical_nested AS (
-// 								SELECT
-// 									%s,
-// 					sum(%sCount) AS %sCount,
-// 					groupArray(arrayStringConcat(array(%s, toString(%sCount), arrayStringConcat(%sData, ' ')), '|||')) AS %sData
-// 				FROM (
-// 								SELECT
-// 									%s,
-// 						%s,
-// 						sum(%sCount) AS %sCount,
-// 						groupArray((%s, count(*))) AS %sData
-// 					FROM (
-// 							SELECT
-// 								%s,
-// 							%s,
-// 							%s,
-// 							count(*) AS %sCount
-// 						FROM base_data
-// 						GROUP BY %s, %s, %s
-// 						ORDER BY %sCount DESC
-// 						LIMIT %d BY %s, %s
-// 					)
-// 					GROUP BY %s, %s
-// 					ORDER BY %sCount DESC
-// 					LIMIT %d BY %s
-// 				)
-//                 GROUP BY %s
-//                 ORDER BY %sCount DESC
-//                 LIMIT %d OFFSET %d
-//             )`, parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[0], nestedFields[0], parentField, nestedFields[0], nestedFields[1], nestedFields[0], nestedFields[1], nestedFields[0], parentField, parentField, nestedFields[0], nestedFields[1], nestedFields[1], parentField, nestedFields[0], nestedFields[1], nestedFields[1], nestedLimit, parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedLimit, parentField, parentField, parentField, parentLimit, parentOffset)
-
 func (s *SharedFunctionService) buildHierarchyStructure(parentField string, nestedFields []string, parentLimit int, parentOffset int, nestedLimit int) string {
 	if len(nestedFields) == 0 {
 		return ""
 	} else if len(nestedFields) == 1 {
-		//log.Printf("Building hierarchy structure for 1 nested field: %v", nestedFields)
 		return fmt.Sprintf(`,
 			base_counts AS (
 				SELECT
@@ -2509,7 +2386,6 @@ func (s *SharedFunctionService) buildHierarchyStructure(parentField string, nest
 			parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[0],
 			parentField, parentField, parentLimit, parentOffset)
 	} else if len(nestedFields) == 2 {
-		//log.Printf("Building hierarchy structure for 2 nested fields: %v", nestedFields)
 		return fmt.Sprintf(`,
 			base_counts AS (
 				SELECT
@@ -2585,7 +2461,6 @@ func (s *SharedFunctionService) buildHierarchyStructure(parentField string, nest
 			parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[1], nestedFields[0],
 			parentField, parentField, parentLimit, parentOffset)
 	} else if len(nestedFields) == 3 {
-		//log.Printf("Building hierarchy structure for 3 nested fields: %v", nestedFields)
 		return fmt.Sprintf(`,
 			base_counts AS (
 				SELECT
