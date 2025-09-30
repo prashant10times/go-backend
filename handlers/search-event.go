@@ -42,6 +42,11 @@ func NewSearchEventsHandler(workerCount int, searchEventService *services.Search
 }
 
 func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
+	workerID := <-h.workerPool
+	defer func() {
+		h.workerPool <- workerID
+	}()
+
 	var request models.SearchEventsRequest
 
 	log.Printf("Raw query string: %s", c.Request().URI().QueryString())

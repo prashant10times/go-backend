@@ -44,9 +44,6 @@ func NewClickHouseService(cfg *config.Config) (*ClickHouseService, error) {
 		Settings: clickhouse.Settings{
 			"max_execution_time": 60,
 		},
-		// Compression: &clickhouse.Compression{
-		// 	Method: clickhouse.CompressionLZ4,
-		// },
 		MaxOpenConns:    50,
 		MaxIdleConns:    20,
 		ConnMaxLifetime: 2 * time.Hour,
@@ -63,13 +60,6 @@ func NewClickHouseService(cfg *config.Config) (*ClickHouseService, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to ClickHouse: %w", err)
 	}
-
-	// Try the simplest possible query first
-	// query, err := conn.Query(context.Background(), "SELECT 1")
-	// if err != nil {
-	// 	log.Printf("Simple test query failed: %v", err)
-	// }
-	// // defer query.Close()
 
 	log.Println("ClickHouse connection established successfully")
 

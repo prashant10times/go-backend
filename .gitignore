@@ -1,6 +1,6 @@
-# Binaries
-/bin/
-/build/
+# Binaries / Executables (ignore all files without extension, anywhere)
+**/main
+**/search-event-api
 *.exe
 *.exe~
 *.dll
@@ -8,6 +8,7 @@
 *.dylib
 *.test
 *.out
+*.log
 
 # Go cache / vendor
 /pkg/
@@ -29,13 +30,6 @@ Thumbs.db
 .air.toml
 tmp/
 
-/search-event-api
-
+# Project-specific
 docker-compose.yml
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
 ecosystem.config.js
