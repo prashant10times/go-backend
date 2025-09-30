@@ -19,22 +19,13 @@ import (
 )
 
 type SearchEventService struct {
-	workerPool            chan int
-	nextWorker            int
 	db                    *gorm.DB
 	sharedFunctionService *SharedFunctionService
 	clickhouseService     *ClickHouseService
 }
 
-func NewSearchEventService(workerCount int, db *gorm.DB, sharedFunctionService *SharedFunctionService, clickhouseService *ClickHouseService) *SearchEventService {
-	workerPool := make(chan int, workerCount)
-	for i := 0; i < workerCount; i++ {
-		workerPool <- i
-	}
-
+func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionService, clickhouseService *ClickHouseService) *SearchEventService {
 	return &SearchEventService{
-		workerPool:            workerPool,
-		nextWorker:            workerCount,
 		db:                    db,
 		sharedFunctionService: sharedFunctionService,
 		clickhouseService:     clickhouseService,
