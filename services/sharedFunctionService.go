@@ -2163,7 +2163,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 }
 
 func (s *SharedFunctionService) buildHierarchicalNestedQuery(parentField string, nestedFields []string, parentLimit int, parentOffset int, nestedLimit int, cteClauses []string, fieldMapping map[string]string, editionFilterConditions []string) (string, error) {
-	query := ""
+	query := "WITH "
 	allFields := append([]string{parentField}, nestedFields...)
 
 	if len(cteClauses) > 0 {
