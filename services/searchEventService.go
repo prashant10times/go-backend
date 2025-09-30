@@ -52,25 +52,6 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		}()
 	}()
 
-	// Handle panic as internal server error
-	defer func() {
-		if r := recover(); r != nil {
-			responseTime := time.Since(startTime).Seconds()
-			log.Printf("Panic recovered: %v", r)
-			errorResponse := fiber.Map{
-				"statusCode": http.StatusInternalServerError,
-				"message":    "INTERNAL_SERVER_ERROR",
-				"data": fiber.Map{
-					"message": "An unexpected error occurred",
-				},
-				"meta": fiber.Map{
-					"responseTime": responseTime,
-				},
-			}
-			log.Printf("Error response: %v", errorResponse)
-		}
-	}()
-
 	log.Printf("User ID: %v", userId)
 
 	var params []struct {
@@ -415,7 +396,6 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 
 	requiredFieldsStatic := append(baseFields, conditionalFields...)
 
-	// Build group by clause - simple replacement of 'ee.' prefix
 	var groupByFields []string
 	for _, field := range requiredFieldsStatic {
 		groupByFields = append(groupByFields, strings.Replace(field, "ee.", "", 1))
@@ -824,6 +804,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		fieldsString, finalGroupByClause, finalGroupByClause, finalGroupByClause,
 		s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true))
 
+	log.Printf("Event data query: %s", eventDataQuery)
+
 	eventDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), eventDataQuery)
 	if err != nil {
 		log.Printf("ClickHouse query error: %v", err)
@@ -842,7 +824,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 
 		columns := eventDataResult.Columns()
 
-		// Create appropriate data type containers for each column
 		values := make([]interface{}, len(columns))
 		for i, col := range columns {
 			switch col {

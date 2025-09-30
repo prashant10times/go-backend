@@ -839,7 +839,14 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	}
 
 	if previousCTE != "" {
-		result.JoinConditions = append(result.JoinConditions, fmt.Sprintf("ee.event_id IN (SELECT event_id FROM %s)", previousCTE))
+		var selectColumn string
+		switch previousCTE {
+		case "filtered_categories":
+			selectColumn = "event"
+		default:
+			selectColumn = "event_id"
+		}
+		result.JoinConditions = append(result.JoinConditions, fmt.Sprintf("ee.event_id IN (SELECT %s FROM %s)", selectColumn, previousCTE))
 	}
 
 	return result
@@ -1899,7 +1906,6 @@ func (s *SharedFunctionService) sortDataSliceByCount(dataSlice []interface{}, co
 		countI := 0
 		countJ := 0
 
-		
 		if itemMap, ok := sortedSlice[i].(map[string]interface{}); ok {
 			if countValue, exists := itemMap[countFieldName]; exists {
 				countI = s.parseIntFromInterface(countValue)
@@ -1907,7 +1913,6 @@ func (s *SharedFunctionService) sortDataSliceByCount(dataSlice []interface{}, co
 		} else if itemArray, ok := sortedSlice[i].([]interface{}); ok && len(itemArray) >= 2 {
 			countI = s.parseIntFromInterface(itemArray[1])
 		}
-
 
 		if itemMap, ok := sortedSlice[j].(map[string]interface{}); ok {
 			if countValue, exists := itemMap[countFieldName]; exists {
