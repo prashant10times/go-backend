@@ -413,7 +413,6 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 		return "FILTERED_LIST", nil
 	} else if isAggregationView {
 		log.Printf("Query type determined: DEFAULT_AGGREGATION")
-		log.Printf("Returning DEFAULT_AGGREGATION string")
 		return "DEFAULT_AGGREGATION", nil
 	}
 

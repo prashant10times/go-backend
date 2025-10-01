@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"search-event-go/middleware"
 	"search-event-go/models"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -32,7 +33,7 @@ func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionSer
 	}
 }
 
-func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, c *fiber.Ctx) (interface{}, error) {
+func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, c *fiber.Ctx) (any, error) {
 	startTime := time.Now()
 	ipAddress := c.IP()
 	statusCode := 200
@@ -121,14 +122,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 
 	var unauthorizedFilters []string
 	for _, filter := range requestedFilters {
-		found := false
-		for _, allowed := range allowedFilters {
-			if filter == allowed {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(allowedFilters, filter) {
 			unauthorizedFilters = append(unauthorizedFilters, filter)
 		}
 	}
@@ -142,23 +136,13 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 
 	var requestedAdvancedParameters []string
 	for _, filter := range requestedFilters {
-		for _, advancedKey := range advancedKeys {
-			if filter == advancedKey {
-				requestedAdvancedParameters = append(requestedAdvancedParameters, filter)
-				break
-			}
+		if slices.Contains(advancedKeys, filter) {
+			requestedAdvancedParameters = append(requestedAdvancedParameters, filter)
 		}
 	}
 	var unauthorizedAdvancedParameters []string
 	for _, parameter := range requestedAdvancedParameters {
-		found := false
-		for _, allowed := range allowedAdvancedParameters {
-			if parameter == allowed {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(allowedAdvancedParameters, parameter) {
 			unauthorizedAdvancedParameters = append(unauthorizedAdvancedParameters, parameter)
 		}
 	}
@@ -171,11 +155,8 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 
 	var selectedAdvancedKeys []string
 	for _, parameter := range requestedAdvancedParameters {
-		for _, allowed := range allowedAdvancedParameters {
-			if parameter == allowed {
-				selectedAdvancedKeys = append(selectedAdvancedKeys, parameter)
-				break
-			}
+		if slices.Contains(allowedAdvancedParameters, parameter) {
+			selectedAdvancedKeys = append(selectedAdvancedKeys, parameter)
 		}
 	}
 
