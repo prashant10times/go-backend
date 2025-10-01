@@ -2351,240 +2351,116 @@ func (s *SharedFunctionService) buildHierarchyStructure(parentField string, nest
 		return ""
 	} else if len(nestedFields) == 1 {
 		return fmt.Sprintf(`,
-			base_counts AS (
-				SELECT
-					%s,
-					%s,
-					count(*) AS %sCount
-				FROM base_data
-				GROUP BY %s, %s
-			),
-			top_nested_per_parent AS (
-				SELECT
-					%s,
-					%s,
-					%sCount
-				FROM (
-					SELECT
-						%s,
-						%s,
-						%sCount,
-						row_number() OVER (PARTITION BY %s ORDER BY %sCount DESC) as rn
-					FROM base_counts
-				)
-				WHERE rn <= %d
-			),
 			hierarchical_nested AS (
-				SELECT
+				SELECT 
 					%s,
 					sum(%sCount) AS %sCount,
 					groupArray(arrayStringConcat(array(%s, toString(%sCount)), '|')) AS %sData
-				FROM top_nested_per_parent
+				FROM (
+					SELECT 
+						%s,
+						%s,
+						count(*) AS %sCount
+					FROM base_data
+					GROUP BY %s, %s
+					ORDER BY %sCount DESC
+					LIMIT %d BY %s
+				)
 				GROUP BY %s
 				ORDER BY %sCount DESC
 				LIMIT %d OFFSET %d
 			)`,
-			parentField, nestedFields[0], nestedFields[0], parentField, nestedFields[0],
-			parentField, nestedFields[0], nestedFields[0],
-			parentField, nestedFields[0], nestedFields[0], parentField, nestedFields[0],
-			nestedLimit,
 			parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[0],
+			parentField, nestedFields[0], nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedLimit, parentField,
 			parentField, parentField, parentLimit, parentOffset)
 	} else if len(nestedFields) == 2 {
 		return fmt.Sprintf(`,
-			base_counts AS (
-				SELECT
-					%s,
-					%s,
-					%s,
-					count(*) AS %sCount
-				FROM base_data
-				GROUP BY %s, %s, %s
-			),
-			top_level2_per_level1 AS (
-				SELECT
-					%s,
-					%s,
-					%s,
-					%sCount
-				FROM (
-					SELECT
-						%s,
-						%s,
-						%s,
-						%sCount,
-						row_number() OVER (PARTITION BY %s, %s ORDER BY %sCount DESC) as rn
-					FROM base_counts
-				)
-				WHERE rn <= %d
-			),
-			level1_aggregated AS (
-				SELECT
-					%s,
-					%s,
-					sum(%sCount) AS %sCount,
-					groupArray(arrayStringConcat(array(%s, toString(%sCount)), '|')) AS %sData
-				FROM top_level2_per_level1
-				GROUP BY %s, %s
-			),
-			top_level1_per_parent AS (
-				SELECT
-					%s,
-					%s,
-					%sCount,
-					%sData
-				FROM (
-					SELECT
-						%s,
-						%s,
-						%sCount,
-						%sData,
-						row_number() OVER (PARTITION BY %s ORDER BY %sCount DESC) as rn
-					FROM level1_aggregated
-				)
-				WHERE rn <= %d
-			),
 			hierarchical_nested AS (
-				SELECT
+				SELECT 
 					%s,
 					sum(%sCount) AS %sCount,
 					groupArray(arrayStringConcat(array(%s, toString(%sCount), arrayStringConcat(%sData, ' ')), '|||')) AS %sData
-				FROM top_level1_per_parent
+				FROM (
+					SELECT 
+						%s,
+						%s,
+						sum(%sCount) AS %sCount,
+						groupArray(arrayStringConcat(array(%s, toString(%sCount)), '|')) AS %sData
+					FROM (
+						SELECT 
+							%s,
+							%s,
+							%s,
+							count(*) AS %sCount
+						FROM base_data
+						GROUP BY %s, %s, %s
+						ORDER BY %sCount DESC
+						LIMIT %d BY %s, %s
+					)
+					GROUP BY %s, %s
+					ORDER BY %sCount DESC
+					LIMIT %d BY %s
+				)
 				GROUP BY %s
 				ORDER BY %sCount DESC
 				LIMIT %d OFFSET %d
 			)`,
-			parentField, nestedFields[0], nestedFields[1], nestedFields[1], parentField, nestedFields[0], nestedFields[1],
-			parentField, nestedFields[0], nestedFields[1], nestedFields[1],
-			parentField, nestedFields[0], nestedFields[1], nestedFields[1], parentField, nestedFields[0], nestedFields[1],
-			nestedLimit,
-			parentField, nestedFields[0], nestedFields[1], nestedFields[0], nestedFields[1], nestedFields[1], nestedFields[1],
-			parentField, nestedFields[0],
-			parentField, nestedFields[0], nestedFields[0], nestedFields[1],
-			parentField, nestedFields[0], nestedFields[0], nestedFields[1], parentField, nestedFields[0],
-			nestedLimit,
 			parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[1], nestedFields[0],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[0], nestedFields[1], nestedFields[1], nestedFields[1],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[1], parentField, nestedFields[0], nestedFields[1], nestedFields[1], nestedLimit, parentField, nestedFields[0],
+			parentField, nestedFields[0], nestedFields[0], nestedLimit, parentField,
 			parentField, parentField, parentLimit, parentOffset)
 	} else if len(nestedFields) == 3 {
 		return fmt.Sprintf(`,
-			base_counts AS (
-				SELECT
-					%s,
-					%s,
-					%s,
-					%s,
-					count(*) AS %sCount
-				FROM base_data
-				GROUP BY %s, %s, %s, %s
-			),
-			top_level3_per_level2 AS (
-				SELECT
-					%s,
-					%s,
-					%s,
-					%s,
-					%sCount
-				FROM (
-					SELECT
-						%s,
-						%s,
-						%s,
-						%s,
-						%sCount,
-						row_number() OVER (PARTITION BY %s, %s, %s ORDER BY %sCount DESC) as rn
-					FROM base_counts
-				)
-				WHERE rn <= %d
-			),
-			level2_aggregated AS (
-				SELECT
-					%s,
-					%s,
-					%s,
-					sum(%sCount) AS %sCount,
-					groupArray(arrayStringConcat(array(%s, toString(%sCount)), '|')) AS %sData
-				FROM top_level3_per_level2
-				GROUP BY %s, %s, %s
-			),
-			top_level2_per_level1 AS (
-				SELECT
-					%s,
-					%s,
-					%s,
-					%sCount,
-					%sData
-				FROM (
-					SELECT
-						%s,
-						%s,
-						%s,
-						%sCount,
-						%sData,
-						row_number() OVER (PARTITION BY %s, %s ORDER BY %sCount DESC) as rn
-					FROM level2_aggregated
-				)
-				WHERE rn <= %d
-			),
-			level1_aggregated AS (
-				SELECT
-					%s,
-					%s,
-					sum(%sCount) AS %sCount,
-					groupArray(arrayStringConcat(array(%s, toString(%sCount), arrayStringConcat(%sData, ' ')), '|||')) AS %sData
-				FROM top_level2_per_level1
-				GROUP BY %s, %s
-			),
-			top_level1_per_parent AS (
-				SELECT
-					%s,
-					%s,
-					%sCount,
-					%sData
-				FROM (
-					SELECT
-						%s,
-						%s,
-						%sCount,
-						%sData,
-						row_number() OVER (PARTITION BY %s ORDER BY %sCount DESC) as rn
-					FROM level1_aggregated
-				)
-				WHERE rn <= %d
-			),
 			hierarchical_nested AS (
-				SELECT
+				SELECT 
 					%s,
 					sum(%sCount) AS %sCount,
 					groupArray(arrayStringConcat(array(%s, toString(%sCount), arrayStringConcat(%sData, ' ')), '|||||')) AS %sData
-				FROM top_level1_per_parent
+				FROM (
+					SELECT 
+						%s,
+						%s,
+						sum(%sCount) AS %sCount,
+						groupArray(arrayStringConcat(array(%s, toString(%sCount), arrayStringConcat(%sData, ' ')), '|||')) AS %sData
+					FROM (
+						SELECT
+							%s,
+							%s,
+							%s,
+							sum(%sCount) AS %sCount,
+							groupArray(arrayStringConcat(array(%s, toString(%sCount)), '|')) AS %sData
+						FROM (
+							SELECT
+								%s,
+								%s,
+								%s,
+								%s,
+								count(*) AS %sCount
+							FROM base_data
+							GROUP BY %s, %s, %s, %s
+							ORDER BY %sCount DESC
+							LIMIT %d BY %s, %s, %s
+						)
+						GROUP BY %s, %s, %s
+						ORDER BY %sCount DESC
+						LIMIT %d BY %s, %s
+					)
+					GROUP BY %s, %s
+					ORDER BY %sCount DESC
+					LIMIT %d BY %s
+				)
 				GROUP BY %s
 				ORDER BY %sCount DESC
 				LIMIT %d OFFSET %d
 			)`,
-			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[2],
-			parentField, nestedFields[0], nestedFields[1], nestedFields[2],
-			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[2],
-			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[2],
-			parentField, nestedFields[0], nestedFields[1], nestedFields[2],
-			nestedLimit,
-			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[1],
-			nestedFields[2], nestedFields[2], nestedFields[2],
-			parentField, nestedFields[0], nestedFields[1],
-			parentField, nestedFields[0], nestedFields[1], nestedFields[1], nestedFields[2],
-			parentField, nestedFields[0], nestedFields[1], nestedFields[1], nestedFields[2],
-			parentField, nestedFields[0], nestedFields[1],
-			nestedLimit,
-			parentField, nestedFields[0], nestedFields[1], nestedFields[0],
-			nestedFields[1], nestedFields[1], nestedFields[2], nestedFields[1],
-			parentField, nestedFields[0],
-			parentField, nestedFields[0], nestedFields[0], nestedFields[1],
-			parentField, nestedFields[0], nestedFields[0], nestedFields[1],
-			parentField, nestedFields[0],
-			nestedLimit,
-			parentField, nestedFields[0], parentField,
-			nestedFields[0], nestedFields[0], nestedFields[1], nestedFields[0],
-			parentField, parentField,
-			parentLimit, parentOffset)
+			parentField, nestedFields[0], parentField, nestedFields[0], nestedFields[0], nestedFields[1], nestedFields[0],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[0], nestedFields[1], nestedFields[1], nestedFields[2], nestedFields[1],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[1], nestedFields[2], nestedFields[2], nestedFields[2],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[2], parentField, nestedFields[0], nestedFields[1], nestedFields[2], nestedFields[2], nestedLimit, parentField, nestedFields[0], nestedFields[1],
+			parentField, nestedFields[0], nestedFields[1], nestedFields[1], nestedLimit, parentField, nestedFields[0],
+			parentField, nestedFields[0], nestedFields[0], nestedLimit, parentField,
+			parentField, parentField, parentLimit, parentOffset)
 	} else {
 		log.Printf("WARNING: Aggregation with %d nested fields is not supported. Maximum supported is 3 nested fields (4 total fields).", len(nestedFields))
 	}
