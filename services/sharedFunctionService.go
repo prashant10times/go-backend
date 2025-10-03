@@ -1092,6 +1092,50 @@ func (s *SharedFunctionService) buildStatusCondition(filterFields models.FilterD
 	return fmt.Sprintf("status = %s", strings.Join(statuses, ","))
 }
 
+// buildMultiDayDateSelect builds a ClickHouse expression to expand multi-day events into individual dates
+func (s *SharedFunctionService) buildMultiDayDateSelect() string {
+	return `formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(ee.start_date), x), range(0, dateDiff('day', toDate(ee.start_date), toDate(ee.end_date)) + 1))), '%Y-%m-%d') as date`
+}
+
+// buildMultiDayMonthSelect builds a ClickHouse expression to expand multi-day events into individual months
+func (s *SharedFunctionService) buildMultiDayMonthSelect() string {
+	return `formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(ee.start_date), x), range(0, dateDiff('day', toDate(ee.start_date), toDate(ee.end_date)) + 1))), '%Y-%m') as month`
+}
+
+// buildMultiDayFieldSelect builds field selections with multi-day expansion for date/month fields
+func (s *SharedFunctionService) buildMultiDayFieldSelect(fields []string, fieldMapping map[string]string) string {
+	var selects []string
+
+	for _, field := range fields {
+		switch field {
+		case "date":
+			selects = append(selects, s.buildMultiDayDateSelect())
+		case "month":
+			selects = append(selects, s.buildMultiDayMonthSelect())
+		case "category":
+			selects = append(selects, "c.name as category")
+		case "tag":
+			selects = append(selects, "t.name as tag")
+		default:
+			if dbField, exists := fieldMapping[field]; exists {
+				selects = append(selects, dbField)
+			}
+		}
+	}
+
+	return strings.Join(selects, ",\n        ")
+}
+
+// checks if any of the fields require multi-day expansion
+func (s *SharedFunctionService) needsMultiDayExpansion(fields []string) bool {
+	for _, field := range fields {
+		if field == "date" || field == "month" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterDataDto) string {
 	var searchClause strings.Builder
 
@@ -2100,12 +2144,12 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 	nestedLimit := 5
 
 	fieldMapping := map[string]string{
-		"country":  "edition_country",
-		"city":     "edition_city_name",
-		"month":    "formatDateTime(start_date, '%Y-%m')",
-		"date":     "formatDateTime(start_date, '%Y-%m-%d')",
-		"category": "c.name",
-		"tag":      "t.name",
+		"country":  "ee.edition_country as country",
+		"city":     "ee.edition_city_name as city",
+		"month":    s.buildMultiDayMonthSelect(),
+		"date":     s.buildMultiDayDateSelect(),
+		"category": "c.name as category",
+		"tag":      "t.name as tag",
 	}
 
 	var cteClauses []string
@@ -2185,9 +2229,31 @@ func (s *SharedFunctionService) buildHierarchicalNestedQuery(parentField string,
 	baseFrom := s.buildFieldFrom(allFields, cteClauses)
 	baseWhere := s.buildFieldWhere(allFields, editionFilterConditions)
 
+	needsMultiDayExpansion := s.needsMultiDayExpansion(allFields)
+
 	if len(nestedFields) == 0 {
 		singleFieldSelect := s.buildSingleFieldSelect(parentField, fieldMapping)
-		query += fmt.Sprintf(`base_data AS (
+
+		if needsMultiDayExpansion && (parentField == "date" || parentField == "month") {
+			multiDaySelect := s.buildMultiDayFieldSelect([]string{parentField}, fieldMapping)
+			query += fmt.Sprintf(`base_data AS (
+		SELECT
+			%s,
+			count(*) as %sCount
+		FROM (
+			SELECT 
+				%s,
+				ee.event_id,
+				ee.edition_id
+			%s
+			%s
+		)
+		GROUP BY %s
+		ORDER BY %sCount DESC
+		LIMIT %d OFFSET %d
+	)`, parentField, parentField, multiDaySelect, baseFrom, baseWhere, parentField, parentField, parentLimit, parentOffset)
+		} else {
+			query += fmt.Sprintf(`base_data AS (
 		SELECT
 			%s,
 			count(*) as %sCount
@@ -2197,13 +2263,36 @@ func (s *SharedFunctionService) buildHierarchicalNestedQuery(parentField string,
 		ORDER BY %sCount DESC
 		LIMIT %d OFFSET %d
 	)`, singleFieldSelect, parentField, baseFrom, baseWhere, parentField, parentField, parentLimit, parentOffset)
+		}
 	} else {
-		query += fmt.Sprintf(`base_data AS (
+		if needsMultiDayExpansion {
+			multiDaySelect := s.buildMultiDayFieldSelect(allFields, fieldMapping)
+			var outerFields []string
+			for _, field := range allFields {
+				outerFields = append(outerFields, field)
+			}
+			outerSelect := strings.Join(outerFields, ",\n\t\t")
+
+			query += fmt.Sprintf(`base_data AS (
+		SELECT
+			%s
+		FROM (
+			SELECT 
+				%s,
+				ee.event_id,
+				ee.edition_id
+			%s
+			%s
+		)
+	)`, outerSelect, multiDaySelect, baseFrom, baseWhere)
+		} else {
+			query += fmt.Sprintf(`base_data AS (
 		SELECT
 			%s
 		%s
 		%s
 	)`, baseSelect, baseFrom, baseWhere)
+		}
 
 		hierarchy := s.buildHierarchyStructure(parentField, nestedFields, parentLimit, parentOffset, nestedLimit)
 		query += "\n" + hierarchy
@@ -2241,14 +2330,9 @@ func (s *SharedFunctionService) buildFieldSelect(fields []string, fieldMapping m
 		case "tag":
 			selects = append(selects, "t.name as tag")
 		default:
-			dbField := fieldMapping[field]
-			var fieldExpression string
-			if strings.Contains(dbField, "formatDateTime") {
-				fieldExpression = dbField
-			} else {
-				fieldExpression = fmt.Sprintf("ee.%s", dbField)
+			if dbField, exists := fieldMapping[field]; exists {
+				selects = append(selects, dbField)
 			}
-			selects = append(selects, fmt.Sprintf("%s as %s", fieldExpression, field))
 		}
 	}
 
@@ -2262,14 +2346,10 @@ func (s *SharedFunctionService) buildSingleFieldSelect(field string, fieldMappin
 	case "tag":
 		return "t.name as tag"
 	default:
-		dbField := fieldMapping[field]
-		var fieldExpression string
-		if strings.Contains(dbField, "formatDateTime") {
-			fieldExpression = dbField
-		} else {
-			fieldExpression = fmt.Sprintf("ee.%s", dbField)
+		if dbField, exists := fieldMapping[field]; exists {
+			return dbField
 		}
-		return fmt.Sprintf("%s as %s", fieldExpression, field)
+		return ""
 	}
 }
 
