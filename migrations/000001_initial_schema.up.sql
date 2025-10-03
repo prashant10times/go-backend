@@ -1,75 +1,78 @@
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+
 -- Create custom types
 CREATE TYPE status AS ENUM ('ACTIVE', 'INACTIVE');
 CREATE TYPE filter_type AS ENUM ('BASIC', 'ADVANCED');
 CREATE TYPE parameter_type AS ENUM ('BASIC', 'ADVANCED');
 
 -- Create users table
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    username VARCHAR(255) UNIQUE NOT NULL,
+CREATE TABLE "User" (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     email VARCHAR(255) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
+    name VARCHAR(255),
+    password_hash VARCHAR(255),
     status status DEFAULT 'ACTIVE',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create apis table
-CREATE TABLE apis (
-    id SERIAL PRIMARY KEY,
-    api_name VARCHAR(255) NOT NULL,
-    api_description TEXT,
-    endpoint_url VARCHAR(500) NOT NULL,
-    method VARCHAR(10) NOT NULL DEFAULT 'GET',
+CREATE TABLE "Api" (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    api_name VARCHAR(255) UNIQUE NOT NULL,
+    slug VARCHAR(255) UNIQUE NOT NULL,
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create api_tokens table
-CREATE TABLE api_tokens (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    api_id INTEGER REFERENCES apis(id) ON DELETE CASCADE,
+CREATE TABLE "ApiToken" (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
     token VARCHAR(500) UNIQUE NOT NULL,
-    expires_at TIMESTAMP,
+    is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    last_used_at TIMESTAMP,
+    refreshed_at TIMESTAMP
 );
 
 -- Create user_api_access table
-CREATE TABLE user_api_access (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    api_id INTEGER REFERENCES apis(id) ON DELETE CASCADE,
-    has_access BOOLEAN DEFAULT false,
+CREATE TABLE "UserApiAccess" (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+    api_id UUID NOT NULL REFERENCES "Api"(id) ON DELETE CASCADE,
+    daily_limit INTEGER DEFAULT 100,
+    has_access BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, api_id)
 );
 
 -- Create api_usage_log table
-CREATE TABLE api_usage_log (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    api_id INTEGER REFERENCES apis(id) ON DELETE CASCADE,
-    request_data JSONB,
-    response_data JSONB,
+CREATE TABLE "ApiUsageLog" (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+    api_id UUID NOT NULL REFERENCES "Api"(id) ON DELETE CASCADE,
+    endpoint VARCHAR(500) NOT NULL,
+    payload JSONB,
+    ip_address VARCHAR(45) NOT NULL,
     status_code INTEGER,
-    response_time_ms INTEGER,
+    error_message VARCHAR(500),
+    api_response_time FLOAT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create api_filter table
-CREATE TABLE api_filter (
-    id SERIAL PRIMARY KEY,
-    api_id INTEGER REFERENCES apis(id) ON DELETE CASCADE,
+CREATE TABLE "ApiFilter" (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    api_id UUID NOT NULL REFERENCES "Api"(id) ON DELETE CASCADE,
+    filter_type filter_type NOT NULL,
     filter_name VARCHAR(255) NOT NULL,
-    filter_description TEXT,
-    filter_type filter_type DEFAULT 'BASIC',
+    is_paid BOOLEAN DEFAULT false,
     is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create user_filter_access table
@@ -84,41 +87,38 @@ CREATE TABLE user_filter_access (
 );
 
 -- Create api_parameter table
-CREATE TABLE api_parameter (
-    id SERIAL PRIMARY KEY,
-    api_id INTEGER REFERENCES apis(id) ON DELETE CASCADE,
+CREATE TABLE "ApiParameter" (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    api_id UUID NOT NULL REFERENCES "Api"(id) ON DELETE CASCADE,
     parameter_name VARCHAR(255) NOT NULL,
-    parameter_description TEXT,
     parameter_type parameter_type DEFAULT 'BASIC',
-    is_required BOOLEAN DEFAULT false,
+    is_paid BOOLEAN DEFAULT false,
     is_active BOOLEAN DEFAULT true,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- Create user_parameter_access table
-CREATE TABLE user_parameter_access (
-    id SERIAL PRIMARY KEY,
-    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
-    parameter_id INTEGER REFERENCES api_parameter(id) ON DELETE CASCADE,
-    has_access BOOLEAN DEFAULT false,
+CREATE TABLE "UserParameterAccess" (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id UUID NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
+    parameter_id UUID NOT NULL REFERENCES "ApiParameter"(id) ON DELETE CASCADE,
+    has_access BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(user_id, parameter_id)
 );
 
 -- Create indexes for better performance
-CREATE INDEX CONCURRENTLY idx_user_api_access_user_api ON user_api_access(user_id, api_id);
-CREATE INDEX CONCURRENTLY idx_user_api_access_user_has_access ON user_api_access(user_id, has_access);
-CREATE INDEX CONCURRENTLY idx_api_usage_log_user_api_created ON api_usage_log(user_id, api_id, created_at);
-CREATE INDEX CONCURRENTLY idx_api_usage_log_created ON api_usage_log(created_at);
-CREATE INDEX CONCURRENTLY idx_api_usage_log_user_api_status ON api_usage_log(user_id, api_id, status_code);
-CREATE INDEX CONCURRENTLY idx_api_filter_api_name ON api_filter(api_id, filter_name);
-CREATE INDEX CONCURRENTLY idx_api_filter_api_active ON api_filter(api_id, is_active);
-CREATE INDEX CONCURRENTLY idx_user_filter_access_user_filter ON user_filter_access(user_id, filter_id);
-CREATE INDEX CONCURRENTLY idx_user_filter_access_user_has_access ON user_filter_access(user_id, has_access);
-CREATE INDEX CONCURRENTLY idx_api_parameter_api_name ON api_parameter(api_id, parameter_name);
-CREATE INDEX CONCURRENTLY idx_api_parameter_api_active ON api_parameter(api_id, is_active);
-CREATE INDEX CONCURRENTLY idx_api_parameter_api_type ON api_parameter(api_id, parameter_type);
-CREATE INDEX CONCURRENTLY idx_user_parameter_access_user_parameter ON user_parameter_access(user_id, parameter_id);
-CREATE INDEX CONCURRENTLY idx_user_parameter_access_user_has_access ON user_parameter_access(user_id, has_access);
+CREATE INDEX CONCURRENTLY idx_user_api_access_user_api ON "UserApiAccess"(user_id, api_id);
+CREATE INDEX CONCURRENTLY idx_user_api_access_user_has_access ON "UserApiAccess"(user_id, has_access);
+CREATE INDEX CONCURRENTLY idx_api_usage_log_user_api_created ON "ApiUsageLog"(user_id, api_id, created_at);
+CREATE INDEX CONCURRENTLY idx_api_usage_log_created ON "ApiUsageLog"(created_at);
+CREATE INDEX CONCURRENTLY idx_api_usage_log_user_api_status ON "ApiUsageLog"(user_id, api_id, status_code);
+CREATE INDEX CONCURRENTLY idx_api_filter_api_name ON "ApiFilter"(api_id, filter_name);
+CREATE INDEX CONCURRENTLY idx_api_filter_api_active ON "ApiFilter"(api_id, is_active);
+CREATE INDEX CONCURRENTLY idx_user_filter_access_user_filter ON "UserFilterAccess"(user_id, filter_id);
+CREATE INDEX CONCURRENTLY idx_user_filter_access_user_has_access ON "UserFilterAccess"(user_id, has_access);
+CREATE INDEX CONCURRENTLY idx_api_parameter_api_name ON "ApiParameter"(api_id, parameter_name);
+CREATE INDEX CONCURRENTLY idx_api_parameter_api_active ON "ApiParameter"(api_id, is_active);
+CREATE INDEX CONCURRENTLY idx_api_parameter_api_type ON "ApiParameter"(api_id, parameter_type);
+CREATE INDEX CONCURRENTLY idx_user_parameter_access_user_parameter ON "UserParameterAccess"(user_id, parameter_id);
+CREATE INDEX CONCURRENTLY idx_user_parameter_access_user_has_access ON "UserParameterAccess"(user_id, has_access);

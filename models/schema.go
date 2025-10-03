@@ -3,7 +3,6 @@ package models
 import (
 	"time"
 
-	"github.com/google/uuid"
 	"gorm.io/datatypes"
 )
 
@@ -33,7 +32,7 @@ const (
 
 // User model
 type User struct {
-	ID           uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	ID           string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	Email        string    `gorm:"uniqueIndex;not null" json:"email"`
 	Name         *string   `json:"name,omitempty"`
 	PasswordHash *string   `gorm:"column:password_hash" json:"-"`
@@ -50,7 +49,7 @@ type User struct {
 
 // API model
 type API struct {
-	ID        uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
+	ID        string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	APIName   string    `gorm:"uniqueIndex;not null" json:"api_name"`
 	Slug      string    `gorm:"uniqueIndex;not null" json:"slug"`
 	IsActive  bool      `gorm:"default:true;index" json:"is_active"`
@@ -65,8 +64,8 @@ type API struct {
 
 // APIToken model
 type APIToken struct {
-	ID          uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	UserID      uuid.UUID  `gorm:"type:uuid;uniqueIndex;not null" json:"user_id"`
+	ID          string     `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
+	UserID      string     `gorm:"not null" json:"user_id"`
 	Token       string     `gorm:"uniqueIndex;not null" json:"token"`
 	IsActive    bool       `gorm:"default:true" json:"is_active"`
 	CreatedAt   time.Time  `gorm:"autoCreateTime" json:"created_at"`
@@ -79,9 +78,9 @@ type APIToken struct {
 
 // UserAPIAccess model
 type UserAPIAccess struct {
-	ID         uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	UserID     uuid.UUID `gorm:"type:uuid;not null" json:"user_id"`
-	APIID      uuid.UUID `gorm:"type:uuid;not null" json:"api_id"`
+	ID         string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
+	UserID     string    `gorm:"not null" json:"user_id"`
+	APIID      string    `gorm:"not null" json:"api_id"`
 	DailyLimit int       `gorm:"default:100" json:"daily_limit"`
 	HasAccess  bool      `gorm:"default:true" json:"has_access"`
 	CreatedAt  time.Time `gorm:"autoCreateTime" json:"created_at"`
@@ -94,9 +93,9 @@ type UserAPIAccess struct {
 
 // APIUsageLog model
 type APIUsageLog struct {
-	ID              uuid.UUID       `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	UserID          uuid.UUID       `gorm:"type:uuid;not null" json:"user_id"`
-	APIID           uuid.UUID       `gorm:"type:uuid;not null" json:"api_id"`
+	ID              string          `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
+	UserID          string          `gorm:"not null" json:"user_id"`
+	APIID           string          `gorm:"not null" json:"api_id"`
 	Endpoint        string          `gorm:"not null" json:"endpoint"`
 	Payload         *datatypes.JSON `json:"payload,omitempty"`
 	IPAddress       string          `gorm:"not null" json:"ip_address"`
@@ -112,8 +111,8 @@ type APIUsageLog struct {
 
 // APIFilter model
 type APIFilter struct {
-	ID         uuid.UUID  `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	APIID      uuid.UUID  `gorm:"type:uuid;not null" json:"api_id"`
+	ID         string     `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
+	APIID      string     `gorm:"not null" json:"api_id"`
 	FilterType FilterType `gorm:"type:filter_type;not null" json:"filter_type"`
 	FilterName string     `gorm:"not null" json:"filter_name"`
 	IsPaid     bool       `gorm:"default:false" json:"is_paid"`
@@ -127,9 +126,9 @@ type APIFilter struct {
 
 // UserFilterAccess model
 type UserFilterAccess struct {
-	ID        uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	UserID    uuid.UUID `gorm:"type:uuid;not null" json:"user_id"`
-	FilterID  uuid.UUID `gorm:"type:uuid;not null" json:"filter_id"`
+	ID        string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
+	UserID    string    `gorm:"not null" json:"user_id"`
+	FilterID  string    `gorm:"not null" json:"filter_id"`
 	HasAccess bool      `gorm:"default:true" json:"has_access"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 
@@ -140,8 +139,8 @@ type UserFilterAccess struct {
 
 // APIParameter model
 type APIParameter struct {
-	ID            uuid.UUID     `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	APIID         uuid.UUID     `gorm:"type:uuid;not null" json:"api_id"`
+	ID            string        `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
+	APIID         string        `gorm:"not null" json:"api_id"`
 	ParameterName string        `gorm:"not null" json:"parameter_name"`
 	ParameterType ParameterType `gorm:"type:parameter_type;default:'BASIC'" json:"parameter_type"`
 	IsPaid        bool          `gorm:"default:false" json:"is_paid"`
@@ -155,9 +154,9 @@ type APIParameter struct {
 
 // UserParameterAccess model
 type UserParameterAccess struct {
-	ID          uuid.UUID `gorm:"type:uuid;primary_key;default:gen_random_uuid()" json:"id"`
-	UserID      uuid.UUID `gorm:"type:uuid;not null" json:"user_id"`
-	ParameterID uuid.UUID `gorm:"type:uuid;not null" json:"parameter_id"`
+	ID          string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
+	UserID      string    `gorm:"not null" json:"user_id"`
+	ParameterID string    `gorm:"not null" json:"parameter_id"`
 	HasAccess   bool      `gorm:"default:true" json:"has_access"`
 	CreatedAt   time.Time `json:"created_at"`
 

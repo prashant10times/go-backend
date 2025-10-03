@@ -1,19 +1,39 @@
 package routes
 
 import (
+	"fmt"
+	"search-event-go/config"
 	"search-event-go/handlers"
+	"search-event-go/middleware"
 	"search-event-go/services"
+	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
 
-func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouseService *services.ClickHouseService) {
+func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouseService *services.ClickHouseService, cfg *config.Config) {
+
+	limit, _ := strconv.Atoi(cfg.ThrottleLimit)
+	ttl, _ := strconv.Atoi(cfg.ThrottleTTL)
+	blockDuration, _ := strconv.Atoi(cfg.ThrottleBlockDuration)
+
+	fmt.Printf("Rate Limit Config: limit=%d, ttl=%dms, blockDuration=%dms\n", limit, ttl, blockDuration)
+
 	healthHandler := handlers.NewHealthHandler(10)
+	authHandler := handlers.NewAuthHandler(dbService.DB)
 	sharedFunctionService := services.NewSharedFunctionService(dbService.DB)
+	loginHandler := handlers.NewLoginHandler(dbService.DB)
 	searchEventService := services.NewSearchEventService(dbService.DB, sharedFunctionService, clickhouseService)
 	searchEventsHandler := handlers.NewSearchEventsHandler(100, searchEventService)
 
 	api := app.Group("/v1")
 	api.Get("/health", healthHandler.HealthCheck)
+	api.Post("/register", authHandler.Register)
+	api.Post("/login", loginHandler.Login)
+
+	//protected route
+	api.Use(middleware.JwtAuthMiddleware(dbService.DB))
+	api.Use(middleware.SearchRateLimit(limit, time.Duration(ttl)*time.Millisecond, time.Duration(blockDuration)*time.Millisecond))
 	api.Get("/search-events", searchEventsHandler.SearchEvents)
 }

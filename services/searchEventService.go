@@ -39,8 +39,6 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	statusCode := 200
 	var errorMessage *string
 
-	log.Printf("Starting GetEventDataV2 for user %s, api %s", userId, apiId)
-
 	defer func() {
 		responseTime := time.Since(startTime).Seconds()
 
@@ -52,8 +50,6 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			log.Printf("Total API Response Time: %f seconds", responseTime)
 		}()
 	}()
-
-	log.Printf("User ID: %v", userId)
 
 	var params []struct {
 		ParameterName string `json:"parameter_name"`
@@ -84,7 +80,6 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	var allowedFilters []string
 	var allowedAdvancedParameters []string
 
-	log.Printf("Starting quota and filter verification")
 	result, err := s.sharedFunctionService.quotaAndFilterVerification(userId, apiId)
 	if err != nil {
 		log.Printf("Quota and filter verification failed: %v", err)
@@ -93,7 +88,6 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		errorMessage = &msg
 		return nil, middleware.NewTooManyRequestsError("Daily API limit exceeded", err.Error())
 	}
-	log.Printf("Quota and filter verification successful")
 
 	allowedFilters = result.AllowedFilters
 	allowedAdvancedParameters = result.AllowedAdvancedParameters

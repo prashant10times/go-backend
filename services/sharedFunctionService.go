@@ -76,9 +76,9 @@ func (s *SharedFunctionService) logApiUsage(userId, apiId, endpoint string, resp
 	}
 
 	apiUsageLog := models.APIUsageLog{
-		ID:              uuid.New(),
-		UserID:          uuid.MustParse(userId),
-		APIID:           uuid.MustParse(apiId),
+		ID:              uuid.New().String(),
+		UserID:          uuid.MustParse(userId).String(),
+		APIID:           uuid.MustParse(apiId).String(),
 		Endpoint:        endpoint,
 		ErrorMessage:    errorMessage,
 		Payload:         (*datatypes.JSON)(&payloadJSON),

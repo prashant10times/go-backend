@@ -4,6 +4,7 @@ import (
 	"log"
 	"search-event-go/config"
 	"search-event-go/middleware"
+	"search-event-go/redis"
 	"search-event-go/routes"
 	"search-event-go/services"
 
@@ -27,6 +28,9 @@ func main() {
 	}
 	defer clickhouseService.Close()
 
+	redis.InitRedis()
+	defer redis.Close()
+
 	app := fiber.New(fiber.Config{
 		AppName:      "search-event-api",
 		ErrorHandler: middleware.GlobalErrorHandler,
@@ -36,7 +40,7 @@ func main() {
 	app.Use(logger.New())
 	app.Use(cors.New())
 
-	routes.SetupRoutes(app, dbService, clickhouseService)
+	routes.SetupRoutes(app, dbService, clickhouseService, cfg)
 
 	log.Printf("Server starting on port %s", cfg.Port)
 	log.Fatal(app.Listen(":" + cfg.Port))

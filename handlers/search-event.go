@@ -80,7 +80,11 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 	request.FollowingGt = c.Query("following.gt")
 	request.FollowingLt = c.Query("following.lt")
 
-	UserID := "4677ea16-8b96-4964-8edf-ff7c344402d8"
+	userID, ok := c.Locals("userId").(string)
+	if !ok || userID == "" {
+		return middleware.NewAuthorizationError("User ID not found in request context")
+	}
+
 	request.APIID = Apis["SEARCH_EVENTS"].ID
 
 	if err := (&request).Validate(); err != nil {
@@ -88,7 +92,7 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 		return middleware.NewValidationError("Request validation failed", err.Error())
 	}
 
-	result, err := h.searchEventService.GetEventDataV2(UserID, request.APIID, request.FilterDataDto, request.PaginationDto, request.ResponseDataDto, c)
+	result, err := h.searchEventService.GetEventDataV2(userID, request.APIID, request.FilterDataDto, request.PaginationDto, request.ResponseDataDto, c)
 	if err != nil {
 		if strings.Contains(err.Error(), "unauthorized filters") {
 			return middleware.NewForbiddenError("Unauthorized filters", err.Error())
