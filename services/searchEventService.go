@@ -731,7 +731,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			SELECT event_id, edition_id
 			FROM testing_db.event_edition_ch AS ee
 			WHERE published = '1' 
-			AND status != 'U'
+			AND %s
 			AND edition_type = 'current_edition'
 			%s
 			%s
@@ -756,6 +756,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		%s
 	`,
 		cteClausesStr,
+		s.sharedFunctionService.buildStatusCondition(filterFields),
 		func() string {
 			if !hasEndDateFilters {
 				return fmt.Sprintf("AND end_date >= '%s'", today)

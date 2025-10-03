@@ -119,6 +119,7 @@ type FilterDataDto struct {
 	EstimatedVisitors string `json:"estimatedVisitors,omitempty" form:"estimatedVisitors"`
 	IsBranded         string `json:"isBranded,omitempty" form:"isBranded"`
 	Maturity          string `json:"maturity,omitempty" form:"maturity"`
+	Status            string `json:"status,omitempty" form:"status"`
 
 	VenueLatitude  string `json:"venueLatitude,omitempty" form:"venueLatitude"`
 	VenueLongitude string `json:"venueLongitude,omitempty" form:"venueLongitude"`
@@ -137,6 +138,7 @@ type FilterDataDto struct {
 	ParsedKeywords    *Keywords `json:"-"`
 	ParsedIsBranded   *bool     `json:"-"`
 	ParsedMode        *string   `json:"-"`
+	ParsedStatus      []string  `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -197,6 +199,28 @@ func (f *FilterDataDto) Validate() error {
 		validation.Field(&f.EstimatedVisitors, validation.When(f.EstimatedVisitors != "", validation.In("Nano", "Micro", "Small", "Medium", "Large", "Mega", "Ultra"))), // EstimatedVisitors validation
 
 		validation.Field(&f.Maturity, validation.When(f.Maturity != "", validation.In("new", "growing", "established", "flagship"))), // Maturity validation
+
+		validation.Field(&f.Status, validation.When(f.Status != "", validation.By(func(value interface{}) error {
+			statusStr := value.(string)
+			statuses := strings.Split(statusStr, ",")
+			f.ParsedStatus = make([]string, 0, len(statuses))
+			validStatuses := map[string]string{
+				"active":    "A",
+				"cancelled": "C",
+				"postponed": "P",
+			}
+			for _, status := range statuses {
+				status = strings.TrimSpace(strings.ToLower(status))
+				if status != "" {
+					if dbCode, exists := validStatuses[status]; exists {
+						f.ParsedStatus = append(f.ParsedStatus, dbCode)
+					} else {
+						return validation.NewError("invalid_status", "Invalid status value: "+status+". Valid values are: active, cancelled, postponed")
+					}
+				}
+			}
+			return nil
+		}))),
 
 		validation.Field(&f.ToAggregate, validation.When(f.ToAggregate != "", validation.By(func(value interface{}) error {
 			aggStr := value.(string)

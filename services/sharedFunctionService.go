@@ -1080,6 +1080,18 @@ func (s *SharedFunctionService) addAllEventFilters(whereConditions *[]string, fi
 	}
 }
 
+func (s *SharedFunctionService) buildStatusCondition(filterFields models.FilterDataDto) string {
+	if len(filterFields.ParsedStatus) == 0 {
+		return "status != 'U'"
+	}
+	statuses := make([]string, len(filterFields.ParsedStatus))
+	for i, status := range filterFields.ParsedStatus {
+		statuses[i] = fmt.Sprintf("'%s'", status)
+	}
+
+	return fmt.Sprintf("status = %s", strings.Join(statuses, ","))
+}
+
 func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterDataDto) string {
 	var searchClause strings.Builder
 
@@ -2101,7 +2113,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 	today := time.Now().Format("2006-01-02")
 	editionFilterConditions := []string{
 		"published = '1'",
-		"status != 'U'",
+		s.buildStatusCondition(filterFields),
 		"edition_type = 'current_edition'",
 		fmt.Sprintf("end_date >= '%s'", today),
 	}
