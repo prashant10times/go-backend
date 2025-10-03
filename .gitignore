@@ -1,6 +1,6 @@
-# Binaries / Executables (ignore all files without extension, anywhere)
-**/main
-**/search-event-api
+# Binaries / Executables
+main
+search-event-api
 *.exe
 *.exe~
 *.dll
