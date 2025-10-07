@@ -621,6 +621,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addInFilter("companyCountry", "company_country", &whereConditions, filterFields)
 	s.addInFilter("companyCity", "company_city_name", &whereConditions, filterFields)
 	s.addInFilter("companyDomain", "company_domain", &whereConditions, filterFields)
+	s.addInFilter("companyState", "company_state", &whereConditions, filterFields)
 
 	if filterFields.Visibility != "" {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_functionality = %s", escapeSqlValue(filterFields.Visibility)))
@@ -1041,6 +1042,14 @@ func (s *SharedFunctionService) addAllEventFilters(whereConditions *[]string, fi
 			escapedCities[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(city, "'", "''"))
 		}
 		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.edition_city_name IN (%s)", strings.Join(escapedCities, ",")))
+	}
+
+	if len(filterFields.ParsedState) > 0 {
+		escapedStates := make([]string, len(filterFields.ParsedState))
+		for i, state := range filterFields.ParsedState {
+			escapedStates[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(state, "'", "''"))
+		}
+		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.edition_city_state IN (%s)", strings.Join(escapedStates, ",")))
 	}
 
 	if filterFields.Price != "" {

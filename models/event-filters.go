@@ -111,6 +111,7 @@ type FilterDataDto struct {
 	CompanyCountry string `json:"companyCountry,omitempty" form:"companyCountry"`
 	CompanyDomain  string `json:"companyDomain,omitempty" form:"companyDomain"`
 	CompanyCity    string `json:"companyCity,omitempty" form:"companyCity"`
+	CompanyState   string `json:"companyState,omitempty" form:"companyState"`
 
 	View              string `json:"view,omitempty" form:"view"`
 	Frequency         string `json:"frequency,omitempty" form:"frequency"`
@@ -139,6 +140,7 @@ type FilterDataDto struct {
 	ParsedIsBranded   *bool     `json:"-"`
 	ParsedMode        *string   `json:"-"`
 	ParsedStatus      []string  `json:"-"`
+	ParsedState       []string  `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -261,6 +263,19 @@ func (f *FilterDataDto) Validate() error {
 			}
 			return nil
 		}))),
+
+		validation.Field(&f.State, validation.When(f.State != "", validation.By(func(value interface{}) error {
+			stateStr := value.(string)
+			states := strings.Split(stateStr, ",")
+			f.ParsedState = make([]string, 0, len(states))
+			for _, state := range states {
+				state = strings.TrimSpace(state)
+				if state != "" {
+					f.ParsedState = append(f.ParsedState, state)
+				}
+			}
+			return nil
+		}))),	
 
 		validation.Field(&f.City, validation.When(f.City != "", validation.By(func(value interface{}) error {
 			cityStr := value.(string)
