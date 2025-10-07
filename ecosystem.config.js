@@ -1,7 +1,7 @@
 module.exports = {
   apps: [{
     name: 'go-api-backend',
-    script: './search-event-api',
+    script: './main',
     instances: 1,
     exec_mode: 'fork',
     interpreter: 'none',
