@@ -17,6 +17,7 @@ var SortFieldMap = map[string]string{
 	"speakers":   "event_speaker",
 	"avgRating":  "event_avgRating",
 	"sponsors":   "event_sponsor",
+	"estimatedExhibitors": "exhibitors_mean",
 }
 
 // PaginationDto represents pagination parameters

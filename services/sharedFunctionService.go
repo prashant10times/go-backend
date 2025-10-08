@@ -285,19 +285,22 @@ func (s *SharedFunctionService) buildOrderByClause(sortClause []SortClause, need
 }
 
 var fieldMapping = map[string]string{
-	"type":              "type",
-	"start_date":        "start",
-	"end_date":          "end",
-	"event_name":        "name",
-	"edition_city_name": "city",
-	"edition_country":   "country",
-	"tags":              "tags",
-	"event_description": "description",
-	"event_logo":        "logo",
-	"category":          "category",
-	"event_avgRating":   "avgRating",
-	"event_id":          "id",
-	"event_followers":   "followers",
+	"type":                   "type",
+	"start_date":             "start",
+	"end_date":               "end",
+	"event_name":             "name",
+	"edition_city_name":      "city",
+	"edition_country":        "country",
+	"tags":                   "tags",
+	"event_description":      "description",
+	"event_logo":             "logo",
+	"category":               "category",
+	"event_avgRating":        "avgRating",
+	"event_id":               "id",
+	"event_followers":        "followers",
+	"estimatedExhibitors":    "estimatedExhibitors",
+	"exhibitors_lower_bound": "exhibitors_lower_bound",
+	"exhibitors_upper_bound": "exhibitors_upper_bound",
 }
 
 func (s *SharedFunctionService) renameClickHouseEventKeys(event map[string]interface{}) map[string]interface{} {
@@ -421,34 +424,37 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 }
 
 type ClickHouseQueryResult struct {
-	WhereClause              string
-	SearchClause             string
-	DistanceOrderClause      string
-	NeedsVisitorJoin         bool
-	NeedsSpeakerJoin         bool
-	NeedsExhibitorJoin       bool
-	NeedsSponsorJoin         bool
-	NeedsAnyJoin             bool
-	NeedsCategoryJoin        bool
-	NeedsTypeJoin            bool
-	VisitorJoinClause        string
-	SpeakerJoinClause        string
-	VisitorWhereConditions   []string
-	SpeakerWhereConditions   []string
-	ExhibitorWhereConditions []string
-	SponsorWhereConditions   []string
-	CategoryWhereConditions  []string
-	TypeWhereConditions      []string
+	WhereClause                 string
+	SearchClause                string
+	DistanceOrderClause         string
+	NeedsVisitorJoin            bool
+	NeedsSpeakerJoin            bool
+	NeedsExhibitorJoin          bool
+	NeedsSponsorJoin            bool
+	NeedsAnyJoin                bool
+	NeedsCategoryJoin           bool
+	NeedsTypeJoin               bool
+	NeedsEventRankingJoin       bool
+	VisitorJoinClause           string
+	SpeakerJoinClause           string
+	VisitorWhereConditions      []string
+	SpeakerWhereConditions      []string
+	ExhibitorWhereConditions    []string
+	SponsorWhereConditions      []string
+	CategoryWhereConditions     []string
+	TypeWhereConditions         []string
+	EventRankingWhereConditions []string
 }
 
 func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterDataDto) (*ClickHouseQueryResult, error) {
 	result := &ClickHouseQueryResult{
-		VisitorWhereConditions:   make([]string, 0),
-		SpeakerWhereConditions:   make([]string, 0),
-		ExhibitorWhereConditions: make([]string, 0),
-		SponsorWhereConditions:   make([]string, 0),
-		CategoryWhereConditions:  make([]string, 0),
-		TypeWhereConditions:      make([]string, 0),
+		VisitorWhereConditions:      make([]string, 0),
+		SpeakerWhereConditions:      make([]string, 0),
+		ExhibitorWhereConditions:    make([]string, 0),
+		SponsorWhereConditions:      make([]string, 0),
+		CategoryWhereConditions:     make([]string, 0),
+		TypeWhereConditions:         make([]string, 0),
+		EventRankingWhereConditions: make([]string, 0),
 	}
 
 	whereConditions := make([]string, 0)
@@ -610,7 +616,14 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		result.TypeWhereConditions = append(result.TypeWhereConditions, fmt.Sprintf("name IN (%s)", strings.Join(types, ",")))
 	}
 
-	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin
+	if len(filterFields.ParsedEventRanking) > 0 {
+		result.NeedsEventRankingJoin = true
+		// Get the first (and only) eventRanking value
+		eventRankingValue := filterFields.ParsedEventRanking[0]
+		result.EventRankingWhereConditions = append(result.EventRankingWhereConditions, fmt.Sprintf("event_rank <= %s", eventRankingValue))
+	}
+
+	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin
 
 	s.addRangeFilters("following", "event_followers", &whereConditions, filterFields, false)
 	s.addRangeFilters("speaker", "event_speaker", &whereConditions, filterFields, false)
@@ -663,12 +676,15 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsSponsorJoin bool,
 	needsCategoryJoin bool,
 	needsTypeJoin bool,
+	needsEventRankingJoin bool,
 	visitorWhereConditions []string,
 	speakerWhereConditions []string,
 	exhibitorWhereConditions []string,
 	sponsorWhereConditions []string,
 	categoryWhereConditions []string,
 	typeWhereConditions []string,
+	eventRankingWhereConditions []string,
+	filterFields models.FilterDataDto,
 ) CTEAndJoinResult {
 	result := CTEAndJoinResult{
 		CTEClauses:     make([]string, 0),
@@ -844,6 +860,55 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		previousCTE = "filtered_types"
 	}
 
+	if needsEventRankingJoin {
+		currentMonth := time.Now().Month()
+		currentMonthCondition := fmt.Sprintf("MONTH(created) = %d", currentMonth)
+
+		eventRankingConditions := []string{currentMonthCondition}
+
+		// Add country filter if present
+		if len(filterFields.ParsedCountry) > 0 {
+			countries := make([]string, len(filterFields.ParsedCountry))
+			for i, country := range filterFields.ParsedCountry {
+				countries[i] = fmt.Sprintf("'%s'", country)
+			}
+			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
+		}
+
+		// Add eventRanking conditions
+		if len(eventRankingWhereConditions) > 0 {
+			eventRankingConditions = append(eventRankingConditions, eventRankingWhereConditions...)
+		}
+
+		eventRankingWhereClause := fmt.Sprintf("WHERE %s", strings.Join(eventRankingConditions, " AND "))
+
+		eventRankingQuery := fmt.Sprintf(`filtered_event_ranking AS (
+			SELECT event_id
+			FROM testing_db.event_ranking_ch
+			%s`, eventRankingWhereClause)
+
+		if previousCTE != "" {
+			var selectColumn string
+			if previousCTE == "filtered_categories" {
+				selectColumn = "event"
+			} else {
+				selectColumn = "event_id"
+			}
+			eventRankingQuery = fmt.Sprintf(`filtered_event_ranking AS (
+				SELECT event_id
+				FROM testing_db.event_ranking_ch
+				WHERE event_id IN (SELECT %s FROM %s)
+				AND %s`, selectColumn, previousCTE, strings.Join(eventRankingConditions, " AND "))
+		}
+
+		eventRankingQuery += `
+			GROUP BY event_id
+		)`
+
+		result.CTEClauses = append(result.CTEClauses, eventRankingQuery)
+		previousCTE = "filtered_event_ranking"
+	}
+
 	if previousCTE != "" {
 		var selectColumn string
 		switch previousCTE {
@@ -898,6 +963,7 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 		"event_speaker":     "speakers",
 		"event_sponsor":     "sponsors",
 		"event_created":     "created",
+		"exhibitors_mean":   "estimatedExhibitors",
 		"edition_city_lat":  "lat",
 		"edition_city_long": "lon",
 		"venue_lat":         "venueLat",
@@ -906,19 +972,20 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 
 	if !useAliases {
 		fieldMappings = map[string]string{
-			"id":         "event_id",
-			"start":      "start_date",
-			"end":        "end_date",
-			"followers":  "event_followers",
-			"avgRating":  "event_avgRating",
-			"exhibitors": "event_exhibitor",
-			"speakers":   "event_speaker",
-			"sponsors":   "event_sponsor",
-			"created":    "event_created",
-			"lat":        "edition_city_lat",
-			"lon":        "edition_city_long",
-			"venueLat":   "venue_lat",
-			"venueLon":   "venue_long",
+			"id":                  "event_id",
+			"start":               "start_date",
+			"end":                 "end_date",
+			"followers":           "event_followers",
+			"avgRating":           "event_avgRating",
+			"exhibitors":          "event_exhibitor",
+			"speakers":            "event_speaker",
+			"sponsors":            "event_sponsor",
+			"created":             "event_created",
+			"estimatedExhibitors": "exhibitors_mean",
+			"lat":                 "edition_city_lat",
+			"lon":                 "edition_city_long",
+			"venueLat":            "venue_lat",
+			"venueLon":            "venue_long",
 		}
 	}
 
@@ -994,7 +1061,6 @@ func (s *SharedFunctionService) addEstimatedExhibitorsFilter(whereConditions *[]
 		return
 	}
 
-	// Filter based on exhibitors_mean field with null check
 	condition := fmt.Sprintf("ee.exhibitors_mean IS NOT NULL AND ee.exhibitors_mean >= %d AND ee.exhibitors_mean <= %d", gte, lte)
 	*whereConditions = append(*whereConditions, condition)
 }
@@ -2224,6 +2290,28 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 	if queryResult.NeedsTypeJoin {
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_types AS (SELECT event_id FROM testing_db.event_type_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.TypeWhereConditions, " AND ")))
 	}
+	if queryResult.NeedsEventRankingJoin {
+		currentMonth := time.Now().Month()
+		currentMonthCondition := fmt.Sprintf("MONTH(created) = %d", currentMonth)
+
+		eventRankingConditions := []string{currentMonthCondition}
+
+		// Add country filter if present
+		if len(filterFields.ParsedCountry) > 0 {
+			countries := make([]string, len(filterFields.ParsedCountry))
+			for i, country := range filterFields.ParsedCountry {
+				countries[i] = fmt.Sprintf("'%s'", country)
+			}
+			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
+		}
+
+		// Add eventRanking conditions
+		if len(queryResult.EventRankingWhereConditions) > 0 {
+			eventRankingConditions = append(eventRankingConditions, queryResult.EventRankingWhereConditions...)
+		}
+
+		cteClauses = append(cteClauses, fmt.Sprintf("filtered_event_ranking AS (SELECT event_id FROM testing_db.event_ranking_ch WHERE %s GROUP BY event_id)", strings.Join(eventRankingConditions, " AND ")))
+	}
 
 	hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != ""
 
@@ -2424,6 +2512,9 @@ func (s *SharedFunctionService) buildFieldFrom(fields []string, cteClauses []str
 	}
 	if s.containsCTE(cteClauses, "filtered_types") {
 		from += " INNER JOIN filtered_types ft ON ee.event_id = ft.event_id"
+	}
+	if s.containsCTE(cteClauses, "filtered_event_ranking") {
+		from += " INNER JOIN filtered_event_ranking fer ON ee.event_id = fer.event_id"
 	}
 
 	return from

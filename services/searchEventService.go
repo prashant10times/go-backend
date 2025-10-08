@@ -330,6 +330,8 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		"ee.event_followers",
 		"ee.event_logo",
 		"ee.event_avgRating",
+		"ee.exhibitors_lower_bound",
+		"ee.exhibitors_upper_bound",
 	}
 
 	sortFields := make(map[string]bool)
@@ -352,6 +354,8 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 			mappedFields["event_created"] = true
 		case "following":
 			mappedFields["event_followers"] = true
+		case "estimatedExhibitors":
+			mappedFields["exhibitors_mean"] = true
 		}
 	}
 
@@ -367,6 +371,9 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 	}
 	if sortFields["created"] || mappedFields["event_created"] || sortFields["event_created"] {
 		conditionalFields = append(conditionalFields, "ee.event_created")
+	}
+	if sortFields["estimatedExhibitors"] || mappedFields["exhibitors_mean"] || sortFields["exhibitors_mean"] {
+		conditionalFields = append(conditionalFields, "ee.exhibitors_mean")
 	}
 
 	requiredFieldsStatic := append(baseFields, conditionalFields...)
@@ -435,7 +442,7 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		values := make([]interface{}, len(columns))
 		for i, col := range columns {
 			switch col {
-			case "event_id", "event_followers":
+			case "event_id", "event_followers", "exhibitors_mean", "exhibitors_lower_bound", "exhibitors_upper_bound":
 				values[i] = new(uint32)
 			case "start_date", "end_date":
 				values[i] = new(time.Time)
@@ -472,6 +479,18 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 					rowData[col] = *avgRating
 				} else {
 					rowData[col] = 0.0
+				}
+			case "exhibitors_mean":
+				if exhibitorsMean, ok := val.(*uint32); ok && exhibitorsMean != nil {
+					rowData[col] = *exhibitorsMean
+				} else {
+					rowData[col] = uint32(0)
+				}
+			case "exhibitors_lower_bound", "exhibitors_upper_bound":
+				if boundValue, ok := val.(*uint32); ok && boundValue != nil {
+					rowData[col] = *boundValue
+				} else {
+					rowData[col] = uint32(0)
 				}
 			default:
 				if ptr, ok := val.(*string); ok && ptr != nil {
@@ -579,6 +598,20 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		combinedEvent["tags"] = tagsMap[eventID]
 		combinedEvent["type"] = typesMap[eventID]
 
+		if lowerBound, ok := event["exhibitors_lower_bound"].(uint32); ok {
+			if upperBound, ok := event["exhibitors_upper_bound"].(uint32); ok {
+				if lowerBound > 0 || upperBound > 0 {
+					combinedEvent["estimatedExhibitors"] = fmt.Sprintf("%d-%d", lowerBound, upperBound)
+				} else {
+					combinedEvent["estimatedExhibitors"] = "0-0"
+				}
+				delete(combinedEvent, "exhibitors_lower_bound")
+				delete(combinedEvent, "exhibitors_upper_bound")
+			}
+		} else {
+			combinedEvent["estimatedExhibitors"] = "0-0"
+		}
+
 		combinedData = append(combinedData, combinedEvent)
 	}
 
@@ -609,11 +642,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		"ee.event_followers as followers",
 		"ee.event_logo as logo",
 		"ee.event_avgRating as avgRating",
-	}
-
-	if filterFields.EstimatedExhibitors != "" {
-		baseFields = append(baseFields, "ee.exhibitors_lower_bound as exhibitors_lower_bound")
-		baseFields = append(baseFields, "ee.exhibitors_upper_bound as exhibitors_upper_bound")
+		"ee.exhibitors_lower_bound as exhibitors_lower_bound",
+		"ee.exhibitors_upper_bound as exhibitors_upper_bound",
 	}
 
 	sortFields := make(map[string]bool)
@@ -636,6 +666,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			mappedFields["event_created"] = true
 		case "following":
 			mappedFields["event_followers"] = true
+		case "estimatedExhibitors":
+			mappedFields["exhibitors_mean"] = true
 		}
 	}
 
@@ -652,7 +684,9 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	if sortFields["created"] || mappedFields["event_created"] || sortFields["event_created"] {
 		conditionalFields = append(conditionalFields, "ee.event_created as created")
 	}
-
+	if sortFields["estimatedExhibitors"] || mappedFields["exhibitors_mean"] || sortFields["exhibitors_mean"] {
+		conditionalFields = append(conditionalFields, "ee.exhibitors_mean as estimatedExhibitors")
+	}
 	requiredFieldsStatic := append(baseFields, conditionalFields...)
 
 	queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
@@ -702,12 +736,15 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		queryResult.NeedsSponsorJoin,
 		queryResult.NeedsCategoryJoin,
 		queryResult.NeedsTypeJoin,
+		queryResult.NeedsEventRankingJoin,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
 		queryResult.SponsorWhereConditions,
 		queryResult.CategoryWhereConditions,
 		queryResult.TypeWhereConditions,
+		queryResult.EventRankingWhereConditions,
+		filterFields,
 	)
 
 	// Check for end date filters
@@ -818,7 +855,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 				values[i] = new(*decimal.Decimal)
 			case "lat", "lon", "venueLat", "venueLon":
 				values[i] = new(float64)
-			case "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound":
+			case "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors":
 				values[i] = new(uint32)
 			default:
 				values[i] = new(string)
@@ -849,6 +886,12 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 					rowData[col] = *avgRating
 				} else {
 					rowData[col] = 0.0
+				}
+			case "estimatedExhibitors":
+				if estimatedExhibitors, ok := val.(*uint32); ok && estimatedExhibitors != nil {
+					rowData[col] = *estimatedExhibitors
+				} else {
+					rowData[col] = uint32(0)
 				}
 			default:
 				if ptr, ok := val.(*string); ok && ptr != nil {
@@ -959,15 +1002,18 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		combinedEvent["tags"] = tagsMap[eventID]
 		combinedEvent["type"] = typesMap[eventID]
 
-		if filterFields.EstimatedExhibitors != "" {
-			if lowerBound, ok := event["exhibitors_lower_bound"].(uint32); ok {
-				if upperBound, ok := event["exhibitors_upper_bound"].(uint32); ok {
+		if lowerBound, ok := event["exhibitors_lower_bound"].(uint32); ok {
+			if upperBound, ok := event["exhibitors_upper_bound"].(uint32); ok {
+				if lowerBound > 0 || upperBound > 0 {
 					combinedEvent["estimatedExhibitors"] = fmt.Sprintf("%d-%d", lowerBound, upperBound)
+				} else {
+					combinedEvent["estimatedExhibitors"] = "0-0"
 				}
+				delete(combinedEvent, "exhibitors_lower_bound")
+				delete(combinedEvent, "exhibitors_upper_bound")
 			}
-
-			delete(combinedEvent, "exhibitors_lower_bound")
-			delete(combinedEvent, "exhibitors_upper_bound")
+		} else {
+			combinedEvent["estimatedExhibitors"] = "0-0"
 		}
 
 		combinedData = append(combinedData, combinedEvent)
@@ -1098,7 +1144,6 @@ func (s *SearchEventService) parseGenericEntry(entryString string, result *[]int
 		if fieldCount, err := strconv.Atoi(parts[1]); err == nil {
 			nestedData := parts[2]
 
-			// Parse the nested field data
 			var parsedNestedData []interface{}
 			nestedParts := strings.Fields(nestedData)
 			for _, nestedPart := range nestedParts {

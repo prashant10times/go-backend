@@ -132,24 +132,27 @@ type FilterDataDto struct {
 
 	ToAggregate string `json:"toAggregate,omitempty" form:"toAggregate"`
 
-	ParsedCategory    []string  `json:"-"`
-	ParsedCity        []string  `json:"-"`
-	ParsedCountry     []string  `json:"-"`
-	ParsedProducts    []string  `json:"-"`
-	ParsedType        []string  `json:"-"`
-	ParsedVenue       []string  `json:"-"`
-	ParsedCompany     []string  `json:"-"`
-	ParsedView        []string  `json:"-"`
-	ParsedToAggregate []string  `json:"-"`
-	ParsedKeywords    *Keywords `json:"-"`
-	ParsedIsBranded   *bool     `json:"-"`
-	ParsedMode        *string   `json:"-"`
-	ParsedStatus      []string  `json:"-"`
-	ParsedState       []string  `json:"-"`
-	ParsedSpeakerState []string  `json:"-"`
+	EventRanking string `json:"eventRanking,omitempty" form:"eventRanking"`
+
+	ParsedCategory       []string  `json:"-"`
+	ParsedCity           []string  `json:"-"`
+	ParsedCountry        []string  `json:"-"`
+	ParsedProducts       []string  `json:"-"`
+	ParsedType           []string  `json:"-"`
+	ParsedVenue          []string  `json:"-"`
+	ParsedCompany        []string  `json:"-"`
+	ParsedView           []string  `json:"-"`
+	ParsedToAggregate    []string  `json:"-"`
+	ParsedKeywords       *Keywords `json:"-"`
+	ParsedIsBranded      *bool     `json:"-"`
+	ParsedMode           *string   `json:"-"`
+	ParsedStatus         []string  `json:"-"`
+	ParsedState          []string  `json:"-"`
+	ParsedSpeakerState   []string  `json:"-"`
 	ParsedExhibitorState []string  `json:"-"`
-	ParsedSponsorState []string  `json:"-"`
-	ParsedVisitorState []string  `json:"-"`
+	ParsedSponsorState   []string  `json:"-"`
+	ParsedVisitorState   []string  `json:"-"`
+	ParsedEventRanking   []string  `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -467,6 +470,33 @@ func (f *FilterDataDto) Validate() error {
 		validation.Field(&f.VenueLatitude, validation.When(f.VenueLongitude != "", validation.Required.Error("Venue latitude is required when venue longitude is provided"))),
 		validation.Field(&f.VenueLongitude, validation.When(f.VenueLatitude != "", validation.Required.Error("Venue longitude is required when venue latitude is provided"))),
 		validation.Field(&f.ToAggregate, validation.When(f.View != "" && strings.Contains(f.View, "agg"), validation.Required.Error("toAggregate field is required when view includes 'agg'"))),
+
+		validation.Field(&f.EventRanking, validation.When(f.EventRanking != "", validation.By(func(value interface{}) error {
+			eventRankingStr := value.(string)
+			eventRankings := strings.Split(eventRankingStr, ",")
+			if len(eventRankings) > 1 {
+				return validation.NewError("multiple_event_ranking", "Only one eventRanking value is allowed")
+			}
+			f.ParsedEventRanking = make([]string, 0, len(eventRankings))
+			validRankings := []string{"100", "500", "1000"}
+			for _, ranking := range eventRankings {
+				ranking = strings.TrimSpace(ranking)
+				if ranking != "" {
+					valid := false
+					for _, validRanking := range validRankings {
+						if ranking == validRanking {
+							valid = true
+							break
+						}
+					}
+					if !valid {
+						return validation.NewError("invalid_event_ranking", "Invalid eventRanking value: "+ranking+". Valid values are: 100, 500, 1000")
+					}
+					f.ParsedEventRanking = append(f.ParsedEventRanking, ranking)
+				}
+			}
+			return nil
+		}))),
 	)
 }
 
