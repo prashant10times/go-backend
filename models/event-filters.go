@@ -113,14 +113,15 @@ type FilterDataDto struct {
 	CompanyCity    string `json:"companyCity,omitempty" form:"companyCity"`
 	CompanyState   string `json:"companyState,omitempty" form:"companyState"`
 
-	View              string `json:"view,omitempty" form:"view"`
-	Frequency         string `json:"frequency,omitempty" form:"frequency"`
-	Visibility        string `json:"visibility,omitempty" form:"visibility"`
-	Mode              string `json:"mode,omitempty" form:"mode"`
-	EstimatedVisitors string `json:"estimatedVisitors,omitempty" form:"estimatedVisitors"`
-	IsBranded         string `json:"isBranded,omitempty" form:"isBranded"`
-	Maturity          string `json:"maturity,omitempty" form:"maturity"`
-	Status            string `json:"status,omitempty" form:"status"`
+	View                string `json:"view,omitempty" form:"view"`
+	Frequency           string `json:"frequency,omitempty" form:"frequency"`
+	Visibility          string `json:"visibility,omitempty" form:"visibility"`
+	Mode                string `json:"mode,omitempty" form:"mode"`
+	EstimatedVisitors   string `json:"estimatedVisitors,omitempty" form:"estimatedVisitors"`
+	EstimatedExhibitors string `json:"estimatedExhibitors,omitempty" form:"estimatedExhibitors"`
+	IsBranded           string `json:"isBranded,omitempty" form:"isBranded"`
+	Maturity            string `json:"maturity,omitempty" form:"maturity"`
+	Status              string `json:"status,omitempty" form:"status"`
 
 	VenueLatitude  string `json:"venueLatitude,omitempty" form:"venueLatitude"`
 	VenueLongitude string `json:"venueLongitude,omitempty" form:"venueLongitude"`
@@ -200,6 +201,8 @@ func (f *FilterDataDto) Validate() error {
 
 		validation.Field(&f.EstimatedVisitors, validation.When(f.EstimatedVisitors != "", validation.In("Nano", "Micro", "Small", "Medium", "Large", "Mega", "Ultra"))), // EstimatedVisitors validation
 
+		validation.Field(&f.EstimatedExhibitors, validation.When(f.EstimatedExhibitors != "", validation.In("0-100", "100-500", "500-1000", "1000"))),
+
 		validation.Field(&f.Maturity, validation.When(f.Maturity != "", validation.In("new", "growing", "established", "flagship"))), // Maturity validation
 
 		validation.Field(&f.Status, validation.When(f.Status != "", validation.By(func(value interface{}) error {
@@ -275,7 +278,7 @@ func (f *FilterDataDto) Validate() error {
 				}
 			}
 			return nil
-		}))),	
+		}))),
 
 		validation.Field(&f.City, validation.When(f.City != "", validation.By(func(value interface{}) error {
 			cityStr := value.(string)

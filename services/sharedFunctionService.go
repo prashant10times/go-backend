@@ -615,6 +615,8 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addRangeFilters("start", "start_date", &whereConditions, filterFields, true)
 	s.addRangeFilters("end", "end_date", &whereConditions, filterFields, true)
 
+	s.addEstimatedExhibitorsFilter(&whereConditions, filterFields)
+
 	s.addInFilter("country", "edition_country", &whereConditions, filterFields)
 	s.addInFilter("venue", "venue_name", &whereConditions, filterFields)
 	s.addInFilter("company", "company_name", &whereConditions, filterFields)
@@ -967,6 +969,30 @@ func (s *SharedFunctionService) addRangeFilters(filterKey string, dbField string
 			}
 		}
 	}
+}
+
+func (s *SharedFunctionService) addEstimatedExhibitorsFilter(whereConditions *[]string, filterFields models.FilterDataDto) {
+	if filterFields.EstimatedExhibitors == "" {
+		return
+	}
+
+	var gte, lte int
+	switch filterFields.EstimatedExhibitors {
+	case "0-100":
+		gte, lte = 0, 100
+	case "100-500":
+		gte, lte = 100, 500
+	case "500-1000":
+		gte, lte = 500, 1000
+	case "1000":
+		gte, lte = 1000, 999999 // Use a large number for upper bound
+	default:
+		return
+	}
+
+	// Filter based on exhibitors_mean field with null check
+	condition := fmt.Sprintf("ee.exhibitors_mean IS NOT NULL AND ee.exhibitors_mean >= %d AND ee.exhibitors_mean <= %d", gte, lte)
+	*whereConditions = append(*whereConditions, condition)
 }
 
 func (s *SharedFunctionService) addInFilter(filterKey string, dbField string, whereConditions *[]string, filterFields models.FilterDataDto) {

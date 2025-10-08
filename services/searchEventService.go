@@ -611,6 +611,11 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		"ee.event_avgRating as avgRating",
 	}
 
+	if filterFields.EstimatedExhibitors != "" {
+		baseFields = append(baseFields, "ee.exhibitors_lower_bound as exhibitors_lower_bound")
+		baseFields = append(baseFields, "ee.exhibitors_upper_bound as exhibitors_upper_bound")
+	}
+
 	sortFields := make(map[string]bool)
 	if len(sortClause) > 0 {
 		for _, sort := range sortClause {
@@ -813,7 +818,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 				values[i] = new(*decimal.Decimal)
 			case "lat", "lon", "venueLat", "venueLon":
 				values[i] = new(float64)
-			case "exhibitors", "speakers", "sponsors":
+			case "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound":
 				values[i] = new(uint32)
 			default:
 				values[i] = new(string)
@@ -953,6 +958,17 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		combinedEvent["category"] = categoriesMap[eventID]
 		combinedEvent["tags"] = tagsMap[eventID]
 		combinedEvent["type"] = typesMap[eventID]
+
+		if filterFields.EstimatedExhibitors != "" {
+			if lowerBound, ok := event["exhibitors_lower_bound"].(uint32); ok {
+				if upperBound, ok := event["exhibitors_upper_bound"].(uint32); ok {
+					combinedEvent["estimatedExhibitors"] = fmt.Sprintf("%d-%d", lowerBound, upperBound)
+				}
+			}
+
+			delete(combinedEvent, "exhibitors_lower_bound")
+			delete(combinedEvent, "exhibitors_upper_bound")
+		}
 
 		combinedData = append(combinedData, combinedEvent)
 	}
