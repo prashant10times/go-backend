@@ -421,6 +421,7 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 
 	log.Printf("Event data query: %s", eventDataQuery)
 
+	defaultQueryTime := time.Now()
 	eventDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), eventDataQuery)
 	if err != nil {
 		log.Printf("ClickHouse query error: %v", err)
@@ -429,6 +430,9 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
+
+	defaultQueryDuration := time.Since(defaultQueryTime)
+	log.Printf("Default query time: %v", defaultQueryDuration)
 
 	var eventIds []uint32
 	var eventData []map[string]interface{}
@@ -551,6 +555,8 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
 
 	// Execute related data query
+	log.Printf("Related data query: %s", relatedDataQuery)
+	relatedDataQueryTime := time.Now()
 	relatedDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), relatedDataQuery)
 	if err != nil {
 		log.Printf("Related data query error: %v", err)
@@ -559,6 +565,9 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
+
+	relatedDataQueryDuration := time.Since(relatedDataQueryTime)
+	log.Printf("Related data query time: %v", relatedDataQueryDuration)
 
 	// Process related data
 	categoriesMap := make(map[string]string)
@@ -824,6 +833,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 
 	log.Printf("Event data query: %s", eventDataQuery)
 
+	eventDataQueryTime := time.Now()
 	eventDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), eventDataQuery)
 	if err != nil {
 		log.Printf("ClickHouse query error: %v", err)
@@ -832,6 +842,9 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			ErrorMessage: err.Error(),
 		}, nil
 	}
+
+	eventDataQueryDuration := time.Since(eventDataQueryTime)
+	log.Printf("Event data query time: %v", eventDataQueryDuration)
 
 	var eventIds []uint32
 	var eventData []map[string]interface{}
@@ -955,6 +968,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		GROUP BY event_id
 	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
 
+	log.Printf("Related data query: %s", relatedDataQuery)
+	relatedDataQueryTime := time.Now()
 	relatedDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), relatedDataQuery)
 	if err != nil {
 		log.Printf("Related data query error: %v", err)
@@ -963,6 +978,9 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			ErrorMessage: err.Error(),
 		}, nil
 	}
+
+	relatedDataQueryDuration := time.Since(relatedDataQueryTime)
+	log.Printf("Related data query time: %v", relatedDataQueryDuration)
 
 	// Process related data
 	categoriesMap := make(map[string]string)
@@ -1049,7 +1067,6 @@ func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields mo
 	}
 
 	log.Printf("Nested Aggregation Query: %s", nestedQuery)
-	log.Printf("Query length: %d characters", len(nestedQuery))
 
 	startTime := time.Now()
 	rows, err := s.clickhouseService.ExecuteQuery(ctx, nestedQuery)
@@ -1059,7 +1076,7 @@ func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields mo
 	}
 	defer rows.Close()
 
-	log.Printf("Default Aggregation query executed in: %v", time.Since(startTime))
+	log.Printf("Default Aggregation query: %v", time.Since(startTime))
 
 	var nestedData []map[string]interface{}
 
