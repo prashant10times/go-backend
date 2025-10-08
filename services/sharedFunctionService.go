@@ -989,7 +989,7 @@ func (s *SharedFunctionService) addEstimatedExhibitorsFilter(whereConditions *[]
 	case "500-1000":
 		gte, lte = 500, 1000
 	case "1000":
-		gte, lte = 1000, 999999 // Use a large number for upper bound
+		gte, lte = 1000, 1000000
 	default:
 		return
 	}
