@@ -44,10 +44,12 @@ type FilterDataDto struct {
 	VisitorCountry     string `json:"visitorCountry,omitempty" form:"visitorCountry"`
 	VisitorCompany     string `json:"visitorCompany,omitempty" form:"visitorCompany"`
 	VisitorCity        string `json:"visitorCity,omitempty" form:"visitorCity"`
+	VisitorState       string `json:"visitorState,omitempty" form:"visitorState"`
 	VisitorName        string `json:"visitorName,omitempty" form:"visitorName"`
 
 	SpeakerDesignation string `json:"speakerDesignation,omitempty" form:"speakerDesignation"`
 	SpeakerCity        string `json:"speakerCity,omitempty" form:"speakerCity"`
+	SpeakerState       string `json:"speakerState,omitempty" form:"speakerState"`
 	SpeakerCountry     string `json:"speakerCountry,omitempty" form:"speakerCountry"`
 	SpeakerCompany     string `json:"speakerCompany,omitempty" form:"speakerCompany"`
 	SpeakerName        string `json:"speakerName,omitempty" form:"speakerName"`
@@ -55,6 +57,7 @@ type FilterDataDto struct {
 	ExhibitorName     string `json:"exhibitorName,omitempty" form:"exhibitorName"`
 	ExhibitorWebsite  string `json:"exhibitorWebsite,omitempty" form:"exhibitorWebsite"`
 	ExhibitorDomain   string `json:"exhibitorDomain,omitempty" form:"exhibitorDomain"`
+	ExhibitorState    string `json:"exhibitorState,omitempty" form:"exhibitorState"`
 	ExhibitorCountry  string `json:"exhibitorCountry,omitempty" form:"exhibitorCountry"`
 	ExhibitorCity     string `json:"exhibitorCity,omitempty" form:"exhibitorCity"`
 	ExhibitorFacebook string `json:"exhibitorFacebook,omitempty" form:"exhibitorFacebook"`
@@ -64,6 +67,7 @@ type FilterDataDto struct {
 	SponsorName     string `json:"sponsorName,omitempty" form:"sponsorName"`
 	SponsorWebsite  string `json:"sponsorWebsite,omitempty" form:"sponsorWebsite"`
 	SponsorDomain   string `json:"sponsorDomain,omitempty" form:"sponsorDomain"`
+	SponsorState    string `json:"sponsorState,omitempty" form:"sponsorState"`
 	SponsorCountry  string `json:"sponsorCountry,omitempty" form:"sponsorCountry"`
 	SponsorCity     string `json:"sponsorCity,omitempty" form:"sponsorCity"`
 	SponsorFacebook string `json:"sponsorFacebook,omitempty" form:"sponsorFacebook"`
@@ -142,6 +146,10 @@ type FilterDataDto struct {
 	ParsedMode        *string   `json:"-"`
 	ParsedStatus      []string  `json:"-"`
 	ParsedState       []string  `json:"-"`
+	ParsedSpeakerState []string  `json:"-"`
+	ParsedExhibitorState []string  `json:"-"`
+	ParsedSponsorState []string  `json:"-"`
+	ParsedVisitorState []string  `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -280,6 +288,32 @@ func (f *FilterDataDto) Validate() error {
 			return nil
 		}))),
 
+		validation.Field(&f.VisitorState, validation.When(f.VisitorState != "", validation.By(func(value interface{}) error {
+			visitorStateStr := value.(string)
+			visitorStates := strings.Split(visitorStateStr, ",")
+			f.ParsedVisitorState = make([]string, 0, len(visitorStates))
+			for _, visitorState := range visitorStates {
+				visitorState = strings.TrimSpace(visitorState)
+				if visitorState != "" {
+					f.ParsedVisitorState = append(f.ParsedVisitorState, visitorState)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.SpeakerState, validation.When(f.SpeakerState != "", validation.By(func(value interface{}) error {
+			speakerStateStr := value.(string)
+			speakerStates := strings.Split(speakerStateStr, ",")
+			f.ParsedSpeakerState = make([]string, 0, len(speakerStates))
+			for _, speakerState := range speakerStates {
+				speakerState = strings.TrimSpace(speakerState)
+				if speakerState != "" {
+					f.ParsedSpeakerState = append(f.ParsedSpeakerState, speakerState)
+				}
+			}
+			return nil
+		}))),
+
 		validation.Field(&f.City, validation.When(f.City != "", validation.By(func(value interface{}) error {
 			cityStr := value.(string)
 			cities := strings.Split(cityStr, ",")
@@ -301,6 +335,19 @@ func (f *FilterDataDto) Validate() error {
 				country = strings.TrimSpace(country)
 				if country != "" {
 					f.ParsedCountry = append(f.ParsedCountry, country)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.ExhibitorState, validation.When(f.ExhibitorState != "", validation.By(func(value interface{}) error {
+			exhibitorStateStr := value.(string)
+			exhibitorStates := strings.Split(exhibitorStateStr, ",")
+			f.ParsedExhibitorState = make([]string, 0, len(exhibitorStates))
+			for _, exhibitorState := range exhibitorStates {
+				exhibitorState = strings.TrimSpace(exhibitorState)
+				if exhibitorState != "" {
+					f.ParsedExhibitorState = append(f.ParsedExhibitorState, exhibitorState)
 				}
 			}
 			return nil
@@ -353,6 +400,32 @@ func (f *FilterDataDto) Validate() error {
 				company = strings.TrimSpace(company)
 				if company != "" {
 					f.ParsedCompany = append(f.ParsedCompany, company)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.SponsorState, validation.When(f.SponsorState != "", validation.By(func(value interface{}) error {
+			sponsorStateStr := value.(string)
+			sponsorStates := strings.Split(sponsorStateStr, ",")
+			f.ParsedSponsorState = make([]string, 0, len(sponsorStates))
+			for _, sponsorState := range sponsorStates {
+				sponsorState = strings.TrimSpace(sponsorState)
+				if sponsorState != "" {
+					f.ParsedSponsorState = append(f.ParsedSponsorState, sponsorState)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.VisitorState, validation.When(f.VisitorState != "", validation.By(func(value interface{}) error {
+			visitorStateStr := value.(string)
+			visitorStates := strings.Split(visitorStateStr, ",")
+			f.ParsedVisitorState = make([]string, 0, len(visitorStates))
+			for _, visitorState := range visitorStates {
+				visitorState = strings.TrimSpace(visitorState)
+				if visitorState != "" {
+					f.ParsedVisitorState = append(f.ParsedVisitorState, visitorState)
 				}
 			}
 			return nil

@@ -505,7 +505,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	visitorFilters := []string{"VisitorDesignation", "VisitorCountry", "VisitorCompany", "VisitorCity", "VisitorName"}
+	visitorFilters := []string{"VisitorDesignation", "VisitorCountry", "VisitorCompany", "VisitorCity", "VisitorName", "VisitorState"}
 	hasVisitorFilters := false
 	for _, filter := range visitorFilters {
 		if s.hasFilterValue(filterFields, filter) {
@@ -518,11 +518,12 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		addUserFilters("VisitorDesignation", "user_designation", &result.VisitorWhereConditions)
 		addUserFilters("VisitorCountry", "user_country", &result.VisitorWhereConditions)
 		addUserFilters("VisitorCity", "user_city_name", &result.VisitorWhereConditions)
+		addUserFilters("VisitorState", "user_state", &result.VisitorWhereConditions)
 		addUserFilters("VisitorCompany", "user_company", &result.VisitorWhereConditions)
 		addUserFilters("VisitorName", "user_name", &result.VisitorWhereConditions)
 	}
 
-	speakerFilters := []string{"SpeakerDesignation", "SpeakerCountry", "SpeakerCompany", "SpeakerCity", "SpeakerName"}
+	speakerFilters := []string{"SpeakerDesignation", "SpeakerCountry", "SpeakerCompany", "SpeakerCity", "SpeakerName", "SpeakerState"}
 	hasSpeakerFilters := false
 	for _, filter := range speakerFilters {
 		if s.hasFilterValue(filterFields, filter) {
@@ -535,11 +536,12 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		addUserFilters("SpeakerDesignation", "user_designation", &result.SpeakerWhereConditions)
 		addUserFilters("SpeakerCountry", "user_country", &result.SpeakerWhereConditions)
 		addUserFilters("SpeakerCity", "user_city_name", &result.SpeakerWhereConditions)
+		addUserFilters("SpeakerState", "user_state_name", &result.SpeakerWhereConditions)
 		addUserFilters("SpeakerCompany", "user_company", &result.SpeakerWhereConditions)
 		addUserFilters("SpeakerName", "user_name", &result.SpeakerWhereConditions)
 	}
 
-	exhibitorFilters := []string{"ExhibitorName", "ExhibitorWebsite", "ExhibitorDomain", "ExhibitorCountry", "ExhibitorCity", "ExhibitorFacebook", "ExhibitorTwitter", "ExhibitorLinkedin"}
+	exhibitorFilters := []string{"ExhibitorName", "ExhibitorWebsite", "ExhibitorDomain", "ExhibitorCountry", "ExhibitorCity", "ExhibitorFacebook", "ExhibitorTwitter", "ExhibitorLinkedin", "ExhibitorState"}
 	hasExhibitorFilters := false
 	for _, filter := range exhibitorFilters {
 		if s.hasFilterValue(filterFields, filter) {
@@ -554,12 +556,13 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		addUserFilters("ExhibitorDomain", "company_domain", &result.ExhibitorWhereConditions)
 		addUserFilters("ExhibitorCountry", "company_country", &result.ExhibitorWhereConditions)
 		addUserFilters("ExhibitorCity", "company_city_name", &result.ExhibitorWhereConditions)
+		addUserFilters("ExhibitorState", "company_state_name", &result.ExhibitorWhereConditions)
 		addUserFilters("ExhibitorFacebook", "facebook_id", &result.ExhibitorWhereConditions)
 		addUserFilters("ExhibitorTwitter", "twitter_id", &result.ExhibitorWhereConditions)
 		addUserFilters("ExhibitorLinkedin", "linkedin_id", &result.ExhibitorWhereConditions)
 	}
 
-	sponsorFilters := []string{"SponsorName", "SponsorWebsite", "SponsorDomain", "SponsorCountry", "SponsorCity", "SponsorFacebook", "SponsorTwitter", "SponsorLinkedin"}
+	sponsorFilters := []string{"SponsorName", "SponsorWebsite", "SponsorDomain", "SponsorCountry", "SponsorCity", "SponsorFacebook", "SponsorTwitter", "SponsorLinkedin", "SponsorState"}
 	hasSponsorFilters := false
 	for _, filter := range sponsorFilters {
 		if s.hasFilterValue(filterFields, filter) {
@@ -574,6 +577,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		addUserFilters("SponsorDomain", "company_domain", &result.SponsorWhereConditions)
 		addUserFilters("SponsorCountry", "company_country", &result.SponsorWhereConditions)
 		addUserFilters("SponsorCity", "company_city_name", &result.SponsorWhereConditions)
+		addUserFilters("SponsorState", "company_state_name", &result.SponsorWhereConditions)
 		addUserFilters("SponsorFacebook", "facebook_id", &result.SponsorWhereConditions)
 		addUserFilters("SponsorTwitter", "twitter_id", &result.SponsorWhereConditions)
 		addUserFilters("SponsorLinkedin", "linkedin_id", &result.SponsorWhereConditions)
