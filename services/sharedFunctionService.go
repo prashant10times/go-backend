@@ -296,7 +296,7 @@ var fieldMapping = map[string]string{
 	"event_logo":             "logo",
 	"category":               "category",
 	"event_avgRating":        "avgRating",
-	"event_id":               "id",
+	"event_uuid":             "id",
 	"event_followers":        "followers",
 	"estimatedExhibitors":    "estimatedExhibitors",
 	"exhibitors_lower_bound": "exhibitors_lower_bound",

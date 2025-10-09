@@ -320,6 +320,7 @@ type AggregationResult struct {
 func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto, sortClause []SortClause) (*ListResult, error) {
 
 	baseFields := []string{
+		"ee.event_uuid",
 		"ee.event_id",
 		"ee.start_date",
 		"ee.end_date",
@@ -448,6 +449,8 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 			switch col {
 			case "event_id", "event_followers", "exhibitors_mean", "exhibitors_lower_bound", "exhibitors_upper_bound":
 				values[i] = new(uint32)
+			case "event_uuid":
+				values[i] = new(string)
 			case "start_date", "end_date":
 				values[i] = new(time.Time)
 			case "event_name", "edition_city_name", "edition_country", "event_description", "event_logo":
@@ -473,6 +476,10 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 				if eventID, ok := val.(*uint32); ok && eventID != nil {
 					eventIds = append(eventIds, *eventID)
 					rowData["event_id"] = *eventID
+				}
+			case "event_uuid":
+				if eventUUID, ok := val.(*string); ok && eventUUID != nil {
+					rowData["event_uuid"] = *eventUUID
 				}
 			case "start_date", "end_date":
 				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
@@ -641,7 +648,8 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 
 func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto) (*ListResult, error) {
 	baseFields := []string{
-		"ee.event_id as id",
+		"ee.event_uuid as id",
+		"ee.event_id",
 		"ee.start_date as start",
 		"ee.end_date as end",
 		"ee.event_name as name",
@@ -858,8 +866,10 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		values := make([]interface{}, len(columns))
 		for i, col := range columns {
 			switch col {
-			case "id", "followers":
+			case "event_id", "followers":
 				values[i] = new(uint32)
+			case "id":
+				values[i] = new(string)
 			case "start", "end":
 				values[i] = new(time.Time)
 			case "name", "city", "country", "description", "logo":
@@ -885,10 +895,14 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			val := values[i]
 
 			switch col {
-			case "id":
+			case "event_id":
 				if eventID, ok := val.(*uint32); ok && eventID != nil {
 					eventIds = append(eventIds, *eventID)
-					rowData["id"] = *eventID
+					rowData["event_id"] = *eventID
+				}
+			case "id":
+				if eventUUID, ok := val.(*string); ok && eventUUID != nil {
+					rowData["id"] = *eventUUID
 				}
 			case "start", "end":
 				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
