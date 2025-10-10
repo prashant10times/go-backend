@@ -133,6 +133,14 @@ type FilterDataDto struct {
 	ToAggregate string `json:"toAggregate,omitempty" form:"toAggregate"`
 
 	EventRanking string `json:"eventRanking,omitempty" form:"eventRanking"`
+	AudienceZone string `json:"audienceZone,omitempty" form:"audienceZone"`
+
+	InboundScoreGte       string `json:"inboundScoreGte,omitempty" form:"inboundScoreGte"`
+	InboundScoreLte       string `json:"inboundScoreLte,omitempty" form:"inboundScoreLte"`
+	InternationalScoreGte string `json:"internationalScoreGte,omitempty" form:"internationalScoreGte"`
+	InternationalScoreLte string `json:"internationalScoreLte,omitempty" form:"internationalScoreLte"`
+	TrustScoreLte         string `json:"trustScoreLte,omitempty" form:"trustScoreLte"`
+	TrustScoreGte         string `json:"trustScoreGte,omitempty" form:"trustScoreGte"`
 
 	ParsedCategory       []string  `json:"-"`
 	ParsedCity           []string  `json:"-"`
@@ -153,6 +161,7 @@ type FilterDataDto struct {
 	ParsedSponsorState   []string  `json:"-"`
 	ParsedVisitorState   []string  `json:"-"`
 	ParsedEventRanking   []string  `json:"-"`
+	ParsedAudienceZone   []string  `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -274,6 +283,35 @@ func (f *FilterDataDto) Validate() error {
 				if category != "" {
 					f.ParsedCategory = append(f.ParsedCategory, category)
 				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.AudienceZone, validation.When(f.AudienceZone != "", validation.By(func(value interface{}) error {
+			audienceZoneStr := value.(string)
+			audienceZones := strings.Split(audienceZoneStr, ",")
+			validAudienceZones := []string{"Local", "Regional", "National", "International"}
+			f.ParsedAudienceZone = make([]string, 0, len(audienceZones))
+			var invalidAudienceZones []string
+			for _, audienceZone := range audienceZones {
+				audienceZone = strings.TrimSpace(audienceZone)
+				if audienceZone != "" {
+					valid := false
+					for _, validAudienceZone := range validAudienceZones {
+						if audienceZone == validAudienceZone {
+							valid = true
+							break
+						}
+					}
+					if !valid {
+						invalidAudienceZones = append(invalidAudienceZones, audienceZone)
+						continue
+					}
+					f.ParsedAudienceZone = append(f.ParsedAudienceZone, audienceZone)
+				}
+			}
+			if len(invalidAudienceZones) > 0 {
+				return validation.NewError("invalid_audience_zone", "Invalid audience zone value: "+strings.Join(invalidAudienceZones, ", ")+". Valid values are: "+strings.Join(validAudienceZones, ", "))
 			}
 			return nil
 		}))),

@@ -301,6 +301,7 @@ var fieldMapping = map[string]string{
 	"estimatedExhibitors":    "estimatedExhibitors",
 	"exhibitors_lower_bound": "exhibitors_lower_bound",
 	"exhibitors_upper_bound": "exhibitors_upper_bound",
+	"audienceZone":           "audienceZone",
 }
 
 func (s *SharedFunctionService) renameClickHouseEventKeys(event map[string]interface{}) map[string]interface{} {
@@ -618,7 +619,6 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	if len(filterFields.ParsedEventRanking) > 0 {
 		result.NeedsEventRankingJoin = true
-		// Get the first (and only) eventRanking value
 		eventRankingValue := filterFields.ParsedEventRanking[0]
 		result.EventRankingWhereConditions = append(result.EventRankingWhereConditions, fmt.Sprintf("event_rank <= %s", eventRankingValue))
 	}
@@ -1182,6 +1182,13 @@ func (s *SharedFunctionService) addAllEventFilters(whereConditions *[]string, fi
 
 	if filterFields.Maturity != "" {
 		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.maturity = '%s'", strings.ReplaceAll(filterFields.Maturity, "'", "''")))
+	}
+
+	if filterFields.ParsedAudienceZone != nil {
+		audienceZones := filterFields.ParsedAudienceZone
+		for _, audienceZone := range audienceZones {
+			*whereConditions = append(*whereConditions, fmt.Sprintf("ee.audienceZone = '%s'", strings.ReplaceAll(audienceZone, "'", "''")))
+		}
 	}
 }
 

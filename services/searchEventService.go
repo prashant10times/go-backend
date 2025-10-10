@@ -704,6 +704,9 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	if sortFields["estimatedExhibitors"] || mappedFields["exhibitors_mean"] || sortFields["exhibitors_mean"] {
 		conditionalFields = append(conditionalFields, "ee.exhibitors_mean as estimatedExhibitors")
 	}
+
+	if len(filterFields.ParsedAudienceZone) > 0 { conditionalFields = append(conditionalFields, "ee.audienceZone as audienceZone") }
+
 	requiredFieldsStatic := append(baseFields, conditionalFields...)
 
 	queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
