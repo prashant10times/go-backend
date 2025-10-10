@@ -705,7 +705,9 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		conditionalFields = append(conditionalFields, "ee.exhibitors_mean as estimatedExhibitors")
 	}
 
-	if len(filterFields.ParsedAudienceZone) > 0 { conditionalFields = append(conditionalFields, "ee.audienceZone as audienceZone") }
+	if len(filterFields.ParsedAudienceZone) > 0 {
+		conditionalFields = append(conditionalFields, "ee.audienceZone as audienceZone")
+	}
 
 	requiredFieldsStatic := append(baseFields, conditionalFields...)
 
@@ -1028,7 +1030,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	// Combine event data with related data
 	var combinedData []map[string]interface{}
 	for _, event := range eventData {
-		eventID := fmt.Sprintf("%d", event["id"])
+		eventID := fmt.Sprintf("%d", event["event_id"])
 		combinedEvent := make(map[string]interface{})
 		for k, v := range event {
 			combinedEvent[k] = v
@@ -1050,6 +1052,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		} else {
 			combinedEvent["estimatedExhibitors"] = "0-0"
 		}
+		delete(combinedEvent, "event_id")
 
 		combinedData = append(combinedData, combinedEvent)
 	}

@@ -135,12 +135,12 @@ type FilterDataDto struct {
 	EventRanking string `json:"eventRanking,omitempty" form:"eventRanking"`
 	AudienceZone string `json:"audienceZone,omitempty" form:"audienceZone"`
 
-	InboundScoreGte       string `json:"inboundScoreGte,omitempty" form:"inboundScoreGte"`
-	InboundScoreLte       string `json:"inboundScoreLte,omitempty" form:"inboundScoreLte"`
-	InternationalScoreGte string `json:"internationalScoreGte,omitempty" form:"internationalScoreGte"`
-	InternationalScoreLte string `json:"internationalScoreLte,omitempty" form:"internationalScoreLte"`
-	TrustScoreLte         string `json:"trustScoreLte,omitempty" form:"trustScoreLte"`
-	TrustScoreGte         string `json:"trustScoreGte,omitempty" form:"trustScoreGte"`
+	InboundScoreGte       string `json:"inboundScore.gte,omitempty" form:"inboundScore.gte"`
+	InboundScoreLte       string `json:"inboundScore.lte,omitempty" form:"inboundScore.lte"`
+	InternationalScoreGte string `json:"internationalScore.gte,omitempty" form:"internationalScore.gte"`
+	InternationalScoreLte string `json:"internationalScore.lte,omitempty" form:"internationalScore.lte"`
+	TrustScoreLte         string `json:"trustScore.lte,omitempty" form:"trustScore.lte"`
+	TrustScoreGte         string `json:"trustScore.gte,omitempty" form:"trustScore.gte"`
 
 	ParsedCategory       []string  `json:"-"`
 	ParsedCity           []string  `json:"-"`

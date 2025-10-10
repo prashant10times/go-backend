@@ -132,18 +132,23 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 		}
 
 		var userFilterAccess []struct {
-			HasAccess bool
-			Filter    models.APIFilter `gorm:"embedded;embeddedPrefix:filter_"`
+			HasAccess  bool   `gorm:"column:has_access"`
+			FilterType string `gorm:"column:filter_type"`
+			FilterName string `gorm:"column:filter_name"`
+			IsPaid     bool   `gorm:"column:is_paid"`
 		}
-		err = tx.Table("user_filter_access ufa").
+
+		err = tx.Model(&models.UserFilterAccess{}).
 			Select("ufa.has_access, f.filter_type, f.filter_name, f.is_paid").
-			Joins("JOIN api_filter f ON ufa.filter_id = f.id").
+			Joins(`JOIN "ApiFilter" f ON ufa.filter_id = f.id`).
 			Where("ufa.user_id = ? AND ufa.has_access = ? AND f.api_id = ? AND f.is_active = ? AND f.filter_type = ?",
 				userId, true, apiId, true, "ADVANCED").
+			Table(`"UserFilterAccess" AS ufa`).
 			Scan(&userFilterAccess).Error
 		if err != nil {
 			return err
 		}
+		log.Printf("userFilterAccess: %v", userFilterAccess)
 
 		var basicFilterNames []string
 		for _, filter := range basicFilters {
@@ -151,30 +156,34 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 		}
 		var allowedAdvancedFilters []string
 		for _, access := range userFilterAccess {
-			if access.Filter.IsPaid {
-				allowedAdvancedFilters = append(allowedAdvancedFilters, access.Filter.FilterName)
+			if access.IsPaid {
+				allowedAdvancedFilters = append(allowedAdvancedFilters, access.FilterName)
 			}
 		}
+		log.Printf("allowedAdvancedFilters: %v", allowedAdvancedFilters)
 
 		result.AllowedFilters = append(basicFilterNames, allowedAdvancedFilters...)
 
 		var userParameterAccess []struct {
-			HasAccess bool
-			Parameter models.APIParameter `gorm:"embedded;embeddedPrefix:parameter_"`
+			HasAccess     bool   `gorm:"column:has_access"`
+			ParameterName string `gorm:"column:parameter_name"`
+			ParameterType string `gorm:"column:parameter_type"`
+			IsPaid        bool   `gorm:"column:is_paid"`
 		}
-		err = tx.Table("user_parameter_access upa").
+		err = tx.Model(&models.UserParameterAccess{}).
 			Select("upa.has_access, p.parameter_name, p.parameter_type, p.is_paid").
-			Joins("JOIN api_parameter p ON upa.parameter_id = p.id").
+			Joins(`JOIN "ApiParameter" p ON upa.parameter_id = p.id`).
 			Where("upa.user_id = ? AND upa.has_access = ? AND p.api_id = ? AND p.is_active = ? AND p.parameter_type = ?",
 				userId, true, apiId, true, "ADVANCED").
+			Table(`"UserParameterAccess" AS upa`).
 			Scan(&userParameterAccess).Error
 		if err != nil {
 			return err
 		}
 
 		for _, access := range userParameterAccess {
-			if access.Parameter.IsPaid {
-				result.AllowedAdvancedParameters = append(result.AllowedAdvancedParameters, access.Parameter.ParameterName)
+			if access.IsPaid {
+				result.AllowedAdvancedParameters = append(result.AllowedAdvancedParameters, access.ParameterName)
 			}
 		}
 
@@ -631,6 +640,9 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addRangeFilters("editions", "event_editionsCount", &whereConditions, filterFields, false)
 	s.addRangeFilters("start", "start_date", &whereConditions, filterFields, true)
 	s.addRangeFilters("end", "end_date", &whereConditions, filterFields, true)
+	s.addRangeFilters("inboundScore", "inboundScore", &whereConditions, filterFields, false)
+	s.addRangeFilters("internationalScore", "internationalScore", &whereConditions, filterFields, false)
+	s.addRangeFilters("trustScore", "repeatSentimentChangePercentage", &whereConditions, filterFields, false)
 
 	s.addEstimatedExhibitorsFilter(&whereConditions, filterFields)
 

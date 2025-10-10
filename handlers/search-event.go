@@ -79,6 +79,12 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 	request.FollowingLte = c.Query("following.lte")
 	request.FollowingGt = c.Query("following.gt")
 	request.FollowingLt = c.Query("following.lt")
+	request.InboundScoreGte = c.Query("inboundScore.gte")
+	request.InboundScoreLte = c.Query("inboundScore.lte")
+	request.InternationalScoreGte = c.Query("internationalScore.gte")
+	request.InternationalScoreLte = c.Query("internationalScore.lte")
+	request.TrustScoreGte = c.Query("trustScore.gte")
+	request.TrustScoreLte = c.Query("trustScore.lte")
 
 	userID, ok := c.Locals("userId").(string)
 	if !ok || userID == "" {
