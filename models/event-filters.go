@@ -132,8 +132,9 @@ type FilterDataDto struct {
 
 	ToAggregate string `json:"toAggregate,omitempty" form:"toAggregate"`
 
-	EventRanking string `json:"eventRanking,omitempty" form:"eventRanking"`
-	AudienceZone string `json:"audienceZone,omitempty" form:"audienceZone"`
+	EventRanking  string `json:"eventRanking,omitempty" form:"eventRanking"`
+	AudienceZone  string `json:"audienceZone,omitempty" form:"audienceZone"`
+	EventEstimate bool   `json:"eventEstimate,omitempty" form:"eventEstimate"`
 
 	InboundScoreGte       string `json:"inboundScore.gte,omitempty" form:"inboundScore.gte"`
 	InboundScoreLte       string `json:"inboundScore.lte,omitempty" form:"inboundScore.lte"`

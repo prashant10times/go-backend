@@ -411,6 +411,10 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 			if fieldValue != "" {
 				hasActualFilters = true
 			}
+		} else if field.Kind() == reflect.Bool {
+			if field.Bool() {
+				hasActualFilters = true
+			}
 		}
 	}
 
@@ -659,6 +663,10 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	}
 	if filterFields.EstimatedVisitors != "" {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_estimatedVisitors = %s", escapeSqlValue(filterFields.EstimatedVisitors)))
+	}
+
+	if filterFields.EventEstimate {
+		whereConditions = append(whereConditions, "ee.event_economic_value IS NOT NULL")
 	}
 
 	s.addActiveDateFilters(&whereConditions, filterFields)
@@ -2768,4 +2776,26 @@ func (s *SharedFunctionService) getCountFromItem(item map[string]interface{}, fi
 	}
 
 	return 0
+}
+
+func (s *SharedFunctionService) formatCurrency(value float64) string {
+	if value == 0 {
+		return "$0"
+	}
+
+	str := fmt.Sprintf("%.2f", value)
+
+	parts := strings.Split(str, ".")
+	integerPart := parts[0]
+	decimalPart := parts[1]
+
+	var result strings.Builder
+	for i, char := range integerPart {
+		if i > 0 && (len(integerPart)-i)%3 == 0 {
+			result.WriteString(",")
+		}
+		result.WriteRune(char)
+	}
+
+	return "$" + result.String() + "." + decimalPart
 }

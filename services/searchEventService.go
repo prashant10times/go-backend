@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -663,6 +664,12 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		"ee.exhibitors_upper_bound as exhibitors_upper_bound",
 	}
 
+	// Add economic fields if eventEstimate filter is present
+	if filterFields.EventEstimate {
+		baseFields = append(baseFields, "ee.event_economic_value as economicImpact")
+		baseFields = append(baseFields, "ee.event_economic_breakdown as economicImpactBreakdown")
+	}
+
 	sortFields := make(map[string]bool)
 	if len(sortClause) > 0 {
 		for _, sort := range sortClause {
@@ -885,6 +892,10 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 				values[i] = new(float64)
 			case "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors":
 				values[i] = new(uint32)
+			case "economicImpact":
+				values[i] = new(float64)
+			case "economicImpactBreakdown":
+				values[i] = new(string)
 			default:
 				values[i] = new(string)
 			}
@@ -924,6 +935,24 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 					rowData[col] = *estimatedExhibitors
 				} else {
 					rowData[col] = uint32(0)
+				}
+			case "economicImpact":
+				if economicValue, ok := val.(*float64); ok && economicValue != nil {
+					formattedValue := s.sharedFunctionService.formatCurrency(*economicValue)
+					rowData[col] = formattedValue
+				} else {
+					rowData[col] = "$0"
+				}
+			case "economicImpactBreakdown":
+				if economicBreakdown, ok := val.(*string); ok && economicBreakdown != nil {
+					var jsonData interface{}
+					if err := json.Unmarshal([]byte(*economicBreakdown), &jsonData); err == nil {
+						rowData[col] = jsonData
+					} else {
+						rowData[col] = *economicBreakdown
+					}
+				} else {
+					rowData[col] = "{}"
 				}
 			default:
 				if ptr, ok := val.(*string); ok && ptr != nil {
