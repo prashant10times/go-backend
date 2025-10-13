@@ -22,6 +22,8 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 
 	fmt.Printf("Rate Limit Config: limit=%d, ttl=%dms, blockDuration=%dms\n", limit, ttl, blockDuration)
 
+	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
+
 	healthHandler := handlers.NewHealthHandler(10)
 	authHandler := handlers.NewAuthHandler(dbService.DB)
 	sharedFunctionService := services.NewSharedFunctionService(dbService.DB)
@@ -33,7 +35,6 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	api.Get("/health", healthHandler.HealthCheck)
 	api.Post("/register", authHandler.Register)
 	api.Post("/login", loginHandler.Login)
-	api.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler())) //metrics route accessible under /v1 without auth
 
 	//protected route
 	api.Use(middleware.JwtAuthMiddleware(dbService.DB))
