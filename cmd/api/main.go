@@ -39,6 +39,7 @@ func main() {
 	app.Use(middleware.RecoverMiddleware())
 	app.Use(logger.New())
 	app.Use(cors.New())
+	app.Use(middleware.PrometheusMiddleware()) //prometheus middleware
 
 	routes.SetupRoutes(app, dbService, clickhouseService, cfg)
 

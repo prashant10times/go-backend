@@ -9,7 +9,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouseService *services.ClickHouseService, cfg *config.Config) {
@@ -31,6 +33,7 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	api.Get("/health", healthHandler.HealthCheck)
 	api.Post("/register", authHandler.Register)
 	api.Post("/login", loginHandler.Login)
+	api.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler())) //metrics route accessible under /v1 without auth
 
 	//protected route
 	api.Use(middleware.JwtAuthMiddleware(dbService.DB))
