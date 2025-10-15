@@ -987,6 +987,12 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
 
 	relatedDataQuery := fmt.Sprintf(`
+		WITH current_events AS (
+    		SELECT edition_id
+    		FROM testing_db.event_edition_ch
+    		WHERE event_id IN (%s)
+			AND edition_type = 'current_edition'
+		)	
 		SELECT 
 			event AS event_id,
 			'category' AS data_type,
@@ -1016,8 +1022,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		FROM testing_db.event_type_ch
 		WHERE event_id IN (%s)
 		GROUP BY event_id
-	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
-
+	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
+	
 	if len(filterFields.ParsedJobComposite) > 0 && queryResult.needsDesignationJoin {
 		escapedDesignations := make([]string, len(filterFields.ParsedJobComposite))
 		for i, designation := range filterFields.ParsedJobComposite {
@@ -1033,11 +1039,11 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			'jobComposite' AS data_type,
 			concat(display_name, '|||', role, '|||', department) AS value
 		FROM testing_db.event_designation_ch
-		WHERE event_id IN (%s) 
+		WHERE edition_id IN (SELECT edition_id FROM current_events) 
 		  AND display_name IN (%s)
 		  AND total_visitors >= 5
 		ORDER BY event_id, total_visitors DESC
-		`, eventIdsStrJoined, designationsStr)
+		`, designationsStr)
 	}
 
 	log.Printf("Related data query: %s", relatedDataQuery)
