@@ -47,6 +47,8 @@ type FilterDataDto struct {
 	VisitorState       string `json:"visitorState,omitempty" form:"visitorState"`
 	VisitorName        string `json:"visitorName,omitempty" form:"visitorName"`
 
+	JobComposite string `json:"jobComposite,omitempty" form:"jobComposite"`
+
 	SpeakerDesignation string `json:"speakerDesignation,omitempty" form:"speakerDesignation"`
 	SpeakerCity        string `json:"speakerCity,omitempty" form:"speakerCity"`
 	SpeakerState       string `json:"speakerState,omitempty" form:"speakerState"`
@@ -161,6 +163,7 @@ type FilterDataDto struct {
 	ParsedExhibitorState []string  `json:"-"`
 	ParsedSponsorState   []string  `json:"-"`
 	ParsedVisitorState   []string  `json:"-"`
+	ParsedJobComposite   []string  `json:"-"`
 	ParsedEventRanking   []string  `json:"-"`
 	ParsedAudienceZone   []string  `json:"-"`
 }
@@ -532,6 +535,19 @@ func (f *FilterDataDto) Validate() error {
 						return validation.NewError("invalid_event_ranking", "Invalid eventRanking value: "+ranking+". Valid values are: 100, 500, 1000")
 					}
 					f.ParsedEventRanking = append(f.ParsedEventRanking, ranking)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.JobComposite, validation.When(f.JobComposite != "", validation.By(func(value interface{}) error {
+			jobCompositeStr := value.(string)
+			jobComposites := strings.Split(jobCompositeStr, ",")
+			f.ParsedJobComposite = make([]string, 0, len(jobComposites))
+			for _, jobComposite := range jobComposites {
+				jobComposite = strings.TrimSpace(jobComposite)
+				if jobComposite != "" {
+					f.ParsedJobComposite = append(f.ParsedJobComposite, jobComposite)
 				}
 			}
 			return nil

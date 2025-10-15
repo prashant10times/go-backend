@@ -766,6 +766,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		queryResult.NeedsCategoryJoin,
 		queryResult.NeedsTypeJoin,
 		queryResult.NeedsEventRankingJoin,
+		queryResult.needsDesignationJoin,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -773,6 +774,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		queryResult.CategoryWhereConditions,
 		queryResult.TypeWhereConditions,
 		queryResult.EventRankingWhereConditions,
+		queryResult.JobCompositeWhereConditions,
 		filterFields,
 	)
 
@@ -1016,6 +1018,28 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		GROUP BY event_id
 	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
 
+	if len(filterFields.ParsedJobComposite) > 0 && queryResult.needsDesignationJoin {
+		escapedDesignations := make([]string, len(filterFields.ParsedJobComposite))
+		for i, designation := range filterFields.ParsedJobComposite {
+			escapedDesignations[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(designation, "'", "''"))
+		}
+		designationsStr := strings.Join(escapedDesignations, ",")
+
+		relatedDataQuery += fmt.Sprintf(`
+		UNION ALL
+
+		SELECT 
+			event_id,
+			'jobComposite' AS data_type,
+			concat(display_name, '|||', role, '|||', department) AS value
+		FROM testing_db.event_designation_ch
+		WHERE event_id IN (%s) 
+		  AND display_name IN (%s)
+		  AND total_visitors >= 5
+		ORDER BY event_id, total_visitors DESC
+		`, eventIdsStrJoined, designationsStr)
+	}
+
 	log.Printf("Related data query: %s", relatedDataQuery)
 	relatedDataQueryTime := time.Now()
 	relatedDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), relatedDataQuery)
@@ -1034,6 +1058,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	categoriesMap := make(map[string]string)
 	tagsMap := make(map[string]string)
 	typesMap := make(map[string]string)
+	jobCompositeMap := make(map[string][]map[string]string)
 
 	for relatedDataResult.Next() {
 		var eventID uint32
@@ -1053,6 +1078,15 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			tagsMap[eventIDStr] = value
 		case "types":
 			typesMap[eventIDStr] = value
+		case "jobComposite":
+			parts := strings.Split(value, "|||")
+			if len(parts) >= 3 {
+				jobCompositeMap[eventIDStr] = append(jobCompositeMap[eventIDStr], map[string]string{
+					"name":       parts[0],
+					"role":       parts[1],
+					"department": parts[2],
+				})
+			}
 		}
 	}
 
@@ -1067,6 +1101,18 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		combinedEvent["category"] = categoriesMap[eventID]
 		combinedEvent["tags"] = tagsMap[eventID]
 		combinedEvent["type"] = typesMap[eventID]
+
+		if jobCompositeData, ok := jobCompositeMap[eventID]; ok && len(jobCompositeData) > 0 {
+			var jobCompositeArray []map[string]interface{}
+			for _, designation := range jobCompositeData {
+				jobCompositeArray = append(jobCompositeArray, map[string]interface{}{
+					"name":       designation["name"],
+					"role":       designation["role"],
+					"department": designation["department"],
+				})
+			}
+			combinedEvent["jobComposite"] = jobCompositeArray
+		}
 
 		if lowerBound, ok := event["exhibitors_lower_bound"].(uint32); ok {
 			if upperBound, ok := event["exhibitors_upper_bound"].(uint32); ok {

@@ -449,6 +449,7 @@ type ClickHouseQueryResult struct {
 	NeedsCategoryJoin           bool
 	NeedsTypeJoin               bool
 	NeedsEventRankingJoin       bool
+	needsDesignationJoin       bool
 	VisitorJoinClause           string
 	SpeakerJoinClause           string
 	VisitorWhereConditions      []string
@@ -458,6 +459,7 @@ type ClickHouseQueryResult struct {
 	CategoryWhereConditions     []string
 	TypeWhereConditions         []string
 	EventRankingWhereConditions []string
+	JobCompositeWhereConditions []string
 }
 
 func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterDataDto) (*ClickHouseQueryResult, error) {
@@ -469,6 +471,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		CategoryWhereConditions:     make([]string, 0),
 		TypeWhereConditions:         make([]string, 0),
 		EventRankingWhereConditions: make([]string, 0),
+		JobCompositeWhereConditions: make([]string, 0),
 	}
 
 	whereConditions := make([]string, 0)
@@ -636,7 +639,16 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		result.EventRankingWhereConditions = append(result.EventRankingWhereConditions, fmt.Sprintf("event_rank <= %s", eventRankingValue))
 	}
 
-	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin
+	if len(filterFields.ParsedJobComposite) > 0 {
+		result.needsDesignationJoin = true
+		jobComposites := make([]string, len(filterFields.ParsedJobComposite))
+		for i, jobComposite := range filterFields.ParsedJobComposite {
+			jobComposites[i] = escapeSqlValue(jobComposite)
+		}
+		result.JobCompositeWhereConditions = append(result.JobCompositeWhereConditions, fmt.Sprintf("display_name IN (%s) AND total_visitors >= 5", strings.Join(jobComposites, ",")))
+	}
+
+	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin || result.needsDesignationJoin
 
 	s.addRangeFilters("following", "event_followers", &whereConditions, filterFields, false)
 	s.addRangeFilters("speaker", "event_speaker", &whereConditions, filterFields, false)
@@ -697,6 +709,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsCategoryJoin bool,
 	needsTypeJoin bool,
 	needsEventRankingJoin bool,
+	needsDesignationJoin bool,
 	visitorWhereConditions []string,
 	speakerWhereConditions []string,
 	exhibitorWhereConditions []string,
@@ -704,6 +717,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	categoryWhereConditions []string,
 	typeWhereConditions []string,
 	eventRankingWhereConditions []string,
+	jobCompositeWhereConditions []string,
 	filterFields models.FilterDataDto,
 ) CTEAndJoinResult {
 	result := CTEAndJoinResult{
@@ -927,6 +941,42 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 		result.CTEClauses = append(result.CTEClauses, eventRankingQuery)
 		previousCTE = "filtered_event_ranking"
+	}
+
+	if needsDesignationJoin {
+		jobCompositeWhereClause := ""
+		if len(jobCompositeWhereConditions) > 0 {
+			jobCompositeWhereClause = fmt.Sprintf("WHERE %s", strings.Join(jobCompositeWhereConditions, " AND "))
+		}
+
+		jobCompositeQuery := fmt.Sprintf(`filtered_designations AS (
+			SELECT event_id
+			FROM testing_db.event_designation_ch
+			%s`, jobCompositeWhereClause)
+
+		if previousCTE != "" {
+			var selectColumn string
+			if previousCTE == "filtered_categories" {
+				selectColumn = "event"
+			} else {
+				selectColumn = "event_id"
+			}
+			jobCompositeQuery = fmt.Sprintf(`filtered_designations AS (
+				SELECT event_id
+				FROM testing_db.event_designation_ch
+				WHERE event_id IN (SELECT %s FROM %s)`, selectColumn, previousCTE)
+			if len(jobCompositeWhereConditions) > 0 {
+				jobCompositeQuery += fmt.Sprintf(`
+				AND %s`, strings.Join(jobCompositeWhereConditions, " AND "))
+			}
+		}
+
+		jobCompositeQuery += `
+			GROUP BY event_id
+		)`
+
+		result.CTEClauses = append(result.CTEClauses, jobCompositeQuery)
+		previousCTE = "filtered_designations"
 	}
 
 	if previousCTE != "" {
@@ -2323,7 +2373,6 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 
 		eventRankingConditions := []string{currentMonthCondition}
 
-		// Add country filter if present
 		if len(filterFields.ParsedCountry) > 0 {
 			countries := make([]string, len(filterFields.ParsedCountry))
 			for i, country := range filterFields.ParsedCountry {
@@ -2332,12 +2381,15 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
 		}
 
-		// Add eventRanking conditions
 		if len(queryResult.EventRankingWhereConditions) > 0 {
 			eventRankingConditions = append(eventRankingConditions, queryResult.EventRankingWhereConditions...)
 		}
 
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_event_ranking AS (SELECT event_id FROM testing_db.event_ranking_ch WHERE %s GROUP BY event_id)", strings.Join(eventRankingConditions, " AND ")))
+	}
+
+	if queryResult.needsDesignationJoin {
+		cteClauses = append(cteClauses, fmt.Sprintf("filtered_designations AS (SELECT event_id FROM testing_db.event_designation_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.JobCompositeWhereConditions, " AND ")))
 	}
 
 	hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != ""
