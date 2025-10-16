@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"reflect"
 	"search-event-go/middleware"
@@ -767,6 +768,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		queryResult.NeedsTypeJoin,
 		queryResult.NeedsEventRankingJoin,
 		queryResult.needsDesignationJoin,
+		queryResult.needsAudienceSpreadJoin,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -775,6 +777,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		queryResult.TypeWhereConditions,
 		queryResult.EventRankingWhereConditions,
 		queryResult.JobCompositeWhereConditions,
+		queryResult.AudienceSpreadWhereConditions,
 		filterFields,
 	)
 
@@ -870,6 +873,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 
 	var eventIds []uint32
 	var eventData []map[string]interface{}
+	eventFollowersMap := make(map[uint32]uint32)
 	rowCount := 0
 
 	for eventDataResult.Next() {
@@ -909,6 +913,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		}
 
 		rowData := make(map[string]interface{})
+		var currentEventID uint32
 		for i, col := range columns {
 			val := values[i]
 
@@ -916,7 +921,15 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			case "event_id":
 				if eventID, ok := val.(*uint32); ok && eventID != nil {
 					eventIds = append(eventIds, *eventID)
+					currentEventID = *eventID // for calculating the percentage of the followers (country spread and designation spread)
 					rowData["event_id"] = *eventID
+				}
+			case "followers":
+				if followers, ok := val.(*uint32); ok && followers != nil {
+					rowData[col] = *followers
+					if currentEventID != 0 {
+						eventFollowersMap[currentEventID] = *followers
+					}
 				}
 			case "id":
 				if eventUUID, ok := val.(*string); ok && eventUUID != nil {
@@ -1023,7 +1036,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		WHERE event_id IN (%s)
 		GROUP BY event_id
 	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
-	
+
 	if len(filterFields.ParsedJobComposite) > 0 && queryResult.needsDesignationJoin {
 		escapedDesignations := make([]string, len(filterFields.ParsedJobComposite))
 		for i, designation := range filterFields.ParsedJobComposite {
@@ -1046,6 +1059,40 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		`, designationsStr)
 	}
 
+	// Add country spread data if audience spread filter is used
+	if len(filterFields.ParsedAudienceSpread) > 0 && queryResult.needsAudienceSpreadJoin {
+		relatedDataQuery += `
+		UNION ALL
+
+		SELECT 
+			event_id,
+			'countrySpread' AS data_type,
+			CAST(country_data as String) AS value
+		FROM testing_db.event_visitorSpread_ch
+		ARRAY JOIN user_by_cntry AS country_data
+		WHERE event_id IN (` + eventIdsStrJoined + `)
+		  AND JSONExtractInt(CAST(country_data as String), 'total_count') > 5
+		ORDER BY event_id, JSONExtractInt(CAST(country_data as String), 'total_count') DESC
+		`
+	}
+
+	// Add designation spread data if audience spread filter is used
+	if len(filterFields.ParsedAudienceSpread) > 0 && queryResult.needsAudienceSpreadJoin {
+		relatedDataQuery += `
+		UNION ALL
+
+		SELECT 
+			event_id,
+			'designationSpread' AS data_type,
+			CAST(designation_data as String) AS value
+		FROM testing_db.event_visitorSpread_ch
+		ARRAY JOIN user_by_designation AS designation_data
+		WHERE event_id IN (` + eventIdsStrJoined + `)
+		  AND JSONExtractInt(CAST(designation_data as String), 'total_count') > 5
+		ORDER BY event_id, JSONExtractInt(CAST(designation_data as String), 'total_count') DESC
+		`
+	}
+
 	log.Printf("Related data query: %s", relatedDataQuery)
 	relatedDataQueryTime := time.Now()
 	relatedDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), relatedDataQuery)
@@ -1065,6 +1112,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	tagsMap := make(map[string]string)
 	typesMap := make(map[string]string)
 	jobCompositeMap := make(map[string][]map[string]string)
+	countrySpreadMap := make(map[string][]map[string]interface{})
+	designationSpreadMap := make(map[string][]map[string]interface{})
 
 	for relatedDataResult.Next() {
 		var eventID uint32
@@ -1093,10 +1142,72 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 					"department": parts[2],
 				})
 			}
+		case "countrySpread":
+			var countryData map[string]interface{}
+			if err := json.Unmarshal([]byte(value), &countryData); err == nil {
+				transformedCountryData := make(map[string]interface{})
+				if cntryId, ok := countryData["cntry_id"]; ok {
+					transformedCountryData["iso"] = cntryId
+
+					// Look up additional country data by ISO
+					if isoStr, ok := cntryId.(string); ok {
+						countryInfo := s.sharedFunctionService.GetCountryDataByISO(isoStr)
+						if countryInfo != nil {
+							if name, ok := countryInfo["name"].(string); ok {
+								transformedCountryData["name"] = name
+							}
+							if geoLat, ok := countryInfo["geoLat"].(float64); ok {
+								transformedCountryData["latitude"] = geoLat
+							}
+							if geoLong, ok := countryInfo["geoLong"].(float64); ok {
+								transformedCountryData["longitude"] = geoLong
+							}
+						}
+					}
+				}
+				if totalCount, ok := countryData["total_count"]; ok {
+					transformedCountryData["count"] = totalCount
+					percentage := 0.0
+					if followers, exists := eventFollowersMap[eventID]; exists && followers > 0 {
+						if userCount, ok := totalCount.(float64); ok && userCount > 0 {
+							percentage = math.Round((userCount/float64(followers))*100*100) / 100
+						}
+					}
+					transformedCountryData["percentage"] = percentage
+				}
+				countrySpreadMap[eventIDStr] = append(countrySpreadMap[eventIDStr], transformedCountryData)
+			}
+		case "designationSpread":
+			var designationData map[string]interface{}
+			if err := json.Unmarshal([]byte(value), &designationData); err == nil {
+				transformedDesignationData := make(map[string]interface{})
+				if designation, ok := designationData["designation"]; ok {
+					transformedDesignationData["designation"] = designation
+				}
+				if totalCount, ok := designationData["total_count"]; ok {
+					transformedDesignationData["count"] = totalCount
+					percentage := 0.0
+					if followers, exists := eventFollowersMap[eventID]; exists && followers > 0 {
+						var userCount float64
+						if countFloat, ok := totalCount.(float64); ok {
+							userCount = countFloat
+						} else if countStr, ok := totalCount.(string); ok {
+							if parsedCount, err := strconv.ParseFloat(countStr, 64); err == nil {
+								userCount = parsedCount
+							}
+						}
+
+						if userCount > 0 {
+							percentage = math.Round((userCount/float64(followers))*100*100) / 100
+						}
+					}
+					transformedDesignationData["percentage"] = percentage
+				}
+				designationSpreadMap[eventIDStr] = append(designationSpreadMap[eventIDStr], transformedDesignationData)
+			}
 		}
 	}
 
-	// Combine event data with related data
 	var combinedData []map[string]interface{}
 	for _, event := range eventData {
 		eventID := fmt.Sprintf("%d", event["event_id"])
@@ -1120,6 +1231,18 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			combinedEvent["jobComposite"] = jobCompositeArray
 		}
 
+		audienceData := make(map[string]interface{})
+		if countrySpreadData, ok := countrySpreadMap[eventID]; ok && len(countrySpreadData) > 0 {
+			audienceData["countrySpread"] = countrySpreadData
+		}
+		if designationSpreadData, ok := designationSpreadMap[eventID]; ok && len(designationSpreadData) > 0 {
+			audienceData["designationSpread"] = designationSpreadData
+		}
+
+		if len(audienceData) > 0 {
+			combinedEvent["audience"] = audienceData
+		}
+
 		if lowerBound, ok := event["exhibitors_lower_bound"].(uint32); ok {
 			if upperBound, ok := event["exhibitors_upper_bound"].(uint32); ok {
 				if lowerBound > 0 || upperBound > 0 {
@@ -1134,7 +1257,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			combinedEvent["estimatedExhibitors"] = "0-0"
 		}
 		delete(combinedEvent, "event_id")
-
 		combinedData = append(combinedData, combinedEvent)
 	}
 

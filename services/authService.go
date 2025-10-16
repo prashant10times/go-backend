@@ -14,7 +14,6 @@ func NewAuthService(db *gorm.DB) *AuthService {
 	return &AuthService{db: db}
 }
 
-// GiveFilterAndApiAccess grants API and filter access to a user in a single transaction
 func (s *AuthService) GiveFilterAndApiAccess(tx *gorm.DB, userId string, apiId string) error {
 	var api models.API
 	err := tx.Where("id = ?", apiId).First(&api).Error

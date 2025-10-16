@@ -137,6 +137,7 @@ type FilterDataDto struct {
 	EventRanking  string `json:"eventRanking,omitempty" form:"eventRanking"`
 	AudienceZone  string `json:"audienceZone,omitempty" form:"audienceZone"`
 	EventEstimate bool   `json:"eventEstimate,omitempty" form:"eventEstimate"`
+	AudienceSpread string `json:"audienceSpread,omitempty" form:"audienceSpread"`
 
 	InboundScoreGte       string `json:"inboundScore.gte,omitempty" form:"inboundScore.gte"`
 	InboundScoreLte       string `json:"inboundScore.lte,omitempty" form:"inboundScore.lte"`
@@ -166,6 +167,7 @@ type FilterDataDto struct {
 	ParsedJobComposite   []string  `json:"-"`
 	ParsedEventRanking   []string  `json:"-"`
 	ParsedAudienceZone   []string  `json:"-"`
+	ParsedAudienceSpread []string  `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -219,6 +221,19 @@ func (f *FilterDataDto) Validate() error {
 					return validation.NewError("invalid_mode", "Invalid mode value: "+mode+". Must be 'online', 'physical', or 'hybrid'")
 				}
 				f.ParsedMode = &mode
+			}
+			return nil
+		}))),
+		
+		validation.Field(&f.AudienceSpread, validation.When(f.AudienceSpread != "", validation.By(func(value interface{}) error {
+			audienceSpreadStr := value.(string)
+			audienceSpreads := strings.Split(audienceSpreadStr, ",")
+			f.ParsedAudienceSpread = make([]string, 0, len(audienceSpreads))
+			for _, audienceSpread := range audienceSpreads {
+				audienceSpread = strings.TrimSpace(audienceSpread)
+				if audienceSpread != "" {
+					f.ParsedAudienceSpread = append(f.ParsedAudienceSpread, audienceSpread)
+				}
 			}
 			return nil
 		}))),

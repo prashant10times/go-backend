@@ -438,40 +438,43 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 }
 
 type ClickHouseQueryResult struct {
-	WhereClause                 string
-	SearchClause                string
-	DistanceOrderClause         string
-	NeedsVisitorJoin            bool
-	NeedsSpeakerJoin            bool
-	NeedsExhibitorJoin          bool
-	NeedsSponsorJoin            bool
-	NeedsAnyJoin                bool
-	NeedsCategoryJoin           bool
-	NeedsTypeJoin               bool
-	NeedsEventRankingJoin       bool
-	needsDesignationJoin       bool
-	VisitorJoinClause           string
-	SpeakerJoinClause           string
-	VisitorWhereConditions      []string
-	SpeakerWhereConditions      []string
-	ExhibitorWhereConditions    []string
-	SponsorWhereConditions      []string
-	CategoryWhereConditions     []string
-	TypeWhereConditions         []string
-	EventRankingWhereConditions []string
-	JobCompositeWhereConditions []string
+	WhereClause                   string
+	SearchClause                  string
+	DistanceOrderClause           string
+	NeedsVisitorJoin              bool
+	NeedsSpeakerJoin              bool
+	NeedsExhibitorJoin            bool
+	NeedsSponsorJoin              bool
+	NeedsAnyJoin                  bool
+	NeedsCategoryJoin             bool
+	NeedsTypeJoin                 bool
+	NeedsEventRankingJoin         bool
+	needsDesignationJoin          bool
+	needsAudienceSpreadJoin       bool
+	VisitorJoinClause             string
+	SpeakerJoinClause             string
+	VisitorWhereConditions        []string
+	SpeakerWhereConditions        []string
+	ExhibitorWhereConditions      []string
+	SponsorWhereConditions        []string
+	CategoryWhereConditions       []string
+	TypeWhereConditions           []string
+	EventRankingWhereConditions   []string
+	JobCompositeWhereConditions   []string
+	AudienceSpreadWhereConditions []string
 }
 
 func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterDataDto) (*ClickHouseQueryResult, error) {
 	result := &ClickHouseQueryResult{
-		VisitorWhereConditions:      make([]string, 0),
-		SpeakerWhereConditions:      make([]string, 0),
-		ExhibitorWhereConditions:    make([]string, 0),
-		SponsorWhereConditions:      make([]string, 0),
-		CategoryWhereConditions:     make([]string, 0),
-		TypeWhereConditions:         make([]string, 0),
-		EventRankingWhereConditions: make([]string, 0),
-		JobCompositeWhereConditions: make([]string, 0),
+		VisitorWhereConditions:        make([]string, 0),
+		SpeakerWhereConditions:        make([]string, 0),
+		ExhibitorWhereConditions:      make([]string, 0),
+		SponsorWhereConditions:        make([]string, 0),
+		CategoryWhereConditions:       make([]string, 0),
+		TypeWhereConditions:           make([]string, 0),
+		EventRankingWhereConditions:   make([]string, 0),
+		JobCompositeWhereConditions:   make([]string, 0),
+		AudienceSpreadWhereConditions: make([]string, 0),
 	}
 
 	whereConditions := make([]string, 0)
@@ -648,7 +651,19 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		result.JobCompositeWhereConditions = append(result.JobCompositeWhereConditions, fmt.Sprintf("display_name IN (%s) AND total_visitors >= 5", strings.Join(jobComposites, ",")))
 	}
 
-	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin || result.needsDesignationJoin
+	if len(filterFields.ParsedAudienceSpread) > 0 {
+		result.needsAudienceSpreadJoin = true
+		// Build JSON array conditions for checking cntry_id in user_by_cntry array
+		var jsonConditions []string
+		for _, audienceSpread := range filterFields.ParsedAudienceSpread {
+			escapedISO := escapeSqlValue(audienceSpread)
+			jsonConditions = append(jsonConditions, fmt.Sprintf("arrayExists(x -> x.cntry_id = %s, user_by_cntry)", escapedISO))
+		}
+		// Use AND logic - all provided ISOs must exist in the JSON array
+		result.AudienceSpreadWhereConditions = append(result.AudienceSpreadWhereConditions, fmt.Sprintf("(%s)", strings.Join(jsonConditions, " AND ")))
+	}
+
+	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin || result.needsDesignationJoin || result.needsAudienceSpreadJoin
 
 	s.addRangeFilters("following", "event_followers", &whereConditions, filterFields, false)
 	s.addRangeFilters("speaker", "event_speaker", &whereConditions, filterFields, false)
@@ -710,6 +725,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsTypeJoin bool,
 	needsEventRankingJoin bool,
 	needsDesignationJoin bool,
+	needsAudienceSpreadJoin bool,
 	visitorWhereConditions []string,
 	speakerWhereConditions []string,
 	exhibitorWhereConditions []string,
@@ -718,6 +734,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	typeWhereConditions []string,
 	eventRankingWhereConditions []string,
 	jobCompositeWhereConditions []string,
+	audienceSpreadWhereConditions []string,
 	filterFields models.FilterDataDto,
 ) CTEAndJoinResult {
 	result := CTEAndJoinResult{
@@ -977,6 +994,42 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 		result.CTEClauses = append(result.CTEClauses, jobCompositeQuery)
 		previousCTE = "filtered_designations"
+	}
+
+	if needsAudienceSpreadJoin {
+		audienceSpreadWhereClause := ""
+		if len(audienceSpreadWhereConditions) > 0 {
+			audienceSpreadWhereClause = fmt.Sprintf("WHERE %s", strings.Join(audienceSpreadWhereConditions, " AND "))
+		}
+
+		audienceSpreadQuery := fmt.Sprintf(`filtered_audience_spread AS (
+			SELECT event_id
+			FROM testing_db.event_visitorSpread_ch
+			%s`, audienceSpreadWhereClause)
+
+		if previousCTE != "" {
+			var selectColumn string
+			if previousCTE == "filtered_categories" {
+				selectColumn = "event"
+			} else {
+				selectColumn = "event_id"
+			}
+			audienceSpreadQuery = fmt.Sprintf(`filtered_audience_spread AS (
+				SELECT event_id
+				FROM testing_db.event_visitorSpread_ch
+				WHERE event_id IN (SELECT %s FROM %s)`, selectColumn, previousCTE)
+			if len(audienceSpreadWhereConditions) > 0 {
+				audienceSpreadQuery += fmt.Sprintf(`
+				AND %s`, strings.Join(audienceSpreadWhereConditions, " AND "))
+			}
+		}
+
+		audienceSpreadQuery += `
+			GROUP BY event_id
+		)`
+
+		result.CTEClauses = append(result.CTEClauses, audienceSpreadQuery)
+		previousCTE = "filtered_audience_spread"
 	}
 
 	if previousCTE != "" {
@@ -2850,4 +2903,13 @@ func (s *SharedFunctionService) formatCurrency(value float64) string {
 	}
 
 	return "$" + result.String() + "." + decimalPart
+}
+
+func (s *SharedFunctionService) GetCountryDataByISO(iso string) map[string]interface{} {
+	for _, country := range CountryData {
+		if countryID, ok := country["id"].(string); ok && countryID == iso {
+			return country
+		}
+	}
+	return nil
 }
