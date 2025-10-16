@@ -11,6 +11,7 @@ import (
 
 	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
@@ -22,7 +23,7 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 
 	fmt.Printf("Rate Limit Config: limit=%d, ttl=%dms, blockDuration=%dms\n", limit, ttl, blockDuration)
 
-	app.Get("/metrics", adaptor.HTTPHandler(promhttp.Handler()))
+	app.Get("/metrics", adaptor.HTTPHandler(promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{})))
 
 	healthHandler := handlers.NewHealthHandler(10)
 	authHandler := handlers.NewAuthHandler(dbService.DB)
