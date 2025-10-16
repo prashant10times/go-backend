@@ -12,7 +12,7 @@ var (
 	httpRequestsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "http_requests_total",
-			Help: "Total number of HTTP requests",
+			Help: "Total number of HTTP requests received",
 		},
 		[]string{"method", "path", "status"},
 	)
@@ -23,13 +23,41 @@ var (
 			Help:    "Duration of HTTP requests in seconds",
 			Buckets: prometheus.DefBuckets,
 		},
-		[]string{"path"},
+		[]string{"method", "path", "status"},
+	)
+
+	httpRequestSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_request_size_bytes",
+			Help:    "Size of HTTP requests in bytes",
+			Buckets: prometheus.ExponentialBuckets(200, 2, 8), // 200B to ~25KB
+		},
+		[]string{"method", "path"},
+	)
+
+	httpResponseSize = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_response_size_bytes",
+			Help:    "Size of HTTP responses in bytes",
+			Buckets: prometheus.ExponentialBuckets(200, 2, 8),
+		},
+		[]string{"method", "path", "status"},
+	)
+
+	uptime = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "app_uptime_seconds_total",
+			Help: "Total uptime of the API server",
+		},
 	)
 )
 
 func init() {
 	prometheus.MustRegister(httpRequestsTotal)
 	prometheus.MustRegister(httpRequestDuration)
+	prometheus.MustRegister(httpRequestSize)
+	prometheus.MustRegister(httpResponseSize)
+	prometheus.MustRegister(uptime)
 }
 
 func PrometheusMiddleware() fiber.Handler {
@@ -42,7 +70,7 @@ func PrometheusMiddleware() fiber.Handler {
 		statusCode := c.Response().StatusCode()
 
 		httpRequestsTotal.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", statusCode)).Inc()
-		httpRequestDuration.WithLabelValues(c.Path()).Observe(duration)
+		httpRequestDuration.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", statusCode)).Observe(duration)
 
 		return err
 	}

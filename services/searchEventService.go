@@ -758,7 +758,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 
 	requiredFieldsStatic = append(baseFields, conditionalFields...)
 
-	// Build CTEs and joins
 	cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
 		queryResult.NeedsVisitorJoin,
 		queryResult.NeedsSpeakerJoin,
@@ -1071,8 +1070,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		FROM testing_db.event_visitorSpread_ch
 		ARRAY JOIN user_by_cntry AS country_data
 		WHERE event_id IN (` + eventIdsStrJoined + `)
-		  AND JSONExtractInt(CAST(country_data as String), 'total_count') > 5
 		ORDER BY event_id, JSONExtractInt(CAST(country_data as String), 'total_count') DESC
+		LIMIT 5 BY event_id
 		`
 	}
 
@@ -1088,7 +1087,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		FROM testing_db.event_visitorSpread_ch
 		ARRAY JOIN user_by_designation AS designation_data
 		WHERE event_id IN (` + eventIdsStrJoined + `)
-		  AND JSONExtractInt(CAST(designation_data as String), 'total_count') > 5
 		ORDER BY event_id, JSONExtractInt(CAST(designation_data as String), 'total_count') DESC
 		`
 	}

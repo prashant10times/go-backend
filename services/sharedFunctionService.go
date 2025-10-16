@@ -653,13 +653,11 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	if len(filterFields.ParsedAudienceSpread) > 0 {
 		result.needsAudienceSpreadJoin = true
-		// Build JSON array conditions for checking cntry_id in user_by_cntry array
 		var jsonConditions []string
 		for _, audienceSpread := range filterFields.ParsedAudienceSpread {
 			escapedISO := escapeSqlValue(audienceSpread)
-			jsonConditions = append(jsonConditions, fmt.Sprintf("arrayExists(x -> x.cntry_id = %s, user_by_cntry)", escapedISO))
+			jsonConditions = append(jsonConditions, fmt.Sprintf("arrayExists(x -> x.cntry_id = %s AND x.total_count >= 5, user_by_cntry)", escapedISO))
 		}
-		// Use AND logic - all provided ISOs must exist in the JSON array
 		result.AudienceSpreadWhereConditions = append(result.AudienceSpreadWhereConditions, fmt.Sprintf("(%s)", strings.Join(jsonConditions, " AND ")))
 	}
 
