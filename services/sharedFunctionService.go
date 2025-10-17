@@ -294,7 +294,7 @@ func (s *SharedFunctionService) buildOrderByClause(sortClause []SortClause, need
 }
 
 var fieldMapping = map[string]string{
-	"type":                   "type",
+	"types":                   "type",
 	"start_date":             "start",
 	"end_date":               "end",
 	"event_name":             "name",
@@ -303,7 +303,7 @@ var fieldMapping = map[string]string{
 	"tags":                   "tags",
 	"event_description":      "description",
 	"event_logo":             "logo",
-	"category":               "category",
+	"categories":             "categories",
 	"event_avgRating":        "avgRating",
 	"event_uuid":             "id",
 	"event_followers":        "followers",

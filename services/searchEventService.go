@@ -535,7 +535,8 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		SELECT 
 			event AS event_id,
 			'category' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value
+			arrayStringConcat(groupArray(name), ', ') AS value,
+			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value
 		FROM testing_db.event_category_ch
 		WHERE event IN (%s) 
 		  AND is_group = 1
@@ -546,7 +547,8 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		SELECT 
 			event AS event_id,
 			'tags' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value
+			arrayStringConcat(groupArray(name), ', ') AS value,
+			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value
 		FROM testing_db.event_category_ch
 		WHERE event IN (%s) 
 		  AND is_group = 0
@@ -557,7 +559,8 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		SELECT 
 			event_id,
 			'types' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value
+			arrayStringConcat(groupArray(name), ', ') AS value,
+			arrayStringConcat(groupArray(eventtype_uuid), ', ') AS uuid_value
 		FROM testing_db.event_type_ch
 		WHERE event_id IN (%s)
 		GROUP BY event_id
@@ -577,34 +580,50 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 
 	relatedDataQueryDuration := time.Since(relatedDataQueryTime)
 	log.Printf("Related data query time: %v", relatedDataQueryDuration)
+	log.Printf("Related data result: %v", relatedDataResult)
 
 	// Process related data
-	categoriesMap := make(map[string]string)
-	tagsMap := make(map[string]string)
-	typesMap := make(map[string]string)
+	categoriesMap := make(map[string][]map[string]string)
+	tagsMap := make(map[string][]map[string]string)
+	typesMap := make(map[string][]map[string]string)
 
+	rowCount = 0
 	for relatedDataResult.Next() {
+		rowCount++
 		var eventID uint32
-		var dataType, value string
+		var dataType, value, uuidValue string
 
-		if err := relatedDataResult.Scan(&eventID, &dataType, &value); err != nil {
+		if err := relatedDataResult.Scan(&eventID, &dataType, &value, &uuidValue); err != nil {
 			log.Printf("Error scanning related data row: %v", err)
 			continue
 		}
 
 		eventIDStr := fmt.Sprintf("%d", eventID)
 
+		// Split comma-separated values and UUIDs
+		names := strings.Split(value, ", ")
+		uuids := strings.Split(uuidValue, ", ")
+
+		var items []map[string]string
+		for i, name := range names {
+			if i < len(uuids) {
+				items = append(items, map[string]string{
+					"id":   strings.TrimSpace(uuids[i]),
+					"name": strings.TrimSpace(name),
+				})
+			}
+		}
+
 		switch dataType {
 		case "category":
-			categoriesMap[eventIDStr] = value
+			categoriesMap[eventIDStr] = items
 		case "tags":
-			tagsMap[eventIDStr] = value
+			tagsMap[eventIDStr] = items
 		case "types":
-			typesMap[eventIDStr] = value
+			typesMap[eventIDStr] = items
 		}
 	}
 
-	// Combine event data with related data
 	var combinedData []map[string]interface{}
 	for _, event := range eventData {
 		eventID := fmt.Sprintf("%d", event["event_id"])
@@ -612,9 +631,24 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		for k, v := range event {
 			combinedEvent[k] = v
 		}
-		combinedEvent["category"] = categoriesMap[eventID]
-		combinedEvent["tags"] = tagsMap[eventID]
-		combinedEvent["type"] = typesMap[eventID]
+
+		if categoriesMap[eventID] == nil {
+			combinedEvent["categories"] = []map[string]string{}
+		} else {
+			combinedEvent["categories"] = categoriesMap[eventID]
+		}
+
+		if tagsMap[eventID] == nil {
+			combinedEvent["tags"] = []map[string]string{}
+		} else {
+			combinedEvent["tags"] = tagsMap[eventID]
+		}
+
+		if typesMap[eventID] == nil {
+			combinedEvent["types"] = []map[string]string{}
+		} else {
+			combinedEvent["types"] = typesMap[eventID]
+		}
 
 		if lowerBound, ok := event["exhibitors_lower_bound"].(uint32); ok {
 			if upperBound, ok := event["exhibitors_upper_bound"].(uint32); ok {
@@ -1008,7 +1042,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		SELECT 
 			event AS event_id,
 			'category' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value
+			arrayStringConcat(groupArray(name), ', ') AS value,
+			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value
 		FROM testing_db.event_category_ch
 		WHERE event IN (%s) 
 		  AND is_group = 1
@@ -1019,7 +1054,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		SELECT 
 			event AS event_id,
 			'tags' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value
+			arrayStringConcat(groupArray(name), ', ') AS value,
+			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value
 		FROM testing_db.event_category_ch
 		WHERE event IN (%s) 
 		  AND is_group = 0
@@ -1030,7 +1066,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		SELECT 
 			event_id,
 			'types' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value
+			arrayStringConcat(groupArray(name), ', ') AS value,
+			arrayStringConcat(groupArray(eventtype_uuid), ', ') AS uuid_value
 		FROM testing_db.event_type_ch
 		WHERE event_id IN (%s)
 		GROUP BY event_id
@@ -1049,16 +1086,15 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		SELECT 
 			event_id,
 			'jobComposite' AS data_type,
-			concat(display_name, '|||', role, '|||', department) AS value
+			concat(display_name, '|||', role, '|||', department) AS value,
+			'' AS uuid_value
 		FROM testing_db.event_designation_ch
 		WHERE edition_id IN (SELECT edition_id FROM current_events) 
-		  AND display_name IN (%s)
-		  AND total_visitors >= 5
+			AND display_name IN (%s)
+			AND total_visitors >= 5
 		ORDER BY event_id, total_visitors DESC
 		`, designationsStr)
 	}
-
-	// Add country spread data if audience spread filter is used
 	if len(filterFields.ParsedAudienceSpread) > 0 && queryResult.needsAudienceSpreadJoin {
 		relatedDataQuery += `
 		UNION ALL
@@ -1066,7 +1102,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		SELECT 
 			event_id,
 			'countrySpread' AS data_type,
-			CAST(country_data as String) AS value
+			CAST(country_data as String) AS value,
+			'' AS uuid_value
 		FROM testing_db.event_visitorSpread_ch
 		ARRAY JOIN user_by_cntry AS country_data
 		WHERE event_id IN (` + eventIdsStrJoined + `)
@@ -1083,7 +1120,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		SELECT 
 			event_id,
 			'designationSpread' AS data_type,
-			CAST(designation_data as String) AS value
+			CAST(designation_data as String) AS value,
+			'' AS uuid_value
 		FROM testing_db.event_visitorSpread_ch
 		ARRAY JOIN user_by_designation AS designation_data
 		WHERE event_id IN (` + eventIdsStrJoined + `)
@@ -1106,18 +1144,18 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	log.Printf("Related data query time: %v", relatedDataQueryDuration)
 
 	// Process related data
-	categoriesMap := make(map[string]string)
-	tagsMap := make(map[string]string)
-	typesMap := make(map[string]string)
+	categoriesMap := make(map[string][]map[string]string)
+	tagsMap := make(map[string][]map[string]string)
+	typesMap := make(map[string][]map[string]string)
 	jobCompositeMap := make(map[string][]map[string]string)
 	countrySpreadMap := make(map[string][]map[string]interface{})
 	designationSpreadMap := make(map[string][]map[string]interface{})
 
 	for relatedDataResult.Next() {
 		var eventID uint32
-		var dataType, value string
+		var dataType, value, uuidValue string
 
-		if err := relatedDataResult.Scan(&eventID, &dataType, &value); err != nil {
+		if err := relatedDataResult.Scan(&eventID, &dataType, &value, &uuidValue); err != nil {
 			log.Printf("Error scanning related data row: %v", err)
 			continue
 		}
@@ -1126,11 +1164,47 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 
 		switch dataType {
 		case "category":
-			categoriesMap[eventIDStr] = value
+			names := strings.Split(value, ", ")
+			uuids := strings.Split(uuidValue, ", ")
+
+			var items []map[string]string
+			for i, name := range names {
+				if i < len(uuids) && name != "" {
+					items = append(items, map[string]string{
+						"id":   strings.TrimSpace(uuids[i]),
+						"name": strings.TrimSpace(name),
+					})
+				}
+			}
+			categoriesMap[eventIDStr] = items
 		case "tags":
-			tagsMap[eventIDStr] = value
+			names := strings.Split(value, ", ")
+			uuids := strings.Split(uuidValue, ", ")
+
+			var items []map[string]string
+			for i, name := range names {
+				if i < len(uuids) && name != "" {
+					items = append(items, map[string]string{
+						"id":   strings.TrimSpace(uuids[i]),
+						"name": strings.TrimSpace(name),
+					})
+				}
+			}
+			tagsMap[eventIDStr] = items
 		case "types":
-			typesMap[eventIDStr] = value
+			names := strings.Split(value, ", ")
+			uuids := strings.Split(uuidValue, ", ")
+
+			var items []map[string]string
+			for i, name := range names {
+				if i < len(uuids) && name != "" {
+					items = append(items, map[string]string{
+						"id":   strings.TrimSpace(uuids[i]),
+						"name": strings.TrimSpace(name),
+					})
+				}
+			}
+			typesMap[eventIDStr] = items
 		case "jobComposite":
 			parts := strings.Split(value, "|||")
 			if len(parts) >= 3 {
@@ -1147,7 +1221,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 				if cntryId, ok := countryData["cntry_id"]; ok {
 					transformedCountryData["iso"] = cntryId
 
-					// Look up additional country data by ISO
 					if isoStr, ok := cntryId.(string); ok {
 						countryInfo := s.sharedFunctionService.GetCountryDataByISO(isoStr)
 						if countryInfo != nil {
@@ -1213,9 +1286,9 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		for k, v := range event {
 			combinedEvent[k] = v
 		}
-		combinedEvent["category"] = categoriesMap[eventID]
+		combinedEvent["categories"] = categoriesMap[eventID]
 		combinedEvent["tags"] = tagsMap[eventID]
-		combinedEvent["type"] = typesMap[eventID]
+		combinedEvent["types"] = typesMap[eventID]
 
 		if jobCompositeData, ok := jobCompositeMap[eventID]; ok && len(jobCompositeData) > 0 {
 			var jobCompositeArray []map[string]interface{}
