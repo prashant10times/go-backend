@@ -43,7 +43,6 @@ func NewCustomError(errorType ErrorType, message string, statusCode int, details
 	return err
 }
 
-
 func NewValidationError(message string, details ...string) *CustomError {
 	return NewCustomError(ValidationError, message, fiber.StatusBadRequest, details...)
 }
@@ -134,7 +133,9 @@ func GlobalErrorHandler(c *fiber.Ctx, err error) error {
 		},
 	}
 
-	return c.Status(statusCode).JSON(errorResponse)
+	// Ensure the status code is properly set
+	c.Status(statusCode)
+	return c.JSON(errorResponse)
 }
 
 func RecoverMiddleware() fiber.Handler {

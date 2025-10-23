@@ -69,10 +69,25 @@ func PrometheusMiddleware() fiber.Handler {
 		duration := time.Since(start).Seconds()
 		statusCode := c.Response().StatusCode()
 
-		fmt.Printf("[METRICS] %s %s -> %d in %.3fs\n", c.Method(), c.Path(), statusCode, duration)
+		finalStatusCode := statusCode
+		if err != nil {
+			if customErr, ok := err.(*CustomError); ok {
+				finalStatusCode = customErr.StatusCode
+			} else if fiberErr, ok := err.(*fiber.Error); ok {
+				finalStatusCode = fiberErr.Code
+			} else {
+				finalStatusCode = 500
+			}
+		}
 
-		httpRequestsTotal.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", statusCode)).Inc()
-		httpRequestDuration.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", statusCode)).Observe(duration)
+		if err != nil {
+			fmt.Printf("[METRICS] %s %s -> %d in %.3fs (ERROR: %v)\n", c.Method(), c.Path(), finalStatusCode, duration, err)
+		} else {
+			fmt.Printf("[METRICS] %s %s -> %d in %.3fs\n", c.Method(), c.Path(), finalStatusCode, duration)
+		}
+
+		httpRequestsTotal.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", finalStatusCode)).Inc()
+		httpRequestDuration.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", finalStatusCode)).Observe(duration)
 
 		return err
 	}
