@@ -23,8 +23,6 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 
 	fmt.Printf("Rate Limit Config: limit=%d, ttl=%dms, blockDuration=%dms\n", limit, ttl, blockDuration)
 
-	app.Get("/metrics", adaptor.HTTPHandler(promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{})))
-
 	healthHandler := handlers.NewHealthHandler(10)
 	authHandler := handlers.NewAuthHandler(dbService.DB)
 	sharedFunctionService := services.NewSharedFunctionService(dbService.DB)
@@ -41,4 +39,6 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	api.Use(middleware.JwtAuthMiddleware(dbService.DB))
 	api.Use(middleware.SearchRateLimit(limit, time.Duration(ttl)*time.Millisecond, time.Duration(blockDuration)*time.Millisecond))
 	api.Get("/search-events", searchEventsHandler.SearchEvents)
+
+	app.Get("/metrics", adaptor.HTTPHandler(promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{})))
 }
