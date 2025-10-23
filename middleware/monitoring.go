@@ -69,6 +69,8 @@ func PrometheusMiddleware() fiber.Handler {
 		duration := time.Since(start).Seconds()
 		statusCode := c.Response().StatusCode()
 
+		fmt.Printf("[METRICS] %s %s -> %d in %.3fs\n", c.Method(), c.Path(), statusCode, duration)
+
 		httpRequestsTotal.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", statusCode)).Inc()
 		httpRequestDuration.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", statusCode)).Observe(duration)
 
