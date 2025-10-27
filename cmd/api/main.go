@@ -38,6 +38,7 @@ func main() {
 	})
 
 	app.Use(middleware.RecoverMiddleware())
+	app.Use(middleware.RequestLoggerMiddleware())
 	app.Use(logger.New())
 
 	allowOrigins := cfg.Origin

@@ -1,7 +1,6 @@
 package routes
 
 import (
-	"fmt"
 	"search-event-go/config"
 	"search-event-go/handlers"
 	"search-event-go/middleware"
@@ -20,8 +19,6 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	limit, _ := strconv.Atoi(cfg.ThrottleLimit)
 	ttl, _ := strconv.Atoi(cfg.ThrottleTTL)
 	blockDuration, _ := strconv.Atoi(cfg.ThrottleBlockDuration)
-
-	fmt.Printf("Rate Limit Config: limit=%d, ttl=%dms, blockDuration=%dms\n", limit, ttl, blockDuration)
 
 	healthHandler := handlers.NewHealthHandler(10)
 	authHandler := handlers.NewAuthHandler(dbService.DB)
