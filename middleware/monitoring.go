@@ -80,14 +80,19 @@ func PrometheusMiddleware() fiber.Handler {
 			}
 		}
 
-		if err != nil {
-			fmt.Printf("[METRICS] %s %s -> %d in %.3fs (ERROR: %v)\n", c.Method(), c.Path(), finalStatusCode, duration, err)
-		} else {
-			fmt.Printf("[METRICS] %s %s -> %d in %.3fs\n", c.Method(), c.Path(), finalStatusCode, duration)
+		route := c.Route().Path
+		if route == "" {
+			route = "unknown"
 		}
 
-		httpRequestsTotal.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", finalStatusCode)).Inc()
-		httpRequestDuration.WithLabelValues(c.Method(), c.Path(), fmt.Sprintf("%d", finalStatusCode)).Observe(duration)
+		if err != nil {
+			fmt.Printf("[METRICS] %s %s -> %d in %.3fs (ERROR: %v)\n", c.Method(), route, finalStatusCode, duration, err)
+		} else {
+			fmt.Printf("[METRICS] %s %s -> %d in %.3fs\n", c.Method(), route, finalStatusCode, duration)
+		}
+
+		httpRequestsTotal.WithLabelValues(c.Method(), route, fmt.Sprintf("%d", finalStatusCode)).Inc()
+		httpRequestDuration.WithLabelValues(c.Method(), route, fmt.Sprintf("%d", finalStatusCode)).Observe(duration)
 
 		return err
 	}
