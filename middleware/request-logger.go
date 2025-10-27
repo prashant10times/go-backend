@@ -46,7 +46,7 @@ func RequestLoggerMiddleware() fiber.Handler {
 				bodyPreview = bodyStr
 			}
 		} else {
-			bodyPreview = "(empty)"
+			bodyPreview = ""
 		}
 
 		log.Printf("REQUEST: %s %s%s", c.Method(), c.Path(), queryStr)
