@@ -580,7 +580,6 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 
 	relatedDataQueryDuration := time.Since(relatedDataQueryTime)
 	log.Printf("Related data query time: %v", relatedDataQueryDuration)
-	log.Printf("Related data result: %v", relatedDataResult)
 
 	// Process related data
 	categoriesMap := make(map[string][]map[string]string)

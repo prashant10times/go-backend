@@ -294,7 +294,7 @@ func (s *SharedFunctionService) buildOrderByClause(sortClause []SortClause, need
 }
 
 var fieldMapping = map[string]string{
-	"types":                   "type",
+	"types":                  "type",
 	"start_date":             "start",
 	"end_date":               "end",
 	"event_name":             "name",
@@ -910,31 +910,20 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	}
 
 	if needsEventRankingJoin {
-		currentMonth := time.Now().Month()
-		currentMonthCondition := fmt.Sprintf("MONTH(created) = %d", currentMonth)
+		today := time.Now().Format("2006-01-02")
 
-		eventRankingConditions := []string{currentMonthCondition}
-
-		// Add country filter if present
-		if len(filterFields.ParsedCountry) > 0 {
-			countries := make([]string, len(filterFields.ParsedCountry))
-			for i, country := range filterFields.ParsedCountry {
-				countries[i] = fmt.Sprintf("'%s'", country)
-			}
-			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
+		preEventFilterConditions := []string{
+			"published = '1'",
+			s.buildStatusCondition(filterFields),
+			"edition_type = 'current_edition'",
+		}
+		hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
+			filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != ""
+		if !hasUserEndDateFilter {
+			preEventFilterConditions = append(preEventFilterConditions, fmt.Sprintf("end_date >= '%s'", today))
 		}
 
-		// Add eventRanking conditions
-		if len(eventRankingWhereConditions) > 0 {
-			eventRankingConditions = append(eventRankingConditions, eventRankingWhereConditions...)
-		}
-
-		eventRankingWhereClause := fmt.Sprintf("WHERE %s", strings.Join(eventRankingConditions, " AND "))
-
-		eventRankingQuery := fmt.Sprintf(`filtered_event_ranking AS (
-			SELECT event_id
-			FROM testing_db.event_ranking_ch
-			%s`, eventRankingWhereClause)
+		preEventFilterWhereClause := strings.Join(preEventFilterConditions, " AND ")
 
 		if previousCTE != "" {
 			var selectColumn string
@@ -943,16 +932,64 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			} else {
 				selectColumn = "event_id"
 			}
-			eventRankingQuery = fmt.Sprintf(`filtered_event_ranking AS (
-				SELECT event_id
-				FROM testing_db.event_ranking_ch
+			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
+				SELECT event_id, edition_id
+				FROM testing_db.event_edition_ch AS ee
 				WHERE event_id IN (SELECT %s FROM %s)
-				AND %s`, selectColumn, previousCTE, strings.Join(eventRankingConditions, " AND "))
+				AND %s
+				GROUP BY event_id, edition_id
+				ORDER BY event_id ASC
+			)`, selectColumn, previousCTE, preEventFilterWhereClause)
+			result.CTEClauses = append(result.CTEClauses, preEventFilterCTE)
+		} else {
+			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
+				SELECT event_id, edition_id
+				FROM testing_db.event_edition_ch AS ee
+				WHERE %s
+				GROUP BY event_id, edition_id
+				ORDER BY event_id ASC
+			)`, preEventFilterWhereClause)
+			result.CTEClauses = append(result.CTEClauses, preEventFilterCTE)
 		}
 
-		eventRankingQuery += `
-			GROUP BY event_id
-		)`
+		currentMonth := time.Now().Month()
+		currentMonthCondition := fmt.Sprintf("MONTH(created) = %d", currentMonth)
+
+		eventRankingConditions := []string{currentMonthCondition}
+
+		hasCountryFilter := len(filterFields.ParsedCountry) > 0
+		hasCategoryFilter := len(filterFields.ParsedCategory) > 0
+
+		if hasCountryFilter {
+			countries := make([]string, len(filterFields.ParsedCountry))
+			for i, country := range filterFields.ParsedCountry {
+				countries[i] = fmt.Sprintf("'%s'", country)
+			}
+			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
+		}
+		if hasCategoryFilter {
+			categories := make([]string, len(filterFields.ParsedCategory))
+			for i, category := range filterFields.ParsedCategory {
+				categories[i] = fmt.Sprintf("'%s'", category)
+			}
+			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
+		}
+		if !hasCountryFilter && !hasCategoryFilter {
+			eventRankingConditions = append(eventRankingConditions, "((country = '' AND category_name = ''))")
+		}
+
+		if len(eventRankingWhereConditions) > 0 {
+			eventRankingConditions = append(eventRankingConditions, eventRankingWhereConditions...)
+		}
+		eventRankingLimit := filterFields.ParsedEventRanking[0]
+
+		eventRankingQuery := fmt.Sprintf(`filtered_event_ranking AS (
+			SELECT event_id
+			FROM testing_db.event_ranking_ch
+			WHERE event_id IN (SELECT event_id FROM pre_event_filter)
+			AND %s
+			GROUP BY event_id LIMIT %s
+		)`, strings.Join(eventRankingConditions, " AND "), eventRankingLimit)
 
 		result.CTEClauses = append(result.CTEClauses, eventRankingQuery)
 		previousCTE = "filtered_event_ranking"
@@ -2386,6 +2423,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 	}
 
 	var cteClauses []string
+	var previousCTE string
 
 	today := time.Now().Format("2006-01-02")
 	editionFilterConditions := []string{
@@ -2402,29 +2440,78 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 
 	if queryResult.NeedsVisitorJoin {
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_visitors AS (SELECT event_id FROM testing_db.event_visitors_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.VisitorWhereConditions, " AND ")))
+		previousCTE = "filtered_visitors"
 	}
 	if queryResult.NeedsSpeakerJoin {
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_speakers AS (SELECT event_id FROM testing_db.event_speaker_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.SpeakerWhereConditions, " AND ")))
+		previousCTE = "filtered_speakers"
 	}
 	if queryResult.NeedsExhibitorJoin {
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_exhibitors AS (SELECT event_id FROM testing_db.event_exhibitor_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.ExhibitorWhereConditions, " AND ")))
+		previousCTE = "filtered_exhibitors"
 	}
 	if queryResult.NeedsSponsorJoin {
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_sponsors AS (SELECT event_id FROM testing_db.event_sponsors_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.SponsorWhereConditions, " AND ")))
+		previousCTE = "filtered_sponsors"
 	}
 	if queryResult.NeedsCategoryJoin {
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_categories AS (SELECT event FROM testing_db.event_category_ch WHERE %s GROUP BY event)", strings.Join(queryResult.CategoryWhereConditions, " AND ")))
+		previousCTE = "filtered_categories"
 	}
 	if queryResult.NeedsTypeJoin {
 		cteClauses = append(cteClauses, fmt.Sprintf("filtered_types AS (SELECT event_id FROM testing_db.event_type_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.TypeWhereConditions, " AND ")))
+		previousCTE = "filtered_types"
 	}
 	if queryResult.NeedsEventRankingJoin {
+		preEventFilterConditions := []string{
+			"published = '1'",
+			s.buildStatusCondition(filterFields),
+			"edition_type = 'current_edition'",
+		}
+
+		hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != ""
+		if !hasUserEndDateFilter {
+			preEventFilterConditions = append(preEventFilterConditions, fmt.Sprintf("end_date >= '%s'", today))
+		}
+
+		preEventFilterWhereClause := strings.Join(preEventFilterConditions, " AND ")
+
+		var preEventFilterCTE string
+		if previousCTE != "" {
+			var selectColumn string
+			if previousCTE == "filtered_categories" {
+				selectColumn = "event"
+			} else {
+				selectColumn = "event_id"
+			}
+			preEventFilterCTE = fmt.Sprintf(`pre_event_filter AS (
+			SELECT event_id, edition_id
+			FROM testing_db.event_edition_ch AS ee
+			WHERE event_id IN (SELECT %s FROM %s)
+			AND %s
+			GROUP BY event_id, edition_id
+			ORDER BY event_id ASC
+		)`, selectColumn, previousCTE, preEventFilterWhereClause)
+		} else {
+			preEventFilterCTE = fmt.Sprintf(`pre_event_filter AS (
+			SELECT event_id, edition_id
+			FROM testing_db.event_edition_ch AS ee
+			WHERE %s
+			GROUP BY event_id, edition_id
+			ORDER BY event_id ASC
+		)`, preEventFilterWhereClause)
+		}
+
+		cteClauses = append(cteClauses, preEventFilterCTE)
 		currentMonth := time.Now().Month()
 		currentMonthCondition := fmt.Sprintf("MONTH(created) = %d", currentMonth)
 
 		eventRankingConditions := []string{currentMonthCondition}
 
-		if len(filterFields.ParsedCountry) > 0 {
+		hasCountryFilter := len(filterFields.ParsedCountry) > 0
+		hasCategoryFilter := len(filterFields.ParsedCategory) > 0
+
+		if hasCountryFilter {
 			countries := make([]string, len(filterFields.ParsedCountry))
 			for i, country := range filterFields.ParsedCountry {
 				countries[i] = fmt.Sprintf("'%s'", country)
@@ -2432,11 +2519,33 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
 		}
 
+		if hasCategoryFilter {
+			categories := make([]string, len(filterFields.ParsedCategory))
+			for i, category := range filterFields.ParsedCategory {
+				categories[i] = fmt.Sprintf("'%s'", category)
+			}
+			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
+		}
+
+		if !hasCountryFilter && !hasCategoryFilter {
+			eventRankingConditions = append(eventRankingConditions, "((country = '' AND category_name = ''))")
+		}
+
 		if len(queryResult.EventRankingWhereConditions) > 0 {
 			eventRankingConditions = append(eventRankingConditions, queryResult.EventRankingWhereConditions...)
 		}
 
-		cteClauses = append(cteClauses, fmt.Sprintf("filtered_event_ranking AS (SELECT event_id FROM testing_db.event_ranking_ch WHERE %s GROUP BY event_id)", strings.Join(eventRankingConditions, " AND ")))
+		eventRankingLimit := filterFields.ParsedEventRanking[0]
+
+		filteredEventRankingCTE := fmt.Sprintf(`filtered_event_ranking AS (
+			SELECT event_id
+			FROM testing_db.event_ranking_ch
+			WHERE event_id IN (SELECT event_id FROM pre_event_filter)
+			AND %s
+			GROUP BY event_id LIMIT %s
+		)`, strings.Join(eventRankingConditions, " AND "), eventRankingLimit)
+
+		cteClauses = append(cteClauses, filteredEventRankingCTE)
 	}
 
 	if queryResult.needsDesignationJoin {
