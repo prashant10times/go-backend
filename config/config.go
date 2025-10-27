@@ -24,6 +24,8 @@ type Config struct {
 	ServerHost            string
 	TestingIndex          string
 	ClickhouseURL         string
+	Origin                string
+	AllowMethods          string
 }
 
 func LoadConfig() *Config {
@@ -48,6 +50,8 @@ func LoadConfig() *Config {
 		ServerHost:            getEnv("SERVER_HOST", ""),
 		TestingIndex:          getEnv("TESTING_INDEX", ""),
 		ClickhouseURL:         getEnv("CLICKHOUSE_URL", ""),
+		Origin:                getEnv("ORIGIN", ""),
+		AllowMethods:          getEnv("ALLOWED_METHODS", ""),
 	}
 	return config
 }

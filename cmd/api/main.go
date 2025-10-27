@@ -7,6 +7,7 @@ import (
 	"search-event-go/redis"
 	"search-event-go/routes"
 	"search-event-go/services"
+	"strings"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -38,7 +39,16 @@ func main() {
 
 	app.Use(middleware.RecoverMiddleware())
 	app.Use(logger.New())
-	app.Use(cors.New())
+
+	allowOrigins := cfg.Origin
+	allowMethods := strings.Trim(cfg.AllowMethods, `[]"`)
+	app.Use(cors.New(
+		cors.Config{
+			AllowCredentials: true,
+			AllowOrigins:     allowOrigins,
+			AllowMethods:     allowMethods,
+		},
+	))
 	app.Use(middleware.PrometheusMiddleware()) //prometheus middleware
 
 	routes.SetupRoutes(app, dbService, clickhouseService, cfg)
