@@ -395,6 +395,15 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 	today := time.Now().Format("2006-01-02")
 
 	fieldsString := strings.Join(requiredFieldsStatic, ", ")
+
+	outerFields := strings.ReplaceAll(fieldsString, "ee.", "")
+	innerOrderBy := func() string {
+		if orderByClause != "" {
+			return s.sharedFunctionService.fixOrderByForCTE(orderByClause, false)
+		}
+		return "ORDER BY ee.event_id ASC"
+	}()
+
 	eventDataQuery := fmt.Sprintf(`
 		WITH event_filter AS (
 			SELECT event_id, edition_id
@@ -413,14 +422,15 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 			WHERE ee.edition_id in (SELECT edition_id from event_filter)
 			GROUP BY
 				%s
-			ORDER BY ee.event_id ASC
+			%s
 		)
 		SELECT %s
 		FROM event_data
 		GROUP BY
 			%s
 		%s
-	`, today, pagination.Limit, pagination.Offset, fieldsString, groupByClause, groupByClause, groupByClause, s.sharedFunctionService.fixOrderByForCTE(orderByClause, false))
+		`, today, pagination.Limit, pagination.Offset, outerFields, groupByClause, innerOrderBy,
+		outerFields, groupByClause, s.sharedFunctionService.fixOrderByForCTE(orderByClause, false))
 
 	log.Printf("Event data query: %s", eventDataQuery)
 
