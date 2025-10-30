@@ -1,18 +1,17 @@
 package middleware
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"log"
-	"strings"
-	"time"
 
 	"github.com/gofiber/fiber/v2"
 )
 
 func RequestLoggerMiddleware() fiber.Handler {
 	return func(c *fiber.Ctx) error {
+		if c.Path() == "/metrics" {
+			return c.Next()
+		}
 		var requestBody []byte
 		if c.Body() != nil {
 			requestBody = c.Body()
@@ -74,47 +73,4 @@ func RequestLoggerMiddleware() fiber.Handler {
 		}
 		return err
 	}
-}
-
-func SimpleRequestLogger() fiber.Handler {
-	return func(c *fiber.Ctx) error {
-		err := c.Next()
-
-		statusCode := c.Response().StatusCode()
-
-		log.Printf("[%s] %s %s -> %d | IP: %s",
-			time.Now().Format("15:04:05"),
-			c.Method(),
-			c.OriginalURL(),
-			statusCode,
-			c.IP())
-
-		return err
-	}
-}
-
-func FormatHeaders(c *fiber.Ctx) string {
-	var builder strings.Builder
-	c.Request().Header.VisitAll(func(key, value []byte) {
-		builder.WriteString(fmt.Sprintf("\n  %s: %s", string(key), string(value)))
-	})
-	return builder.String()
-}
-
-func ReadRequestBody(c *fiber.Ctx) ([]byte, error) {
-	body := c.Body()
-	if body == nil {
-		return []byte{}, nil
-	}
-
-	reader := bytes.NewReader(body)
-
-	bodyBytes, err := io.ReadAll(reader)
-	if err != nil {
-		return nil, err
-	}
-
-	c.Request().SetBody(bodyBytes)
-
-	return bodyBytes, nil
 }
