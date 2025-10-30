@@ -8,15 +8,15 @@ import (
 
 // SortFieldMap maps frontend sort fields to database fields
 var SortFieldMap = map[string]string{
-	"id":         "id",
-	"end":        "end_date",
-	"start":      "start_date",
-	"created":    "event_created",
-	"following":  "event_followers",
-	"exhibitors": "event_exhibitor",
-	"speakers":   "event_speaker",
-	"avgRating":  "event_avgRating",
-	"sponsors":   "event_sponsor",
+	"id":                  "event_id",
+	"end":                 "end_date",
+	"start":               "start_date",
+	"created":             "event_created",
+	"following":           "event_followers",
+	"exhibitors":          "event_exhibitor",
+	"speakers":            "event_speaker",
+	"avgRating":           "event_avgRating",
+	"sponsors":            "event_sponsor",
 	"estimatedExhibitors": "exhibitors_mean",
 }
 

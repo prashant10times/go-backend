@@ -1108,11 +1108,13 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 			re := regexp.MustCompile(fieldPattern)
 			fixedClause = re.ReplaceAllString(fixedClause, mappedField)
 		}
+		fixedClause = regexp.MustCompile(`\bee\.`).ReplaceAllString(fixedClause, "")
+		log.Println("fixedClause", fixedClause)
 		return fixedClause
 	}
 
 	fieldMappings := map[string]string{
-		"event_id":          "id",
+		"event_uuid":        "id",
 		"start_date":        "start",
 		"end_date":          "end",
 		"event_followers":   "followers",
@@ -1157,6 +1159,7 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 		fixedClause = re.ReplaceAllString(fixedClause, mappedField)
 	}
 
+	fixedClause = regexp.MustCompile(`\bee\.`).ReplaceAllString(fixedClause, "")
 	return fixedClause
 }
 
