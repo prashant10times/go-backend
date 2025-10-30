@@ -830,6 +830,14 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	fieldsString := strings.Join(requiredFieldsStatic, ", ")
 	finalGroupByClause := s.buildGroupByClause(requiredFieldsStatic)
 
+	// outerFields := strings.ReplaceAll(fieldsString, "ee.", "")
+	innerOrderBy := func() string {
+		if finalOrderClause != "" {
+			return s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true)
+		}
+		return "ORDER BY ee.event_id ASC"
+	}()
+
 	today := time.Now().Format("2006-01-02")
 
 	// Build CTE clauses string
@@ -865,7 +873,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			WHERE ee.edition_id in (SELECT edition_id from event_filter)
 			GROUP BY
 				%s
-			ORDER BY ee.event_id ASC
+			%s
 		)
 		SELECT %s
 		FROM event_data
@@ -895,8 +903,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		}(),
 		joinConditionsStr,
 		pagination.Limit, pagination.Offset,
-		fieldsString, finalGroupByClause, finalGroupByClause, finalGroupByClause,
-		s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true))
+		fieldsString, finalGroupByClause, innerOrderBy,
+		finalGroupByClause, finalGroupByClause, s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true))
 
 	log.Printf("Event data query: %s", eventDataQuery)
 
