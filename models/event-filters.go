@@ -160,6 +160,10 @@ type FilterDataDto struct {
 	ParsedMode           *string   `json:"-"`
 	ParsedStatus         []string  `json:"-"`
 	ParsedState          []string  `json:"-"`
+	ParsedCompanyState   []string  `json:"-"`
+	ParsedCompanyCity    []string  `json:"-"`
+	ParsedCompanyDomain  []string  `json:"-"`
+	ParsedCompanyCountry []string  `json:"-"`
 	ParsedSpeakerState   []string  `json:"-"`
 	ParsedExhibitorState []string  `json:"-"`
 	ParsedSponsorState   []string  `json:"-"`
@@ -348,6 +352,58 @@ func (f *FilterDataDto) Validate() error {
 			return nil
 		}))),
 
+		validation.Field(&f.CompanyState, validation.When(f.CompanyState != "", validation.By(func(value interface{}) error {
+			companyStateStr := value.(string)
+			companyStates := strings.Split(companyStateStr, ",")
+			f.ParsedCompanyState = make([]string, 0, len(companyStates))
+			for _, companyState := range companyStates {
+				companyState = strings.TrimSpace(companyState)
+				if companyState != "" {
+					f.ParsedCompanyState = append(f.ParsedCompanyState, companyState)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.CompanyCity, validation.When(f.CompanyCity != "", validation.By(func(value interface{}) error {
+			companyCityStr := value.(string)
+			companyCities := strings.Split(companyCityStr, ",")
+			f.ParsedCompanyCity = make([]string, 0, len(companyCities))
+			for _, companyCity := range companyCities {
+				companyCity = strings.TrimSpace(companyCity)
+				if companyCity != "" {
+					f.ParsedCompanyCity = append(f.ParsedCompanyCity, companyCity)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.CompanyDomain, validation.When(f.CompanyDomain != "", validation.By(func(value interface{}) error {
+			companyDomainStr := value.(string)
+			companyDomains := strings.Split(companyDomainStr, ",")
+			f.ParsedCompanyDomain = make([]string, 0, len(companyDomains))
+			for _, companyDomain := range companyDomains {
+				companyDomain = strings.TrimSpace(companyDomain)
+				if companyDomain != "" {
+					f.ParsedCompanyDomain = append(f.ParsedCompanyDomain, companyDomain)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.CompanyCountry, validation.When(f.CompanyCountry != "", validation.By(func(value interface{}) error {
+			companyCountryStr := value.(string)
+			companyCountries := strings.Split(companyCountryStr, ",")
+			f.ParsedCompanyCountry = make([]string, 0, len(companyCountries))
+			for _, companyCountry := range companyCountries {
+				companyCountry = strings.TrimSpace(companyCountry)
+				if companyCountry != "" {
+					f.ParsedCompanyCountry = append(f.ParsedCompanyCountry, companyCountry)
+				}
+			}
+			return nil
+		}))),
+		
 		validation.Field(&f.VisitorState, validation.When(f.VisitorState != "", validation.By(func(value interface{}) error {
 			visitorStateStr := value.(string)
 			visitorStates := strings.Split(visitorStateStr, ",")
