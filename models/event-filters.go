@@ -128,15 +128,16 @@ type FilterDataDto struct {
 	IsBranded           string `json:"isBranded,omitempty" form:"isBranded"`
 	Maturity            string `json:"maturity,omitempty" form:"maturity"`
 	Status              string `json:"status,omitempty" form:"status"`
+	Published           string `json:"published,omitempty" form:"published"`
 
 	VenueLatitude  string `json:"venueLatitude,omitempty" form:"venueLatitude"`
 	VenueLongitude string `json:"venueLongitude,omitempty" form:"venueLongitude"`
 
 	ToAggregate string `json:"toAggregate,omitempty" form:"toAggregate"`
 
-	EventRanking  string `json:"eventRanking,omitempty" form:"eventRanking"`
-	AudienceZone  string `json:"audienceZone,omitempty" form:"audienceZone"`
-	EventEstimate bool   `json:"eventEstimate,omitempty" form:"eventEstimate"`
+	EventRanking   string `json:"eventRanking,omitempty" form:"eventRanking"`
+	AudienceZone   string `json:"audienceZone,omitempty" form:"audienceZone"`
+	EventEstimate  bool   `json:"eventEstimate,omitempty" form:"eventEstimate"`
 	AudienceSpread string `json:"audienceSpread,omitempty" form:"audienceSpread"`
 
 	InboundScoreGte       string `json:"inboundScore.gte,omitempty" form:"inboundScore.gte"`
@@ -172,6 +173,7 @@ type FilterDataDto struct {
 	ParsedEventRanking   []string  `json:"-"`
 	ParsedAudienceZone   []string  `json:"-"`
 	ParsedAudienceSpread []string  `json:"-"`
+	ParsedPublished      []string  `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -183,6 +185,9 @@ func (f *FilterDataDto) SetDefaultValues() {
 	}
 	if f.EventDistanceOrder == "" {
 		f.EventDistanceOrder = "closest"
+	}
+	if f.Published == "" {
+		f.Published = "1"
 	}
 }
 
@@ -228,7 +233,7 @@ func (f *FilterDataDto) Validate() error {
 			}
 			return nil
 		}))),
-		
+
 		validation.Field(&f.AudienceSpread, validation.When(f.AudienceSpread != "", validation.By(func(value interface{}) error {
 			audienceSpreadStr := value.(string)
 			audienceSpreads := strings.Split(audienceSpreadStr, ",")
@@ -403,7 +408,7 @@ func (f *FilterDataDto) Validate() error {
 			}
 			return nil
 		}))),
-		
+
 		validation.Field(&f.VisitorState, validation.When(f.VisitorState != "", validation.By(func(value interface{}) error {
 			visitorStateStr := value.(string)
 			visitorStates := strings.Split(visitorStateStr, ",")
@@ -619,6 +624,27 @@ func (f *FilterDataDto) Validate() error {
 				jobComposite = strings.TrimSpace(jobComposite)
 				if jobComposite != "" {
 					f.ParsedJobComposite = append(f.ParsedJobComposite, jobComposite)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.Published, validation.When(f.Published != "", validation.By(func(value interface{}) error {
+			publishedStr := value.(string)
+			publishedStr = strings.ReplaceAll(publishedStr, "&", ",")
+			publishedValues := strings.Split(publishedStr, ",")
+			f.ParsedPublished = make([]string, 0, len(publishedValues))
+			validPublishedValues := map[string]bool{
+				"1": true,
+				"2": true,
+			}
+			for _, published := range publishedValues {
+				published = strings.TrimSpace(published)
+				if published != "" {
+					if !validPublishedValues[published] {
+						return validation.NewError("invalid_published", "Invalid published value: "+published+". Valid values are: 1, 2")
+					}
+					f.ParsedPublished = append(f.ParsedPublished, published)
 				}
 			}
 			return nil

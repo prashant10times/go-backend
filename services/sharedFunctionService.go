@@ -913,7 +913,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		today := time.Now().Format("2006-01-02")
 
 		preEventFilterConditions := []string{
-			"published = '1'",
+			s.buildPublishedCondition(filterFields),
 			s.buildStatusCondition(filterFields),
 			"edition_type = 'current_edition'",
 		}
@@ -1365,17 +1365,28 @@ func (s *SharedFunctionService) buildStatusCondition(filterFields models.FilterD
 	return fmt.Sprintf("status = %s", strings.Join(statuses, ","))
 }
 
-// buildMultiDayDateSelect builds a ClickHouse expression to expand multi-day events into individual dates
+func (s *SharedFunctionService) buildPublishedCondition(filterFields models.FilterDataDto) string {
+	if len(filterFields.ParsedPublished) == 0 {
+		return "published = '1'"
+	}
+	if len(filterFields.ParsedPublished) == 1 {
+		return fmt.Sprintf("published = '%s'", filterFields.ParsedPublished[0])
+	}
+	publishedValues := make([]string, len(filterFields.ParsedPublished))
+	for i, published := range filterFields.ParsedPublished {
+		publishedValues[i] = fmt.Sprintf("'%s'", published)
+	}
+	return fmt.Sprintf("published IN (%s)", strings.Join(publishedValues, ","))
+}
+
 func (s *SharedFunctionService) buildMultiDayDateSelect() string {
 	return `formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(ee.start_date), x), range(0, dateDiff('day', toDate(ee.start_date), toDate(ee.end_date)) + 1))), '%Y-%m-%d') as date`
 }
 
-// buildMultiDayMonthSelect builds a ClickHouse expression to expand multi-day events into individual months
 func (s *SharedFunctionService) buildMultiDayMonthSelect() string {
 	return `formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(ee.start_date), x), range(0, dateDiff('day', toDate(ee.start_date), toDate(ee.end_date)) + 1))), '%Y-%m') as month`
 }
 
-// buildMultiDayFieldSelect builds field selections with multi-day expansion for date/month fields
 func (s *SharedFunctionService) buildMultiDayFieldSelect(fields []string, fieldMapping map[string]string) string {
 	var selects []string
 
@@ -1399,7 +1410,6 @@ func (s *SharedFunctionService) buildMultiDayFieldSelect(fields []string, fieldM
 	return strings.Join(selects, ",\n        ")
 }
 
-// checks if any of the fields require multi-day expansion
 func (s *SharedFunctionService) needsMultiDayExpansion(fields []string) bool {
 	for _, field := range fields {
 		if field == "date" || field == "month" {
@@ -2430,7 +2440,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 
 	today := time.Now().Format("2006-01-02")
 	editionFilterConditions := []string{
-		"published = '1'",
+		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
 		"edition_type = 'current_edition'",
 		fmt.Sprintf("end_date >= '%s'", today),
@@ -2467,7 +2477,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 	}
 	if queryResult.NeedsEventRankingJoin {
 		preEventFilterConditions := []string{
-			"published = '1'",
+			s.buildPublishedCondition(filterFields),
 			s.buildStatusCondition(filterFields),
 			"edition_type = 'current_edition'",
 		}

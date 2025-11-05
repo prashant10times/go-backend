@@ -856,7 +856,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		WITH %sevent_filter AS (
 			SELECT event_id, edition_id
 			FROM testing_db.event_edition_ch AS ee
-			WHERE published = '1' 
+			WHERE %s 
 			AND %s
 			AND edition_type = 'current_edition'
 			%s
@@ -882,6 +882,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		%s
 	`,
 		cteClausesStr,
+		s.sharedFunctionService.buildPublishedCondition(filterFields),
 		s.sharedFunctionService.buildStatusCondition(filterFields),
 		func() string {
 			if !hasEndDateFilters {
