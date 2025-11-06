@@ -1434,12 +1434,12 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 			var includeConditions []string
 			for _, keyword := range keywords.Include {
 				cleanKeyword := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
-				includeConditions = append(includeConditions, fmt.Sprintf("(position('%s' IN lower(ee.event_name)) > 0 OR position('%s' IN lower(ee.event_description)) > 0)", cleanKeyword, cleanKeyword))
+				includeConditions = append(includeConditions, fmt.Sprintf("has(ee.keywords, '%s')", cleanKeyword))
 			}
 			if searchClause.Len() > 0 {
-				searchClause.WriteString(fmt.Sprintf(" AND (%s)", strings.Join(includeConditions, " AND ")))
+				searchClause.WriteString(fmt.Sprintf(" AND (%s)", strings.Join(includeConditions, " OR ")))
 			} else {
-				searchClause.WriteString(fmt.Sprintf("(%s)", strings.Join(includeConditions, " AND ")))
+				searchClause.WriteString(fmt.Sprintf("(%s)", strings.Join(includeConditions, " OR ")))
 			}
 		}
 
@@ -1447,12 +1447,12 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 			var excludeConditions []string
 			for _, keyword := range keywords.Exclude {
 				cleanKeyword := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
-				excludeConditions = append(excludeConditions, fmt.Sprintf("(position('%s' IN lower(ee.event_name)) = 0 AND position('%s' IN lower(ee.event_description)) = 0)", cleanKeyword, cleanKeyword))
+				excludeConditions = append(excludeConditions, fmt.Sprintf("NOT has(ee.keywords, '%s')", cleanKeyword))
 			}
 			if searchClause.Len() > 0 {
-				searchClause.WriteString(fmt.Sprintf(" AND (%s)", strings.Join(excludeConditions, " AND ")))
+				searchClause.WriteString(fmt.Sprintf(" AND (%s)", strings.Join(excludeConditions, " OR ")))
 			} else {
-				searchClause.WriteString(fmt.Sprintf("(%s)", strings.Join(excludeConditions, " AND ")))
+				searchClause.WriteString(fmt.Sprintf("(%s)", strings.Join(excludeConditions, " OR ")))
 			}
 		}
 	}
