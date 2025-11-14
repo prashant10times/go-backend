@@ -26,6 +26,7 @@ type Config struct {
 	ClickhouseURL         string
 	Origin                string
 	AllowMethods          string
+	AlertId            string
 }
 
 func LoadConfig() *Config {
@@ -52,6 +53,7 @@ func LoadConfig() *Config {
 		ClickhouseURL:         getEnv("CLICKHOUSE_URL", ""),
 		Origin:                getEnv("ORIGIN", ""),
 		AllowMethods:          getEnv("ALLOWED_METHODS", ""),
+		AlertId:               getEnv("ALERT_ID", ""),
 	}
 	return config
 }

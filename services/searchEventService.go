@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"reflect"
+	"search-event-go/config"
 	"search-event-go/middleware"
 	"search-event-go/models"
 	"slices"
@@ -25,13 +26,15 @@ type SearchEventService struct {
 	db                    *gorm.DB
 	sharedFunctionService *SharedFunctionService
 	clickhouseService     *ClickHouseService
+	cfg                   *config.Config
 }
 
-func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionService, clickhouseService *ClickHouseService) *SearchEventService {
+func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionService, clickhouseService *ClickHouseService, cfg *config.Config) *SearchEventService {
 	return &SearchEventService{
 		db:                    db,
 		sharedFunctionService: sharedFunctionService,
 		clickhouseService:     clickhouseService,
+		cfg:                   cfg,
 	}
 }
 
@@ -170,7 +173,122 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		return nil, middleware.NewBadRequestError("Invalid sort fields", err.Error())
 	}
 
-	// Determine query type
+	// // original api Logic
+	// validatedParameters, err := s.sharedFunctionService.validateParameters(filterFields)
+	// if err != nil {
+	// 	log.Printf("Error validating parameters: %v", err)
+	// 	statusCode = http.StatusBadRequest
+	// 	msg := err.Error()
+	// 	errorMessage = &msg
+	// 	return nil, middleware.NewBadRequestError("Invalid parameters", err.Error())
+	// }
+
+	// log.Printf("Validated parameters: %v", validatedParameters)
+
+	// typeArray := strings.Split(filterFields.Type, ",")
+	// if filterFields.Type != "" && len(typeArray) == 1 && typeArray[0] == s.cfg.AlertId {
+	// 	// Build base alert params
+	// 	baseParams := models.AlertSearchParams{
+	// 		EventIds:  validatedParameters.ParsedEventIds,
+	// 		StartDate: &validatedParameters.ActiveGte,
+	// 		EndDate:   &validatedParameters.ActiveLte,
+	// 	}
+
+	// 	if validatedParameters.ParsedViewBound != nil {
+	// 		if validatedParameters.ParsedViewBound.BoundType == models.BoundTypePoint {
+	// 			var geoCoords models.GeoCoordinates
+	// 			if err := json.Unmarshal(validatedParameters.ParsedViewBound.Coordinates, &geoCoords); err == nil {
+	// 				baseParams.Coordinates = &geoCoords
+	// 			}
+	// 		}
+	// 	}
+
+	// 	type alertResult struct {
+	// 		Data  interface{}
+	// 		Error error
+	// 	}
+
+	// 	countChan := make(chan alertResult, 1)
+	// 	alertsChan := make(chan alertResult, 1)
+
+	// 	countParams := baseParams
+	// 	countParams.Required = "count"
+	// 	go func() {
+	// 		countData, err := s.getAlerts(countParams)
+	// 		countChan <- alertResult{Data: countData, Error: err}
+	// 	}()
+
+	// 	eventsParams := baseParams
+	// 	eventsParams.Required = "events"
+	// 	limit := pagination.Limit
+	// 	offset := pagination.Offset
+	// 	eventsParams.Limit = &limit
+	// 	eventsParams.Offset = &offset
+
+	// 	go func() {
+	// 		alertsData, err := s.getAlerts(eventsParams)
+	// 		alertsChan <- alertResult{Data: alertsData, Error: err}
+	// 	}()
+
+	// 	countResult := <-countChan
+	// 	alertsResult := <-alertsChan
+
+	// 	if countResult.Error != nil || alertsResult.Error != nil {
+	// 		var errMsg string
+	// 		if countResult.Error != nil {
+	// 			errMsg = countResult.Error.Error()
+	// 		} else if alertsResult.Error != nil {
+	// 			errMsg = alertsResult.Error.Error()
+	// 		} else {
+	// 			errMsg = "Unknown error"
+	// 		}
+	// 		statusCode = http.StatusBadRequest
+	// 		msg := errMsg
+	// 		errorMessage = &msg
+	// 		return nil, middleware.NewBadRequestError("Alert request failed", errMsg)
+	// 	}
+
+	// 	count := 0
+	// 	events := []interface{}{}
+
+	// 	if countMap, ok := countResult.Data.(map[string]interface{}); ok {
+	// 		if c, exists := countMap["count"]; exists {
+	// 			if cFloat, ok := c.(float64); ok {
+	// 				count = int(cFloat)
+	// 			} else if cInt, ok := c.(int); ok {
+	// 				count = cInt
+	// 			}
+	// 		}
+	// 	}
+
+	// 	if alertsMap, ok := alertsResult.Data.(map[string]interface{}); ok {
+	// 		if e, exists := alertsMap["events"]; exists {
+	// 			if eventsSlice, ok := e.([]interface{}); ok {
+	// 				events = eventsSlice
+	// 			}
+	// 		}
+	// 	}
+
+	// 	responseData := fiber.Map{
+	// 		"count":  count,
+	// 		"events": events,
+	// 	}
+
+	// 	responseTime := time.Since(startTime).Seconds()
+	// 	successResponse := fiber.Map{
+	// 		"status":     "success",
+	// 		"statusCode": statusCode,
+	// 		"meta": fiber.Map{
+	// 			"responseTime": responseTime,
+	// 			"pagination": fiber.Map{
+	// 				"page": (pagination.Offset / pagination.Limit) + 1,
+	// 			},
+	// 		},
+	// 		"data": responseData,
+	// 	}
+	// 	return successResponse, nil
+	// }
+
 	queryType, err := s.sharedFunctionService.determineQueryType(filterFields)
 	if err != nil {
 		log.Printf("Error determining query type: %v", err)
@@ -305,6 +423,37 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		"data": response,
 	}
 	return successResponse, nil
+}
+
+// getAlerts calls the alerts API with the given parameters
+func (s *SearchEventService) getAlerts(params models.AlertSearchParams) (interface{}, error) {
+	// TODO: Implement the actual HTTP request to the alerts API
+	// This is a placeholder - replace with actual implementation
+	// Example structure:
+	//
+	// reqBody := map[string]interface{}{
+	//     "eventIds": alertParams.EventIds,
+	//     "startDate": alertParams.StartDate,
+	//     "endDate": alertParams.EndDate,
+	//     "required": required,
+	// }
+	// if required == "events" {
+	//     reqBody["sortBy"] = sortBy
+	//     reqBody["limit"] = limit
+	//     reqBody["offset"] = offset
+	// }
+	//
+	// Make HTTP request and return response
+
+	// Placeholder return
+	if params.Required == "count" {
+		return map[string]interface{}{
+			"count": 0,
+		}, nil
+	}
+	return map[string]interface{}{
+		"events": []interface{}{},
+	}, nil
 }
 
 type ListResult struct {
@@ -576,7 +725,6 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		GROUP BY event_id
 	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
 
-	// Execute related data query
 	log.Printf("Related data query: %s", relatedDataQuery)
 	relatedDataQueryTime := time.Now()
 	relatedDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), relatedDataQuery)
@@ -591,7 +739,6 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 	relatedDataQueryDuration := time.Since(relatedDataQueryTime)
 	log.Printf("Related data query time: %v", relatedDataQueryDuration)
 
-	// Process related data
 	categoriesMap := make(map[string][]map[string]string)
 	tagsMap := make(map[string][]map[string]string)
 	typesMap := make(map[string][]map[string]string)
@@ -609,7 +756,6 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 
 		eventIDStr := fmt.Sprintf("%d", eventID)
 
-		// Split comma-separated values and UUIDs
 		names := strings.Split(value, ", ")
 		uuids := strings.Split(uuidValue, ", ")
 
@@ -708,10 +854,18 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		"ee.exhibitors_upper_bound as exhibitors_upper_bound",
 	}
 
-	// Add economic fields if eventEstimate filter is present
-	if filterFields.EventEstimate {
+	isEconomicImpactRangeFilter := false
+	if filterFields.EconomicImpactGte != "" || filterFields.EconomicImpactLte != "" {
+		isEconomicImpactRangeFilter = true
+	}
+
+	if filterFields.EventEstimate || !!isEconomicImpactRangeFilter {
 		baseFields = append(baseFields, "ee.event_economic_value as economicImpact")
 		baseFields = append(baseFields, "ee.event_economic_breakdown as economicImpactBreakdown")
+	}
+
+	if filterFields.ImpactScoreGte != "" || filterFields.ImpactScoreLte != ""{
+		baseFields = append(baseFields, "ee.impactScore as impactScore")
 	}
 
 	sortFields := make(map[string]bool)
@@ -736,6 +890,10 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			mappedFields["event_followers"] = true
 		case "estimatedExhibitors":
 			mappedFields["exhibitors_mean"] = true
+		case "impactScore":
+			mappedFields["impact_score"] = true
+		case "economicImpact":
+			mappedFields["event_economic_value"] = true
 		}
 	}
 
@@ -755,7 +913,12 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	if sortFields["estimatedExhibitors"] || mappedFields["exhibitors_mean"] || sortFields["exhibitors_mean"] {
 		conditionalFields = append(conditionalFields, "ee.exhibitors_mean as estimatedExhibitors")
 	}
-
+	if sortFields["impactScore"] || mappedFields["impact_score"] || sortFields["impact_score"] {
+		conditionalFields = append(conditionalFields, "ee.impactScore as impactScore")
+	}
+	if sortFields["economicImpact"] || mappedFields["event_economic_value"] || sortFields["event_economic_value"] {
+		conditionalFields = append(conditionalFields, "ee.event_economic_value as economicImpact")
+	}
 	if len(filterFields.ParsedAudienceZone) > 0 {
 		conditionalFields = append(conditionalFields, "ee.audienceZone as audienceZone")
 	}
@@ -823,14 +986,13 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		filterFields,
 	)
 
-	// Check for end date filters
 	hasEndDateFilters := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
-		filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != ""
+		filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != "" ||
+		filterFields.CreatedAt != "" || len(filterFields.ParsedEventIds) > 0 || len(filterFields.ParsedNotEventIds) > 0
 
 	fieldsString := strings.Join(requiredFieldsStatic, ", ")
 	finalGroupByClause := s.buildGroupByClause(requiredFieldsStatic)
 
-	// outerFields := strings.ReplaceAll(fieldsString, "ee.", "")
 	innerOrderBy := func() string {
 		if finalOrderClause != "" {
 			return s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true)
@@ -840,13 +1002,11 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 
 	today := time.Now().Format("2006-01-02")
 
-	// Build CTE clauses string
 	cteClausesStr := ""
 	if len(cteAndJoinResult.CTEClauses) > 0 {
 		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
 	}
 
-	// Build join conditions string
 	joinConditionsStr := ""
 	if len(cteAndJoinResult.JoinConditions) > 0 {
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
@@ -935,24 +1095,16 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		values := make([]interface{}, len(columns))
 		for i, col := range columns {
 			switch col {
-			case "event_id", "followers":
+			case "event_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors":
 				values[i] = new(uint32)
-			case "id":
+			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown":
 				values[i] = new(string)
 			case "start", "end":
 				values[i] = new(time.Time)
-			case "name", "city", "country", "description", "logo":
-				values[i] = new(string)
 			case "avgRating":
 				values[i] = new(*decimal.Decimal)
-			case "lat", "lon", "venueLat", "venueLon":
+			case "lat", "lon", "venueLat", "venueLon", "economicImpact":
 				values[i] = new(float64)
-			case "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors":
-				values[i] = new(uint32)
-			case "economicImpact":
-				values[i] = new(float64)
-			case "economicImpactBreakdown":
-				values[i] = new(string)
 			default:
 				values[i] = new(string)
 			}
@@ -972,7 +1124,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			case "event_id":
 				if eventID, ok := val.(*uint32); ok && eventID != nil {
 					eventIds = append(eventIds, *eventID)
-					currentEventID = *eventID // for calculating the percentage of the followers (country spread and designation spread)
+					currentEventID = *eventID
 					rowData["event_id"] = *eventID
 				}
 			case "followers":
@@ -1043,7 +1195,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		}, nil
 	}
 
-	// Build related data query
 	var eventIdsStr []string
 	for _, id := range eventIds {
 		eventIdsStr = append(eventIdsStr, fmt.Sprintf("%d", id))
@@ -1130,7 +1281,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		`
 	}
 
-	// Add designation spread data if audience spread filter is used
 	if len(filterFields.ParsedAudienceSpread) > 0 && queryResult.needsAudienceSpreadJoin {
 		relatedDataQuery += `
 		UNION ALL
@@ -1161,7 +1311,6 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	relatedDataQueryDuration := time.Since(relatedDataQueryTime)
 	log.Printf("Related data query time: %v", relatedDataQueryDuration)
 
-	// Process related data
 	categoriesMap := make(map[string][]map[string]string)
 	tagsMap := make(map[string][]map[string]string)
 	typesMap := make(map[string][]map[string]string)

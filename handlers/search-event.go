@@ -85,6 +85,10 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 	request.InternationalScoreLte = c.Query("internationalScore.lte")
 	request.TrustScoreGte = c.Query("trustScore.gte")
 	request.TrustScoreLte = c.Query("trustScore.lte")
+	request.ImpactScoreGte = c.Query("impactScore.gte")
+	request.ImpactScoreLte = c.Query("impactScore.lte")
+	request.EconomicImpactGte = c.Query("economicImpact.gte")
+	request.EconomicImpactLte = c.Query("economicImpact.lte")
 
 	userID, ok := c.Locals("userId").(string)
 	if !ok || userID == "" {

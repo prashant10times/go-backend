@@ -6,7 +6,6 @@ import (
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 )
 
-// SortFieldMap maps frontend sort fields to database fields
 var SortFieldMap = map[string]string{
 	"id":                  "event_id",
 	"end":                 "end_date",
@@ -18,9 +17,9 @@ var SortFieldMap = map[string]string{
 	"avgRating":           "event_avgRating",
 	"sponsors":            "event_sponsor",
 	"estimatedExhibitors": "exhibitors_mean",
+	"impactScore":         "impact_score",
 }
 
-// PaginationDto represents pagination parameters
 type PaginationDto struct {
 	Limit  int    `json:"limit" form:"limit"`
 	Offset int    `json:"offset" form:"offset"`
@@ -36,7 +35,6 @@ func (p *PaginationDto) SetDefaultValues() {
 	}
 }
 
-// Validate validates the PaginationDto and sets default values
 func (p *PaginationDto) Validate() error {
 	p.SetDefaultValues()
 

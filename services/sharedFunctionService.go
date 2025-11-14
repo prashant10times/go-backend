@@ -2,7 +2,9 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"reflect"
@@ -21,7 +23,8 @@ import (
 )
 
 type SharedFunctionService struct {
-	db *gorm.DB
+	db                *gorm.DB
+	clickhouseService *ClickHouseService
 }
 type OrderedJSONMap struct {
 	Keys   []string
@@ -55,9 +58,10 @@ func (o OrderedJSONMap) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func NewSharedFunctionService(db *gorm.DB) *SharedFunctionService {
+func NewSharedFunctionService(db *gorm.DB, clickhouseService *ClickHouseService) *SharedFunctionService {
 	return &SharedFunctionService{
-		db: db,
+		db:                db,
+		clickhouseService: clickhouseService,
 	}
 }
 
@@ -669,9 +673,12 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addRangeFilters("editions", "event_editionsCount", &whereConditions, filterFields, false)
 	s.addRangeFilters("start", "start_date", &whereConditions, filterFields, true)
 	s.addRangeFilters("end", "end_date", &whereConditions, filterFields, true)
+	s.addRangeFilters("createdAt", "event_created", &whereConditions, filterFields, true)
 	s.addRangeFilters("inboundScore", "inboundScore", &whereConditions, filterFields, false)
 	s.addRangeFilters("internationalScore", "internationalScore", &whereConditions, filterFields, false)
 	s.addRangeFilters("trustScore", "repeatSentimentChangePercentage", &whereConditions, filterFields, false)
+	s.addRangeFilters("impactScore", "impactScore", &whereConditions, filterFields, false)
+	s.addRangeFilters("economicImpact", "event_economic_value", &whereConditions, filterFields, false)
 
 	s.addEstimatedExhibitorsFilter(&whereConditions, filterFields)
 
@@ -682,6 +689,15 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addInFilter("companyCity", "company_city_name", &whereConditions, filterFields)
 	s.addInFilter("companyDomain", "company_domain", &whereConditions, filterFields)
 	s.addInFilter("companyState", "company_state", &whereConditions, filterFields)
+
+
+	if len(filterFields.ParsedEventIds) > 0 {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id IN (%s)", strings.Join(filterFields.ParsedEventIds, ",")))
+	}
+
+	if len(filterFields.ParsedNotEventIds) > 0 {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id NOT IN (%s)", strings.Join(filterFields.ParsedNotEventIds, ",")))
+	}
 
 	if filterFields.Visibility != "" {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_functionality = %s", escapeSqlValue(filterFields.Visibility)))
@@ -700,7 +716,68 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		return fmt.Sprintf("ee.%s", field)
 	})
 
-	s.addAllEventFilters(&whereConditions, filterFields)
+	if len(filterFields.CreatedAt) > 0 {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_created >= '%s'", filterFields.CreatedAt))
+	}
+
+	if len(filterFields.ParsedCity) > 0 {
+		escapedCities := make([]string, len(filterFields.ParsedCity))
+		for i, city := range filterFields.ParsedCity {
+			escapedCities[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(city, "'", "''"))
+		}
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_city_name IN (%s)", strings.Join(escapedCities, ",")))
+	}
+
+	if len(filterFields.ParsedState) > 0 {
+		escapedStates := make([]string, len(filterFields.ParsedState))
+		for i, state := range filterFields.ParsedState {
+			escapedStates[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(state, "'", "''"))
+		}
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_city_state IN (%s)", strings.Join(escapedStates, ",")))
+	}
+
+	if filterFields.Price != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_pricing = '%s'", strings.ReplaceAll(filterFields.Price, "'", "''")))
+	}
+
+	if filterFields.Frequency != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_frequency = '%s'", strings.ReplaceAll(filterFields.Frequency, "'", "''")))
+	}
+
+	if filterFields.AvgRating != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_avgRating >= %s", filterFields.AvgRating))
+	}
+
+	if filterFields.ParsedMode != nil {
+		mode := *filterFields.ParsedMode
+		switch mode {
+		case "hybrid":
+			whereConditions = append(whereConditions, "ee.event_hybrid = '1'")
+		case "online":
+			whereConditions = append(whereConditions, "ee.edition_city = '1'")
+		case "physical":
+			whereConditions = append(whereConditions, "ee.edition_city != '1' AND ee.event_hybrid = '0'")
+		}
+	}
+
+	if filterFields.ParsedIsBranded != nil {
+		if *filterFields.ParsedIsBranded {
+			whereConditions = append(whereConditions, "ee.isBranded = 1")
+		} else {
+			whereConditions = append(whereConditions, "ee.isBranded = 0")
+		}
+	}
+
+	if filterFields.Maturity != "" {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.maturity = '%s'", strings.ReplaceAll(filterFields.Maturity, "'", "''")))
+	}
+
+	if filterFields.ParsedAudienceZone != nil {
+		audienceZones := filterFields.ParsedAudienceZone
+		for _, audienceZone := range audienceZones {
+			whereConditions = append(whereConditions, fmt.Sprintf("ee.audienceZone = '%s'", strings.ReplaceAll(audienceZone, "'", "''")))
+		}
+	}
 
 	result.SearchClause = s.buildSearchClause(filterFields)
 
@@ -1128,6 +1205,7 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 		"edition_city_long": "lon",
 		"venue_lat":         "venueLat",
 		"venue_long":        "venueLon",
+		"impact_score":      "impactScore",
 	}
 
 	if !useAliases {
@@ -1146,6 +1224,7 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 			"lon":                 "edition_city_long",
 			"venueLat":            "venue_lat",
 			"venueLon":            "venue_long",
+			"impactScore":         "impact_score",
 		}
 	}
 
@@ -1293,64 +1372,7 @@ func (s *SharedFunctionService) addGeographicFilters(whereConditions *[]string, 
 }
 
 func (s *SharedFunctionService) addAllEventFilters(whereConditions *[]string, filterFields models.FilterDataDto) {
-	if len(filterFields.ParsedCity) > 0 {
-		escapedCities := make([]string, len(filterFields.ParsedCity))
-		for i, city := range filterFields.ParsedCity {
-			escapedCities[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(city, "'", "''"))
-		}
-		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.edition_city_name IN (%s)", strings.Join(escapedCities, ",")))
-	}
 
-	if len(filterFields.ParsedState) > 0 {
-		escapedStates := make([]string, len(filterFields.ParsedState))
-		for i, state := range filterFields.ParsedState {
-			escapedStates[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(state, "'", "''"))
-		}
-		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.edition_city_state IN (%s)", strings.Join(escapedStates, ",")))
-	}
-
-	if filterFields.Price != "" {
-		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.event_pricing = '%s'", strings.ReplaceAll(filterFields.Price, "'", "''")))
-	}
-
-	if filterFields.Frequency != "" {
-		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.event_frequency = '%s'", strings.ReplaceAll(filterFields.Frequency, "'", "''")))
-	}
-
-	if filterFields.AvgRating != "" {
-		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.event_avgRating >= %s", filterFields.AvgRating))
-	}
-
-	if filterFields.ParsedMode != nil {
-		mode := *filterFields.ParsedMode
-		switch mode {
-		case "hybrid":
-			*whereConditions = append(*whereConditions, "ee.event_hybrid = '1'")
-		case "online":
-			*whereConditions = append(*whereConditions, "ee.edition_city = '1'")
-		case "physical":
-			*whereConditions = append(*whereConditions, "ee.edition_city != '1' AND ee.event_hybrid = '0'")
-		}
-	}
-
-	if filterFields.ParsedIsBranded != nil {
-		if *filterFields.ParsedIsBranded {
-			*whereConditions = append(*whereConditions, "ee.isBranded = 1")
-		} else {
-			*whereConditions = append(*whereConditions, "ee.isBranded = 0")
-		}
-	}
-
-	if filterFields.Maturity != "" {
-		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.maturity = '%s'", strings.ReplaceAll(filterFields.Maturity, "'", "''")))
-	}
-
-	if filterFields.ParsedAudienceZone != nil {
-		audienceZones := filterFields.ParsedAudienceZone
-		for _, audienceZone := range audienceZones {
-			*whereConditions = append(*whereConditions, fmt.Sprintf("ee.audienceZone = '%s'", strings.ReplaceAll(audienceZone, "'", "''")))
-		}
-	}
 }
 
 func (s *SharedFunctionService) buildStatusCondition(filterFields models.FilterDataDto) string {
@@ -3032,4 +3054,143 @@ func (s *SharedFunctionService) GetCountryDataByISO(iso string) map[string]inter
 		}
 	}
 	return nil
+}
+
+func (s *SharedFunctionService) getDesignationIdsByDepartment(ctx context.Context, designationUUIDs []string) ([]string, error) {
+	if len(designationUUIDs) == 0 {
+		return []string{}, nil
+	}
+
+	uuidList := make([]string, len(designationUUIDs))
+	for i, uuid := range designationUUIDs {
+		uuidList[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''"))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT d1.designation_uuid
+		FROM testing_db.event_designation_ch AS d1
+		INNER JOIN testing_db.event_designation_ch AS d2 
+			ON d1.department = d2.department
+		WHERE d2.designation_uuid IN (%s)`, strings.Join(uuidList, ","))
+
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query designation IDs by department: %w", err)
+	}
+	defer rows.Close()
+
+	var result []string
+	for rows.Next() {
+		var designationUUID string
+		if err := rows.Scan(&designationUUID); err != nil {
+			return nil, fmt.Errorf("failed to scan designation UUID: %w", err)
+		}
+		result = append(result, designationUUID)
+	}
+
+	return result, nil
+}
+
+func (s *SharedFunctionService) getSeniorityIdsByRole(ctx context.Context, seniorityUUIDs []string) ([]string, error) {
+	if len(seniorityUUIDs) == 0 {
+		return []string{}, nil
+	}
+
+	uuidList := make([]string, len(seniorityUUIDs))
+	for i, uuid := range seniorityUUIDs {
+		uuidList[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''"))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT d1.designation_uuid
+		FROM testing_db.event_designation_ch AS d1
+		INNER JOIN testing_db.event_designation_ch AS d2 
+			ON d1.role = d2.role
+		WHERE d2.designation_uuid IN (%s)`, strings.Join(uuidList, ","))
+
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query designation IDs by role: %w", err)
+	}
+	defer rows.Close()
+
+	var result []string
+	for rows.Next() {
+		var designationUUID string
+		if err := rows.Scan(&designationUUID); err != nil {
+			return nil, fmt.Errorf("failed to scan designation UUID: %w", err)
+		}
+		result = append(result, designationUUID)
+	}
+
+	return result, nil
+}
+
+func findValidEventTypes(eventTypes []string, eventTypeGroup string) []string {
+	eventTypeGroupLower := strings.ToLower(strings.TrimSpace(eventTypeGroup))
+	if !validEventTypeGroups[eventTypeGroupLower] {
+		return []string{}
+	}
+
+	validEventTypes := []string{}
+
+	for _, eventType := range eventTypes {
+		eventType = strings.TrimSpace(eventType)
+		if eventType == "" {
+			continue
+		}
+
+		eventTypeSlug, exists := EventTypeById[eventType]
+		if !exists {
+			continue
+		}
+
+		et, exists := EventTypeGroups[eventTypeSlug]
+		if !exists {
+			continue
+		}
+
+		if strings.EqualFold(et.Group, eventTypeGroupLower) {
+			validEventTypes = append(validEventTypes, eventType)
+		}
+	}
+
+	return validEventTypes
+}
+
+func (s *SharedFunctionService) validateParameters(filterFields models.FilterDataDto) (models.FilterDataDto, error) {
+	validEventTypes := []string{}
+	if len(filterFields.Type) > 0 {
+		if filterFields.EventTypeGroup != "" {
+			validEventTypes = findValidEventTypes(strings.Split(filterFields.Type, ","), filterFields.EventTypeGroup)
+		} else {
+			validEventTypes = strings.Split(filterFields.Type, ",")
+		}
+	}
+
+	if len(validEventTypes) == 0 && filterFields.View != "detail" {
+		return filterFields, errors.New("no valid event types found")
+	}
+
+	if len(filterFields.ParsedDesignationId) > 0 {
+		expandedIds, err := s.getDesignationIdsByDepartment(context.Background(), filterFields.ParsedDesignationId)
+		if err != nil {
+			return filterFields, fmt.Errorf("failed to expand designation IDs by department: %w", err)
+		}
+		filterFields.ParsedDesignationId = expandedIds
+	}
+
+	if len(filterFields.ParsedSeniorityId) > 0 {
+		expandedIds, err := s.getSeniorityIdsByRole(context.Background(), filterFields.ParsedSeniorityId)
+		if err != nil {
+			return filterFields, fmt.Errorf("failed to expand seniority IDs by role: %w", err)
+		}
+		filterFields.ParsedSeniorityId = expandedIds
+	}
+
+	if len(validEventTypes) > 0 {
+		filterFields.Type = strings.Join(validEventTypes, ",")
+	}
+
+	return filterFields, nil
 }
