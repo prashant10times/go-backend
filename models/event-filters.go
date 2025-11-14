@@ -2,11 +2,11 @@ package models
 
 import (
 	"encoding/json"
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
-	"fmt"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 )
@@ -24,6 +24,8 @@ type Keywords struct {
 	Include []string `json:"include"`
 	Exclude []string `json:"exclude"`
 }
+
+type DateRange [2]*string
 
 type Groups string
 
@@ -93,16 +95,16 @@ type AlertSearchParams struct {
 }
 
 type FilterDataDto struct {
-	Q        string `json:"q,omitempty" form:"q"`
-	EventIds string `json:"eventIds,omitempty" form:"eventIds"`
-	NotEventIds string `json:"notEventIds,omitempty" form:"notEventIds"`
+	Q              string `json:"q,omitempty" form:"q"`
+	EventIds       string `json:"eventIds,omitempty" form:"eventIds"`
+	NotEventIds    string `json:"notEventIds,omitempty" form:"notEventIds"`
 	SourceEventIds string `json:"sourceEventIds,omitempty" form:"sourceEventIds"`
-	Keywords string `json:"keywords,omitempty" form:"keywords"`
-	Category string `json:"category,omitempty" form:"category"`
-	City     string `json:"city,omitempty" form:"city"`
-	State    string `json:"state,omitempty" form:"state"`
-	Country  string `json:"country,omitempty" form:"country"`
-	Products string `json:"products,omitempty" form:"products"`
+	Keywords       string `json:"keywords,omitempty" form:"keywords"`
+	Category       string `json:"category,omitempty" form:"category"`
+	City           string `json:"city,omitempty" form:"city"`
+	State          string `json:"state,omitempty" form:"state"`
+	Country        string `json:"country,omitempty" form:"country"`
+	Products       string `json:"products,omitempty" form:"products"`
 
 	Price     string `json:"price,omitempty" form:"price"`
 	AvgRating string `json:"avgRating,omitempty" form:"avgRating"`
@@ -150,15 +152,16 @@ type FilterDataDto struct {
 	SponsorTwitter  string `json:"sponsorTwitter,omitempty" form:"sponsorTwitter"`
 	SponsorLinkedin string `json:"sponsorLinkedin,omitempty" form:"sponsorLinkedin"`
 
-	EndGte   string `json:"end.gte,omitempty" form:"end.gte"`
-	EndLte   string `json:"end.lte,omitempty" form:"end.lte"`
-	StartGte string `json:"start.gte,omitempty" form:"start.gte"`
-	StartLte string `json:"start.lte,omitempty" form:"start.lte"`
-	StartGt  string `json:"start.gt,omitempty" form:"start.gt"`
-	EndGt    string `json:"end.gt,omitempty" form:"end.gt"`
-	StartLt  string `json:"start.lt,omitempty" form:"start.lt"`
-	EndLt    string `json:"end.lt,omitempty" form:"end.lt"`
+	EndGte    string `json:"end.gte,omitempty" form:"end.gte"`
+	EndLte    string `json:"end.lte,omitempty" form:"end.lte"`
+	StartGte  string `json:"start.gte,omitempty" form:"start.gte"`
+	StartLte  string `json:"start.lte,omitempty" form:"start.lte"`
+	StartGt   string `json:"start.gt,omitempty" form:"start.gt"`
+	EndGt     string `json:"end.gt,omitempty" form:"end.gt"`
+	StartLt   string `json:"start.lt,omitempty" form:"start.lt"`
+	EndLt     string `json:"end.lt,omitempty" form:"end.lt"`
 	CreatedAt string `json:"createdAt,omitempty" form:"createdAt"`
+	Dates     string `json:"dates,omitempty" form:"dates"`
 
 	ActiveGte string `json:"active.gte,omitempty" form:"active.gte"`
 	ActiveLte string `json:"active.lte,omitempty" form:"active.lte"`
@@ -228,40 +231,41 @@ type FilterDataDto struct {
 	EconomicImpactGte     string `json:"economicImpact.gte,omitempty" form:"economicImpact.gte"`
 	EconomicImpactLte     string `json:"economicImpact.lte,omitempty" form:"economicImpact.lte"`
 
-	ParsedCategory       []string   `json:"-"`
-	ParsedCity           []string   `json:"-"`
-	ParsedCountry        []string   `json:"-"`
-	ParsedProducts       []string   `json:"-"`
-	ParsedType           []string   `json:"-"`
-	ParsedVenue          []string   `json:"-"`
-	ParsedCompany        []string   `json:"-"`
-	ParsedView           []string   `json:"-"`
-	ParsedToAggregate    []string   `json:"-"`
-	ParsedKeywords       *Keywords  `json:"-"`
-	ParsedIsBranded      *bool      `json:"-"`
-	ParsedMode           *string    `json:"-"`
-	ParsedStatus         []string   `json:"-"`
-	ParsedState          []string   `json:"-"`
-	ParsedCompanyState   []string   `json:"-"`
-	ParsedCompanyCity    []string   `json:"-"`
-	ParsedCompanyDomain  []string   `json:"-"`
-	ParsedCompanyCountry []string   `json:"-"`
-	ParsedSpeakerState   []string   `json:"-"`
-	ParsedExhibitorState []string   `json:"-"`
-	ParsedSponsorState   []string   `json:"-"`
-	ParsedVisitorState   []string   `json:"-"`
-	ParsedJobComposite   []string   `json:"-"`
-	ParsedEventRanking   []string   `json:"-"`
-	ParsedAudienceZone   []string   `json:"-"`
-	ParsedAudienceSpread []string   `json:"-"`
-	ParsedPublished      []string   `json:"-"`
-	ParsedEventTypeGroup *Groups    `json:"-"`
-	ParsedDesignationId  []string   `json:"-"`
-	ParsedSeniorityId    []string   `json:"-"`
-	ParsedViewBound      *ViewBound `json:"-"`
-	ParsedEventIds       []string   `json:"-"`
-	ParsedNotEventIds    []string   `json:"-"`
-	ParsedSourceEventIds []string   `json:"-"`
+	ParsedCategory       []string    `json:"-"`
+	ParsedCity           []string    `json:"-"`
+	ParsedCountry        []string    `json:"-"`
+	ParsedProducts       []string    `json:"-"`
+	ParsedType           []string    `json:"-"`
+	ParsedVenue          []string    `json:"-"`
+	ParsedCompany        []string    `json:"-"`
+	ParsedView           []string    `json:"-"`
+	ParsedToAggregate    []string    `json:"-"`
+	ParsedKeywords       *Keywords   `json:"-"`
+	ParsedIsBranded      *bool       `json:"-"`
+	ParsedMode           *string     `json:"-"`
+	ParsedStatus         []string    `json:"-"`
+	ParsedState          []string    `json:"-"`
+	ParsedCompanyState   []string    `json:"-"`
+	ParsedCompanyCity    []string    `json:"-"`
+	ParsedCompanyDomain  []string    `json:"-"`
+	ParsedCompanyCountry []string    `json:"-"`
+	ParsedSpeakerState   []string    `json:"-"`
+	ParsedExhibitorState []string    `json:"-"`
+	ParsedSponsorState   []string    `json:"-"`
+	ParsedVisitorState   []string    `json:"-"`
+	ParsedJobComposite   []string    `json:"-"`
+	ParsedEventRanking   []string    `json:"-"`
+	ParsedAudienceZone   []string    `json:"-"`
+	ParsedAudienceSpread []string    `json:"-"`
+	ParsedPublished      []string    `json:"-"`
+	ParsedEventTypeGroup *Groups     `json:"-"`
+	ParsedDesignationId  []string    `json:"-"`
+	ParsedSeniorityId    []string    `json:"-"`
+	ParsedViewBound      *ViewBound  `json:"-"`
+	ParsedEventIds       []string    `json:"-"`
+	ParsedNotEventIds    []string    `json:"-"`
+	ParsedSourceEventIds []string    `json:"-"`
+	ParsedDates          []DateRange `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -792,6 +796,77 @@ func (f *FilterDataDto) Validate() error {
 		validation.Field(&f.ActiveGt, validateAndNormalizeDate(&f.ActiveGt, "active.gt")),
 		validation.Field(&f.ActiveLt, validateAndNormalizeDate(&f.ActiveLt, "active.lt")),
 		validation.Field(&f.CreatedAt, validateAndNormalizeDate(&f.CreatedAt, "createdAt")),
+
+		validation.Field(&f.Dates, validation.When(f.Dates != "", validation.By(func(value interface{}) error {
+			datesStr := value.(string)
+			if datesStr == "" {
+				return nil
+			}
+
+			var dateRanges [][]interface{}
+			if err := json.Unmarshal([]byte(datesStr), &dateRanges); err != nil {
+				return validation.NewError("invalid_dates_json", "Invalid JSON format for dates: "+err.Error())
+			}
+
+			if len(dateRanges) == 0 {
+				return validation.NewError("empty_dates", "Dates array cannot be empty")
+			}
+
+			f.ParsedDates = make([]DateRange, 0, len(dateRanges))
+
+			for i, rangeItem := range dateRanges {
+				if len(rangeItem) != 2 {
+					return validation.NewError("invalid_date_range", fmt.Sprintf("Date range at index %d must have exactly 2 elements [start, end]", i))
+				}
+
+				var startDate, endDate *string
+
+				if rangeItem[0] != nil {
+					startStr, ok := rangeItem[0].(string)
+					if !ok {
+						return validation.NewError("invalid_start_date", fmt.Sprintf("Start date at index %d must be a string or null", i))
+					}
+					startStr = strings.TrimSpace(startStr)
+					if startStr != "" {
+						parsedDate, err := time.Parse("2006-01-02", startStr)
+						if err != nil {
+							parsedDate, err = time.Parse(time.RFC3339, startStr)
+							if err != nil {
+								return validation.NewError("invalid_start_date_format", fmt.Sprintf("Start date at index %d must be in YYYY-MM-DD format: %s", i, startStr))
+							}
+						}
+						normalized := parsedDate.Format("2006-01-02")
+						startDate = &normalized
+					}
+				}
+
+				if rangeItem[1] != nil {
+					endStr, ok := rangeItem[1].(string)
+					if !ok {
+						return validation.NewError("invalid_end_date", fmt.Sprintf("End date at index %d must be a string or null", i))
+					}
+					endStr = strings.TrimSpace(endStr)
+					if endStr != "" {
+						parsedDate, err := time.Parse("2006-01-02", endStr)
+						if err != nil {
+							parsedDate, err = time.Parse(time.RFC3339, endStr)
+							if err != nil {
+								return validation.NewError("invalid_end_date_format", fmt.Sprintf("End date at index %d must be in YYYY-MM-DD format: %s", i, endStr))
+							}
+						}
+						normalized := parsedDate.Format("2006-01-02")
+						endDate = &normalized
+					}
+				}
+
+				if startDate == nil && endDate == nil {
+					return validation.NewError("empty_date_range", fmt.Sprintf("Date range at index %d must have at least one of start or end date", i))
+				}
+				f.ParsedDates = append(f.ParsedDates, DateRange{startDate, endDate})
+			}
+
+			return nil
+		}))),
 
 		validation.Field(&f.EventRanking, validation.When(f.EventRanking != "", validation.By(func(value interface{}) error {
 			eventRankingStr := value.(string)

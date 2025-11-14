@@ -690,7 +690,6 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addInFilter("companyDomain", "company_domain", &whereConditions, filterFields)
 	s.addInFilter("companyState", "company_state", &whereConditions, filterFields)
 
-
 	if len(filterFields.ParsedEventIds) > 0 {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_uuid IN (%s)", strings.Join(filterFields.ParsedEventIds, ",")))
 	}
@@ -722,6 +721,37 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	if len(filterFields.CreatedAt) > 0 {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_created >= '%s'", filterFields.CreatedAt))
+	}
+
+	if len(filterFields.ParsedDates) > 0 {
+		var dateRangeConditions []string
+
+		for _, dateRange := range filterFields.ParsedDates {
+			start := dateRange[0]
+			end := dateRange[1]
+
+			var rangeConditions []string
+
+			if start != nil && *start != "" {
+				rangeConditions = append(rangeConditions, fmt.Sprintf("ee.end_date >= '%s'", strings.ReplaceAll(*start, "'", "''")))
+			}
+
+			if end != nil && *end != "" {
+				if start != nil && *start != "" {
+					rangeConditions = append(rangeConditions, fmt.Sprintf("ee.start_date <= '%s'", strings.ReplaceAll(*end, "'", "''")))
+				} else {
+					rangeConditions = append(rangeConditions, fmt.Sprintf("ee.end_date <= '%s'", strings.ReplaceAll(*end, "'", "''")))
+				}
+			}
+
+			if len(rangeConditions) > 0 {
+				dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("(%s)", strings.Join(rangeConditions, " AND ")))
+			}
+		}
+
+		if len(dateRangeConditions) > 0 {
+			whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(dateRangeConditions, " AND ")))
+		}
 	}
 
 	if len(filterFields.ParsedCity) > 0 {
@@ -1449,8 +1479,19 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 	var searchClause strings.Builder
 
 	if filterFields.Q != "" {
-		searchTerm := strings.ToLower(strings.ReplaceAll(filterFields.Q, "'", "''"))
-		searchClause.WriteString(fmt.Sprintf("(position('%s' IN lower(ee.event_name)) > 0 OR position('%s' IN lower(ee.event_description)) > 0 OR position('%s' IN lower(ee.event_abbr_name)) > 0)", searchTerm, searchTerm, searchTerm))
+		queryKeywords := strings.Split(filterFields.Q, ",")
+		var qConditions []string
+
+		for _, keyword := range queryKeywords {
+			cleanKeyword := strings.ToLower(strings.TrimSpace(strings.ReplaceAll(keyword, "'", "''")))
+			if cleanKeyword != "" {
+				qConditions = append(qConditions, fmt.Sprintf("has(ee.keywords, '%s')", cleanKeyword))
+			}
+		}
+
+		if len(qConditions) > 0 {
+			searchClause.WriteString(fmt.Sprintf("(%s)", strings.Join(qConditions, " OR ")))
+		}
 	}
 
 	if filterFields.ParsedKeywords != nil {
