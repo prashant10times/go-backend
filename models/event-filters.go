@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"fmt"
 
 	validation "github.com/go-ozzo/ozzo-validation/v4"
 )
@@ -95,6 +96,7 @@ type FilterDataDto struct {
 	Q        string `json:"q,omitempty" form:"q"`
 	EventIds string `json:"eventIds,omitempty" form:"eventIds"`
 	NotEventIds string `json:"notEventIds,omitempty" form:"notEventIds"`
+	SourceEventIds string `json:"sourceEventIds,omitempty" form:"sourceEventIds"`
 	Keywords string `json:"keywords,omitempty" form:"keywords"`
 	Category string `json:"category,omitempty" form:"category"`
 	City     string `json:"city,omitempty" form:"city"`
@@ -259,6 +261,7 @@ type FilterDataDto struct {
 	ParsedViewBound      *ViewBound `json:"-"`
 	ParsedEventIds       []string   `json:"-"`
 	ParsedNotEventIds    []string   `json:"-"`
+	ParsedSourceEventIds []string   `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -319,7 +322,8 @@ func (f *FilterDataDto) Validate() error {
 			for _, eventId := range eventIds {
 				eventId = strings.TrimSpace(eventId)
 				if eventId != "" {
-					f.ParsedEventIds = append(f.ParsedEventIds, eventId)
+					quotedIds := fmt.Sprintf("'%s'", eventId)
+					f.ParsedEventIds = append(f.ParsedEventIds, quotedIds)
 				}
 			}
 			return nil
@@ -332,7 +336,22 @@ func (f *FilterDataDto) Validate() error {
 			for _, notEventId := range notEventIds {
 				notEventId = strings.TrimSpace(notEventId)
 				if notEventId != "" {
-					f.ParsedNotEventIds = append(f.ParsedNotEventIds, notEventId)
+					quotedIds := fmt.Sprintf("'%s'", notEventId)
+					f.ParsedNotEventIds = append(f.ParsedNotEventIds, quotedIds)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.SourceEventIds, validation.When(f.SourceEventIds != "", validation.By(func(value interface{}) error {
+			sourceEventIdsStr := value.(string)
+			sourceEventIds := strings.Split(sourceEventIdsStr, ",")
+			f.ParsedSourceEventIds = make([]string, 0, len(sourceEventIds))
+			for _, sourceEventId := range sourceEventIds {
+				sourceEventId = strings.TrimSpace(sourceEventId)
+				if sourceEventId != "" {
+					quotedIds := fmt.Sprintf("'%s'", sourceEventId)
+					f.ParsedSourceEventIds = append(f.ParsedSourceEventIds, quotedIds)
 				}
 			}
 			return nil

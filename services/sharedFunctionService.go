@@ -692,11 +692,15 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 
 	if len(filterFields.ParsedEventIds) > 0 {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id IN (%s)", strings.Join(filterFields.ParsedEventIds, ",")))
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_uuid IN (%s)", strings.Join(filterFields.ParsedEventIds, ",")))
 	}
 
 	if len(filterFields.ParsedNotEventIds) > 0 {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id NOT IN (%s)", strings.Join(filterFields.ParsedNotEventIds, ",")))
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_uuid NOT IN (%s)", strings.Join(filterFields.ParsedNotEventIds, ",")))
+	}
+
+	if len(filterFields.ParsedSourceEventIds) > 0 {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id IN (%s)", strings.Join(filterFields.ParsedSourceEventIds, ",")))
 	}
 
 	if filterFields.Visibility != "" {
