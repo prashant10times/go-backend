@@ -754,6 +754,22 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
+	if filterFields.ParsedPastBetween != nil {
+		start := filterFields.ParsedPastBetween.Start
+		end := filterFields.ParsedPastBetween.End
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.end_date >= '%s' AND ee.end_date < '%s'",
+			strings.ReplaceAll(start, "'", "''"),
+			strings.ReplaceAll(end, "'", "''")))
+	}
+
+	if filterFields.ParsedActiveBetween != nil {
+		start := filterFields.ParsedActiveBetween.Start
+		end := filterFields.ParsedActiveBetween.End
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.start_date <= '%s' AND ee.end_date >= '%s'",
+			strings.ReplaceAll(end, "'", "''"),
+			strings.ReplaceAll(start, "'", "''")))
+	}
+
 	if len(filterFields.ParsedCity) > 0 {
 		escapedCities := make([]string, len(filterFields.ParsedCity))
 		for i, city := range filterFields.ParsedCity {

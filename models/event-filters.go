@@ -152,16 +152,18 @@ type FilterDataDto struct {
 	SponsorTwitter  string `json:"sponsorTwitter,omitempty" form:"sponsorTwitter"`
 	SponsorLinkedin string `json:"sponsorLinkedin,omitempty" form:"sponsorLinkedin"`
 
-	EndGte    string `json:"end.gte,omitempty" form:"end.gte"`
-	EndLte    string `json:"end.lte,omitempty" form:"end.lte"`
-	StartGte  string `json:"start.gte,omitempty" form:"start.gte"`
-	StartLte  string `json:"start.lte,omitempty" form:"start.lte"`
-	StartGt   string `json:"start.gt,omitempty" form:"start.gt"`
-	EndGt     string `json:"end.gt,omitempty" form:"end.gt"`
-	StartLt   string `json:"start.lt,omitempty" form:"start.lt"`
-	EndLt     string `json:"end.lt,omitempty" form:"end.lt"`
-	CreatedAt string `json:"createdAt,omitempty" form:"createdAt"`
-	Dates     string `json:"dates,omitempty" form:"dates"`
+	EndGte        string `json:"end.gte,omitempty" form:"end.gte"`
+	EndLte        string `json:"end.lte,omitempty" form:"end.lte"`
+	StartGte      string `json:"start.gte,omitempty" form:"start.gte"`
+	StartLte      string `json:"start.lte,omitempty" form:"start.lte"`
+	StartGt       string `json:"start.gt,omitempty" form:"start.gt"`
+	EndGt         string `json:"end.gt,omitempty" form:"end.gt"`
+	StartLt       string `json:"start.lt,omitempty" form:"start.lt"`
+	EndLt         string `json:"end.lt,omitempty" form:"end.lt"`
+	CreatedAt     string `json:"createdAt,omitempty" form:"createdAt"`
+	Dates         string `json:"dates,omitempty" form:"dates"`
+	PastBetween   string `json:"pastBetween,omitempty" form:"pastBetween"`
+	ActiveBetween string `json:"activeBetween,omitempty" form:"activeBetween"`
 
 	ActiveGte string `json:"active.gte,omitempty" form:"active.gte"`
 	ActiveLte string `json:"active.lte,omitempty" form:"active.lte"`
@@ -266,6 +268,14 @@ type FilterDataDto struct {
 	ParsedNotEventIds    []string    `json:"-"`
 	ParsedSourceEventIds []string    `json:"-"`
 	ParsedDates          []DateRange `json:"-"`
+	ParsedPastBetween    *struct {
+		Start string `json:"start"`
+		End   string `json:"end"`
+	} `json:"-"`
+	ParsedActiveBetween *struct {
+		Start string `json:"start"`
+		End   string `json:"end"`
+	} `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -863,6 +873,106 @@ func (f *FilterDataDto) Validate() error {
 					return validation.NewError("empty_date_range", fmt.Sprintf("Date range at index %d must have at least one of start or end date", i))
 				}
 				f.ParsedDates = append(f.ParsedDates, DateRange{startDate, endDate})
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.PastBetween, validation.When(f.PastBetween != "", validation.By(func(value interface{}) error {
+			pastBetweenStr := value.(string)
+			if pastBetweenStr == "" {
+				return nil
+			}
+
+			dates := strings.Split(pastBetweenStr, ",")
+			if len(dates) != 2 {
+				return validation.NewError("invalid_past_between", "pastBetween must contain exactly 2 dates separated by comma (start,end)")
+			}
+
+			var startDate, endDate string
+
+			startStr := strings.TrimSpace(dates[0])
+			if startStr == "" {
+				return validation.NewError("invalid_past_between_start", "Start date cannot be empty")
+			}
+			parsedStart, err := time.Parse("2006-01-02", startStr)
+			if err != nil {
+				parsedStart, err = time.Parse(time.RFC3339, startStr)
+				if err != nil {
+					return validation.NewError("invalid_past_between_start_format", "Start date must be in YYYY-MM-DD format: "+startStr)
+				}
+			}
+			startDate = parsedStart.Format("2006-01-02")
+
+			endStr := strings.TrimSpace(dates[1])
+			if endStr == "" {
+				return validation.NewError("invalid_past_between_end", "End date cannot be empty")
+			}
+			parsedEnd, err := time.Parse("2006-01-02", endStr)
+			if err != nil {
+				parsedEnd, err = time.Parse(time.RFC3339, endStr)
+				if err != nil {
+					return validation.NewError("invalid_past_between_end_format", "End date must be in YYYY-MM-DD format: "+endStr)
+				}
+			}
+			endDate = parsedEnd.Format("2006-01-02")
+
+			f.ParsedPastBetween = &struct {
+				Start string `json:"start"`
+				End   string `json:"end"`
+			}{
+				Start: startDate,
+				End:   endDate,
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.ActiveBetween, validation.When(f.ActiveBetween != "", validation.By(func(value interface{}) error {
+			activeBetweenStr := value.(string)
+			if activeBetweenStr == "" {
+				return nil
+			}
+
+			dates := strings.Split(activeBetweenStr, ",")
+			if len(dates) != 2 {
+				return validation.NewError("invalid_active_between", "activeBetween must contain exactly 2 dates separated by comma (start,end)")
+			}
+
+			var startDate, endDate string
+
+			startStr := strings.TrimSpace(dates[0])
+			if startStr == "" {
+				return validation.NewError("invalid_active_between_start", "Start date cannot be empty")
+			}
+			parsedStart, err := time.Parse("2006-01-02", startStr)
+			if err != nil {
+				parsedStart, err = time.Parse(time.RFC3339, startStr)
+				if err != nil {
+					return validation.NewError("invalid_active_between_start_format", "Start date must be in YYYY-MM-DD format: "+startStr)
+				}
+			}
+			startDate = parsedStart.Format("2006-01-02")
+
+			endStr := strings.TrimSpace(dates[1])
+			if endStr == "" {
+				return validation.NewError("invalid_active_between_end", "End date cannot be empty")
+			}
+			parsedEnd, err := time.Parse("2006-01-02", endStr)
+			if err != nil {
+				parsedEnd, err = time.Parse(time.RFC3339, endStr)
+				if err != nil {
+					return validation.NewError("invalid_active_between_end_format", "End date must be in YYYY-MM-DD format: "+endStr)
+				}
+			}
+			endDate = parsedEnd.Format("2006-01-02")
+
+			f.ParsedActiveBetween = &struct {
+				Start string `json:"start"`
+				End   string `json:"end"`
+			}{
+				Start: startDate,
+				End:   endDate,
 			}
 
 			return nil
