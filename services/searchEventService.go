@@ -590,6 +590,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.NeedsEventRankingJoin,
 		queryResult.needsDesignationJoin,
 		queryResult.needsAudienceSpreadJoin,
+		queryResult.NeedsRegionsJoin,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -599,6 +600,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.EventRankingWhereConditions,
 		queryResult.JobCompositeWhereConditions,
 		queryResult.AudienceSpreadWhereConditions,
+		queryResult.RegionsWhereConditions,
+		queryResult.HasRegionsFilter,
+		queryResult.HasCountryFilter,
 		filterFields,
 	)
 

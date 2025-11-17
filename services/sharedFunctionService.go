@@ -410,6 +410,7 @@ type ClickHouseQueryResult struct {
 	NeedsEventRankingJoin         bool
 	needsDesignationJoin          bool
 	needsAudienceSpreadJoin       bool
+	NeedsRegionsJoin              bool
 	VisitorJoinClause             string
 	SpeakerJoinClause             string
 	VisitorWhereConditions        []string
@@ -421,6 +422,9 @@ type ClickHouseQueryResult struct {
 	EventRankingWhereConditions   []string
 	JobCompositeWhereConditions   []string
 	AudienceSpreadWhereConditions []string
+	RegionsWhereConditions        []string
+	HasRegionsFilter              bool
+	HasCountryFilter              bool
 }
 
 func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterDataDto) (*ClickHouseQueryResult, error) {
@@ -434,6 +438,9 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		EventRankingWhereConditions:   make([]string, 0),
 		JobCompositeWhereConditions:   make([]string, 0),
 		AudienceSpreadWhereConditions: make([]string, 0),
+		RegionsWhereConditions:        make([]string, 0),
+		HasRegionsFilter:              false,
+		HasCountryFilter:              false,
 	}
 
 	whereConditions := make([]string, 0)
@@ -620,7 +627,21 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		result.AudienceSpreadWhereConditions = append(result.AudienceSpreadWhereConditions, fmt.Sprintf("(%s)", strings.Join(jsonConditions, " AND ")))
 	}
 
-	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin || result.needsDesignationJoin || result.needsAudienceSpreadJoin
+	if len(filterFields.ParsedRegions) > 0 {
+		result.NeedsRegionsJoin = true
+		result.HasRegionsFilter = true
+		regions := make([]string, len(filterFields.ParsedRegions))
+		for i, region := range filterFields.ParsedRegions {
+			regions[i] = escapeSqlValue(region)
+		}
+		result.RegionsWhereConditions = append(result.RegionsWhereConditions, fmt.Sprintf("regions IS NOT NULL AND length(regions) > 0 AND regions[1] IN (%s)", strings.Join(regions, ",")))
+	}
+
+	if len(filterFields.ParsedCountry) > 0 {
+		result.HasCountryFilter = true
+	}
+
+	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin || result.needsDesignationJoin || result.needsAudienceSpreadJoin || result.NeedsRegionsJoin
 
 	s.addRangeFilters("following", "event_followers", &whereConditions, filterFields, false)
 	s.addRangeFilters("speaker", "event_speaker", &whereConditions, filterFields, false)
@@ -637,7 +658,9 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	s.addEstimatedExhibitorsFilter(&whereConditions, filterFields)
 
-	s.addInFilter("country", "edition_country", &whereConditions, filterFields)
+	if !result.HasRegionsFilter {
+		s.addInFilter("country", "edition_country", &whereConditions, filterFields)
+	}
 	s.addInFilter("venue", "venue_name", &whereConditions, filterFields)
 	s.addInFilter("company", "company_name", &whereConditions, filterFields)
 	s.addInFilter("companyCountry", "company_country", &whereConditions, filterFields)
@@ -786,6 +809,19 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	result.SearchClause = s.buildSearchClause(filterFields)
 
+	if result.HasRegionsFilter {
+		countryCondition := "ee.edition_country IN (SELECT iso FROM filtered_regions)"
+
+		if result.HasCountryFilter && len(filterFields.ParsedCountry) > 0 {
+			countries := make([]string, len(filterFields.ParsedCountry))
+			for i, country := range filterFields.ParsedCountry {
+				countries[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(country, "'", "''"))
+			}
+			countryCondition = fmt.Sprintf("(ee.edition_country IN (SELECT iso FROM filtered_regions) OR ee.edition_country IN (%s))", strings.Join(countries, ","))
+		}
+		whereConditions = append(whereConditions, countryCondition)
+	}
+
 	result.WhereClause = strings.Join(whereConditions, " AND ")
 
 	return result, nil
@@ -806,6 +842,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsEventRankingJoin bool,
 	needsDesignationJoin bool,
 	needsAudienceSpreadJoin bool,
+	needsRegionsJoin bool,
 	visitorWhereConditions []string,
 	speakerWhereConditions []string,
 	exhibitorWhereConditions []string,
@@ -815,6 +852,9 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	eventRankingWhereConditions []string,
 	jobCompositeWhereConditions []string,
 	audienceSpreadWhereConditions []string,
+	regionsWhereConditions []string,
+	hasRegionsFilter bool,
+	hasCountryFilter bool,
 	filterFields models.FilterDataDto,
 ) CTEAndJoinResult {
 	result := CTEAndJoinResult{
@@ -823,6 +863,16 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	}
 
 	previousCTE := ""
+
+	if needsRegionsJoin && len(regionsWhereConditions) > 0 {
+		regionsWhereClause := strings.Join(regionsWhereConditions, " AND ")
+		regionsCTE := fmt.Sprintf(`filtered_regions AS (
+			SELECT iso
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, regionsWhereClause)
+		result.CTEClauses = append(result.CTEClauses, regionsCTE)
+	}
 
 	if needsVisitorJoin {
 		visitorWhereClause := ""
@@ -2490,6 +2540,16 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 	queryResult, err := s.buildClickHouseQuery(filterFields)
 	if err != nil {
 		return "", err
+	}
+
+	if queryResult.NeedsRegionsJoin && len(queryResult.RegionsWhereConditions) > 0 {
+		regionsWhereClause := strings.Join(queryResult.RegionsWhereConditions, " AND ")
+		regionsCTE := fmt.Sprintf(`filtered_regions AS (
+			SELECT iso
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, regionsWhereClause)
+		cteClauses = append(cteClauses, regionsCTE)
 	}
 
 	if queryResult.NeedsVisitorJoin {

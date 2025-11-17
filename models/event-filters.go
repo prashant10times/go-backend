@@ -192,6 +192,7 @@ type FilterDataDto struct {
 	Radius             string `json:"radius,omitempty" form:"radius"`
 	Unit               string `json:"unit,omitempty" form:"unit"`
 	EventDistanceOrder string `json:"eventDistanceOrder,omitempty" form:"eventDistanceOrder"`
+	Regions	           string `json:"regions,omitempty" form:"regions"`
 
 	Company        string `json:"company,omitempty" form:"company"`
 	CompanyCountry string `json:"companyCountry,omitempty" form:"companyCountry"`
@@ -276,6 +277,7 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
+	ParsedRegions        []string    `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -420,6 +422,19 @@ func (f *FilterDataDto) Validate() error {
 				audienceSpread = strings.TrimSpace(audienceSpread)
 				if audienceSpread != "" {
 					f.ParsedAudienceSpread = append(f.ParsedAudienceSpread, audienceSpread)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.Regions, validation.When(f.Regions != "", validation.By(func(value interface{}) error {
+			regionsStr := value.(string)
+			regions := strings.Split(regionsStr, ",")
+			f.ParsedRegions = make([]string, 0, len(regions))
+			for _, region := range regions {
+				region = strings.TrimSpace(region)
+				if region != "" {
+					f.ParsedRegions = append(f.ParsedRegions, region)
 				}
 			}
 			return nil
