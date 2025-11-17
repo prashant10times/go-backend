@@ -24,6 +24,7 @@ var SortFieldMap = map[string]string{
 	"inboundEstimate": 		"inboundAttendance",
 	"internationalEstimate": "internationalAttendance",
 	"title":                 "event_name",
+	"status":                "status",
 }
 
 type PaginationDto struct {
