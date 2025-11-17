@@ -302,10 +302,10 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	var response interface{}
 
 	switch queryType {
-	case "DEFAULT_LIST":
-		result, err := s.getDefaultListData(pagination, sortClause)
+	case "LIST":
+		result, err := s.getListData(pagination, sortClause, filterFields)
 		if err != nil {
-			log.Printf("Error getting default list data: %v", err)
+			log.Printf("Error getting list data: %v", err)
 			statusCode = http.StatusInternalServerError
 			msg := err.Error()
 			errorMessage = &msg
@@ -343,49 +343,8 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			return nil, err
 		}
 
-	case "FILTERED_LIST":
-		result, err := s.getFilteredListData(pagination, sortClause, filterFields)
-		if err != nil {
-			log.Printf("Error getting filtered list data: %v", err)
-			statusCode = http.StatusInternalServerError
-			msg := err.Error()
-			errorMessage = &msg
-			return nil, middleware.NewInternalServerError("Database query failed", err.Error())
-		}
-
-		if result.StatusCode != 200 {
-			statusCode = http.StatusInternalServerError
-			msg := result.ErrorMessage
-			errorMessage = &msg
-			return nil, middleware.NewInternalServerError("Database query failed", result.ErrorMessage)
-		}
-
-		eventData = result.Data
-
-		var eventDataSlice []map[string]interface{}
-		if dataSlice, ok := eventData.([]map[string]interface{}); ok {
-			eventDataSlice = dataSlice
-		} else if dataSlice, ok := eventData.([]interface{}); ok {
-			eventDataSlice = make([]map[string]interface{}, len(dataSlice))
-			for i, item := range dataSlice {
-				if mapItem, ok := item.(map[string]interface{}); ok {
-					eventDataSlice[i] = mapItem
-				} else {
-					eventDataSlice[i] = make(map[string]interface{})
-				}
-			}
-		} else {
-			return nil, fmt.Errorf("unexpected data type: %T", eventData)
-		}
-
-		response, err = s.sharedFunctionService.BuildClickhouseListViewResponse(eventDataSlice, pagination, c)
-		if err != nil {
-			log.Printf("Error building response: %v", err)
-			return nil, err
-		}
-
-	case "DEFAULT_AGGREGATION":
-		result, err := s.getDefaultAggregationDataClickHouse(filterFields, pagination)
+	case "AGGREGATION":
+		result, err := s.getAggregationDataClickHouse(filterFields, pagination)
 		if err != nil {
 			log.Printf("Error getting default aggregation data: %v", err)
 			statusCode = http.StatusInternalServerError
@@ -468,376 +427,7 @@ type AggregationResult struct {
 	Error      error
 }
 
-func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto, sortClause []SortClause) (*ListResult, error) {
-
-	baseFields := []string{
-		"ee.event_uuid",
-		"ee.event_id",
-		"ee.start_date",
-		"ee.end_date",
-		"ee.event_name",
-		"ee.edition_city_name",
-		"ee.edition_country",
-		"ee.event_description",
-		"ee.event_followers",
-		"ee.event_logo",
-		"ee.event_avgRating",
-		"ee.exhibitors_lower_bound",
-		"ee.exhibitors_upper_bound",
-	}
-
-	sortFields := make(map[string]bool)
-	if len(sortClause) > 0 {
-		for _, sort := range sortClause {
-			sortFields[sort.Field] = true
-		}
-	}
-
-	mappedFields := make(map[string]bool)
-	for field := range sortFields {
-		switch field {
-		case "exhibitors":
-			mappedFields["event_exhibitor"] = true
-		case "speakers":
-			mappedFields["event_speaker"] = true
-		case "sponsors":
-			mappedFields["event_sponsor"] = true
-		case "created":
-			mappedFields["event_created"] = true
-		case "following":
-			mappedFields["event_followers"] = true
-		case "estimatedExhibitors":
-			mappedFields["exhibitors_mean"] = true
-		}
-	}
-
-	var conditionalFields []string
-	if sortFields["exhibitors"] || mappedFields["event_exhibitor"] || sortFields["event_exhibitor"] {
-		conditionalFields = append(conditionalFields, "ee.event_exhibitor")
-	}
-	if sortFields["speakers"] || mappedFields["event_speaker"] || sortFields["event_speaker"] {
-		conditionalFields = append(conditionalFields, "ee.event_speaker")
-	}
-	if sortFields["sponsors"] || mappedFields["event_sponsor"] || sortFields["event_sponsor"] {
-		conditionalFields = append(conditionalFields, "ee.event_sponsor")
-	}
-	if sortFields["created"] || mappedFields["event_created"] || sortFields["event_created"] {
-		conditionalFields = append(conditionalFields, "ee.event_created")
-	}
-	if sortFields["estimatedExhibitors"] || mappedFields["exhibitors_mean"] || sortFields["exhibitors_mean"] {
-		conditionalFields = append(conditionalFields, "ee.exhibitors_mean")
-	}
-
-	requiredFieldsStatic := append(baseFields, conditionalFields...)
-
-	var groupByFields []string
-	for _, field := range requiredFieldsStatic {
-		groupByFields = append(groupByFields, strings.Replace(field, "ee.", "", 1))
-	}
-	groupByClause := strings.Join(groupByFields, ",\n                        ")
-
-	orderByClause, err := s.sharedFunctionService.buildOrderByClause(sortClause, false)
-	if err != nil {
-		return nil, err
-	}
-
-	today := time.Now().Format("2006-01-02")
-
-	fieldsString := strings.Join(requiredFieldsStatic, ", ")
-
-	outerFields := strings.ReplaceAll(fieldsString, "ee.", "")
-	innerOrderBy := func() string {
-		if orderByClause != "" {
-			return s.sharedFunctionService.fixOrderByForCTE(orderByClause, false)
-		}
-		return "ORDER BY ee.event_id ASC"
-	}()
-
-	eventDataQuery := fmt.Sprintf(`
-		WITH event_filter AS (
-			SELECT event_id, edition_id
-			FROM testing_db.allevent_ch
-			WHERE published = '1' 
-			AND status != 'U'
-			AND edition_type = 'current_edition'
-			AND end_date >= '%s'
-			GROUP BY event_id, edition_id
-			ORDER BY event_id ASC
-			LIMIT %d OFFSET %d
-		),
-		event_data AS (
-			SELECT %s
-			FROM testing_db.allevent_ch AS ee
-			WHERE ee.edition_id in (SELECT edition_id from event_filter)
-			GROUP BY
-				%s
-			%s
-		)
-		SELECT %s
-		FROM event_data
-		GROUP BY
-			%s
-		%s
-		`, today, pagination.Limit, pagination.Offset, outerFields, groupByClause, innerOrderBy,
-		outerFields, groupByClause, s.sharedFunctionService.fixOrderByForCTE(orderByClause, false))
-
-	log.Printf("Event data query: %s", eventDataQuery)
-
-	defaultQueryTime := time.Now()
-	eventDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), eventDataQuery)
-	if err != nil {
-		log.Printf("ClickHouse query error: %v", err)
-		return &ListResult{
-			StatusCode:   500,
-			ErrorMessage: err.Error(),
-		}, nil
-	}
-
-	defaultQueryDuration := time.Since(defaultQueryTime)
-	log.Printf("Default query time: %v", defaultQueryDuration)
-
-	var eventIds []uint32
-	var eventData []map[string]interface{}
-	rowCount := 0
-
-	for eventDataResult.Next() {
-		rowCount++
-
-		columns := eventDataResult.Columns()
-
-		values := make([]interface{}, len(columns))
-		for i, col := range columns {
-			switch col {
-			case "event_id", "event_followers", "exhibitors_mean", "exhibitors_lower_bound", "exhibitors_upper_bound":
-				values[i] = new(uint32)
-			case "event_uuid":
-				values[i] = new(string)
-			case "start_date", "end_date":
-				values[i] = new(time.Time)
-			case "event_name", "edition_city_name", "edition_country", "event_description", "event_logo":
-				values[i] = new(string)
-			case "event_avgRating":
-				values[i] = new(*decimal.Decimal)
-			default:
-				values[i] = new(string)
-			}
-		}
-
-		if err := eventDataResult.Scan(values...); err != nil {
-			log.Printf("Error scanning row: %v", err)
-			continue
-		}
-
-		rowData := make(map[string]interface{})
-		for i, col := range columns {
-			val := values[i]
-
-			switch col {
-			case "event_id":
-				if eventID, ok := val.(*uint32); ok && eventID != nil {
-					eventIds = append(eventIds, *eventID)
-					rowData["event_id"] = *eventID
-				}
-			case "event_uuid":
-				if eventUUID, ok := val.(*string); ok && eventUUID != nil {
-					rowData["event_uuid"] = *eventUUID
-				}
-			case "start_date", "end_date":
-				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
-					rowData[col] = dateVal.Format("2006-01-02")
-				}
-			case "event_avgRating":
-				if avgRating, ok := val.(**decimal.Decimal); ok && avgRating != nil && *avgRating != nil {
-					rowData[col] = *avgRating
-				} else {
-					rowData[col] = 0.0
-				}
-			case "exhibitors_mean":
-				if exhibitorsMean, ok := val.(*uint32); ok && exhibitorsMean != nil {
-					rowData[col] = *exhibitorsMean
-				} else {
-					rowData[col] = uint32(0)
-				}
-			case "exhibitors_lower_bound", "exhibitors_upper_bound":
-				if boundValue, ok := val.(*uint32); ok && boundValue != nil {
-					rowData[col] = *boundValue
-				} else {
-					rowData[col] = uint32(0)
-				}
-			default:
-				if ptr, ok := val.(*string); ok && ptr != nil {
-					rowData[col] = *ptr
-				} else if ptr, ok := val.(*uint32); ok && ptr != nil {
-					rowData[col] = *ptr
-				} else {
-					rowData[col] = val
-				}
-			}
-		}
-
-		eventData = append(eventData, rowData)
-	}
-
-	if len(eventIds) == 0 {
-		return &ListResult{
-			StatusCode: 200,
-			Data:       []interface{}{},
-		}, nil
-	}
-
-	var eventIdsStr []string
-	for _, id := range eventIds {
-		eventIdsStr = append(eventIdsStr, fmt.Sprintf("%d", id))
-	}
-	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
-	relatedDataQuery := fmt.Sprintf(`
-		SELECT 
-			event AS event_id,
-			'category' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value
-		FROM testing_db.event_category_ch
-		WHERE event IN (%s) 
-		  AND is_group = 1
-		GROUP BY event
-
-		UNION ALL
-
-		SELECT 
-			event AS event_id,
-			'tags' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value
-		FROM testing_db.event_category_ch
-		WHERE event IN (%s) 
-		  AND is_group = 0
-		GROUP BY event
-
-		UNION ALL
-
-		SELECT 
-			event_id,
-			'types' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(eventtype_uuid), ', ') AS uuid_value
-		FROM testing_db.event_type_ch
-		WHERE event_id IN (%s)
-		GROUP BY event_id
-	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
-
-	log.Printf("Related data query: %s", relatedDataQuery)
-	relatedDataQueryTime := time.Now()
-	relatedDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), relatedDataQuery)
-	if err != nil {
-		log.Printf("Related data query error: %v", err)
-		return &ListResult{
-			StatusCode:   500,
-			ErrorMessage: err.Error(),
-		}, nil
-	}
-
-	relatedDataQueryDuration := time.Since(relatedDataQueryTime)
-	log.Printf("Related data query time: %v", relatedDataQueryDuration)
-
-	categoriesMap := make(map[string][]map[string]string)
-	tagsMap := make(map[string][]map[string]string)
-	typesMap := make(map[string][]map[string]string)
-
-	rowCount = 0
-	for relatedDataResult.Next() {
-		rowCount++
-		var eventID uint32
-		var dataType, value, uuidValue string
-
-		if err := relatedDataResult.Scan(&eventID, &dataType, &value, &uuidValue); err != nil {
-			log.Printf("Error scanning related data row: %v", err)
-			continue
-		}
-
-		eventIDStr := fmt.Sprintf("%d", eventID)
-
-		names := strings.Split(value, ", ")
-		uuids := strings.Split(uuidValue, ", ")
-
-		var items []map[string]string
-		for i, name := range names {
-			if i < len(uuids) {
-				items = append(items, map[string]string{
-					"id":   strings.TrimSpace(uuids[i]),
-					"name": strings.TrimSpace(name),
-				})
-			}
-		}
-
-		switch dataType {
-		case "category":
-			categoriesMap[eventIDStr] = items
-		case "tags":
-			tagsMap[eventIDStr] = items
-		case "types":
-			typesMap[eventIDStr] = items
-		}
-	}
-
-	var combinedData []map[string]interface{}
-	for _, event := range eventData {
-		eventID := fmt.Sprintf("%d", event["event_id"])
-		combinedEvent := make(map[string]interface{})
-		for k, v := range event {
-			combinedEvent[k] = v
-		}
-
-		if categoriesMap[eventID] == nil {
-			combinedEvent["categories"] = []map[string]string{}
-		} else {
-			combinedEvent["categories"] = categoriesMap[eventID]
-		}
-
-		if tagsMap[eventID] == nil {
-			combinedEvent["tags"] = []map[string]string{}
-		} else {
-			combinedEvent["tags"] = tagsMap[eventID]
-		}
-
-		if typesMap[eventID] == nil {
-			combinedEvent["types"] = []map[string]string{}
-		} else {
-			combinedEvent["types"] = typesMap[eventID]
-		}
-
-		if lowerBound, ok := event["exhibitors_lower_bound"].(uint32); ok {
-			if upperBound, ok := event["exhibitors_upper_bound"].(uint32); ok {
-				if lowerBound > 0 || upperBound > 0 {
-					combinedEvent["estimatedExhibitors"] = fmt.Sprintf("%d-%d", lowerBound, upperBound)
-				} else {
-					combinedEvent["estimatedExhibitors"] = "0-0"
-				}
-				delete(combinedEvent, "exhibitors_lower_bound")
-				delete(combinedEvent, "exhibitors_upper_bound")
-			}
-		} else {
-			combinedEvent["estimatedExhibitors"] = "0-0"
-		}
-
-		combinedData = append(combinedData, combinedEvent)
-	}
-
-	renamedData, err := s.sharedFunctionService.clickHouseResponseNameChange(combinedData)
-	if err != nil {
-		log.Printf("Error renaming response data: %v", err)
-		return &ListResult{
-			StatusCode:   500,
-			ErrorMessage: err.Error(),
-		}, nil
-	}
-
-	return &ListResult{
-		StatusCode: 200,
-		Data:       renamedData,
-	}, nil
-}
-
-func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto) (*ListResult, error) {
+func (s *SearchEventService) getListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto) (*ListResult, error) {
 	baseFields := []string{
 		"ee.event_uuid as id",
 		"ee.event_id",
@@ -868,56 +458,44 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		baseFields = append(baseFields, "ee.impactScore as impactScore")
 	}
 
-	sortFields := make(map[string]bool)
-	if len(sortClause) > 0 {
-		for _, sort := range sortClause {
-			sortFields[sort.Field] = true
+	baseFieldMap := make(map[string]bool)
+	for _, field := range baseFields {
+		fieldName := strings.Replace(field, "ee.", "", 1)
+		if strings.Contains(fieldName, " as ") {
+			parts := strings.Split(fieldName, " as ")
+			fieldName = strings.TrimSpace(parts[0])
 		}
+		baseFieldMap[fieldName] = true
 	}
 
-	mappedFields := make(map[string]bool)
-	for field := range sortFields {
-		switch field {
-		case "exhibitors":
-			mappedFields["event_exhibitor"] = true
-		case "speakers":
-			mappedFields["event_speaker"] = true
-		case "sponsors":
-			mappedFields["event_sponsor"] = true
-		case "created":
-			mappedFields["event_created"] = true
-		case "following":
-			mappedFields["event_followers"] = true
-		case "estimatedExhibitors":
-			mappedFields["exhibitors_mean"] = true
-		case "impactScore":
-			mappedFields["impact_score"] = true
-		case "economicImpact":
-			mappedFields["event_economic_value"] = true
-		}
+	dbToAliasMap := map[string]string{
+		"event_exhibitor":       "exhibitors",
+		"event_speaker":         "speakers",
+		"event_sponsor":         "sponsors",
+		"event_created":         "created",
+		"exhibitors_mean":       "estimatedExhibitors",
+		"impactScore":           "impactScore",
+		"event_economic_value":  "economicImpact",
+		"event_score":           "score",
+		"inboundEstimate":       "inboundAttendance",
+		"internationalEstimate": "internationalAttendance",
 	}
 
 	var conditionalFields []string
-	if sortFields["exhibitors"] || mappedFields["event_exhibitor"] || sortFields["event_exhibitor"] {
-		conditionalFields = append(conditionalFields, "ee.event_exhibitor as exhibitors")
-	}
-	if sortFields["speakers"] || mappedFields["event_speaker"] || sortFields["event_speaker"] {
-		conditionalFields = append(conditionalFields, "ee.event_speaker as speakers")
-	}
-	if sortFields["sponsors"] || mappedFields["event_sponsor"] || sortFields["event_sponsor"] {
-		conditionalFields = append(conditionalFields, "ee.event_sponsor as sponsors")
-	}
-	if sortFields["created"] || mappedFields["event_created"] || sortFields["event_created"] {
-		conditionalFields = append(conditionalFields, "ee.event_created as created")
-	}
-	if sortFields["estimatedExhibitors"] || mappedFields["exhibitors_mean"] || sortFields["exhibitors_mean"] {
-		conditionalFields = append(conditionalFields, "ee.exhibitors_mean as estimatedExhibitors")
-	}
-	if sortFields["impactScore"] || mappedFields["impact_score"] || sortFields["impact_score"] {
-		conditionalFields = append(conditionalFields, "ee.impactScore as impactScore")
-	}
-	if sortFields["economicImpact"] || mappedFields["event_economic_value"] || sortFields["event_economic_value"] {
-		conditionalFields = append(conditionalFields, "ee.event_economic_value as economicImpact")
+	conditionalFieldMap := make(map[string]bool)
+	if len(sortClause) > 0 {
+		for _, sort := range sortClause {
+			if sort.Field != "" {
+				if !baseFieldMap[sort.Field] && !conditionalFieldMap[sort.Field] {
+					alias := dbToAliasMap[sort.Field]
+					if alias == "" {
+						alias = sort.Field
+					}
+					conditionalFields = append(conditionalFields, fmt.Sprintf("ee.%s as %s", sort.Field, alias))
+					conditionalFieldMap[sort.Field] = true
+				}
+			}
+		}
 	}
 	if len(filterFields.ParsedAudienceZone) > 0 {
 		conditionalFields = append(conditionalFields, "ee.audienceZone as audienceZone")
@@ -945,6 +523,44 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			ErrorMessage: err.Error(),
 		}, nil
 	}
+
+	eventFilterOrderBy, err := s.sharedFunctionService.buildOrderByClause(sortClause, false)
+	if err != nil {
+		log.Printf("Error building event filter order by clause: %v", err)
+		return &ListResult{
+			StatusCode:   500,
+			ErrorMessage: err.Error(),
+		}, nil
+	}
+	if eventFilterOrderBy == "" {
+		eventFilterOrderBy = "ORDER BY event_score ASC"
+	} else {
+		eventFilterOrderBy = strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
+		eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "ee.", "")
+		eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
+	}
+
+	eventFilterSelectFields := []string{"event_id", "edition_id"}
+	eventFilterGroupByFields := []string{"event_id", "edition_id"}
+	if len(sortClause) > 0 {
+		for _, sort := range sortClause {
+			if sort.Field != "" && sort.Field != "event_id" && sort.Field != "edition_id" {
+				alreadyAdded := false
+				for _, existing := range eventFilterSelectFields {
+					if existing == sort.Field {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					eventFilterSelectFields = append(eventFilterSelectFields, sort.Field)
+					eventFilterGroupByFields = append(eventFilterGroupByFields, sort.Field)
+				}
+			}
+		}
+	}
+	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
+	eventFilterGroupByStr := strings.Join(eventFilterGroupByFields, ", ")
 
 	finalOrderClause := queryResult.DistanceOrderClause
 	if finalOrderClause == "" {
@@ -997,7 +613,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		if finalOrderClause != "" {
 			return s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true)
 		}
-		return "ORDER BY ee.event_id ASC"
+		return "ORDER BY score ASC"
 	}()
 
 	today := time.Now().Format("2006-01-02")
@@ -1014,7 +630,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 
 	eventDataQuery := fmt.Sprintf(`
 		WITH %sevent_filter AS (
-			SELECT event_id, edition_id
+			SELECT %s
 			FROM testing_db.allevent_ch AS ee
 			WHERE %s 
 			AND %s
@@ -1023,8 +639,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			%s
 			%s
 			%s
-			GROUP BY event_id, edition_id
-			ORDER BY event_id ASC
+			GROUP BY %s
+			%s
 			LIMIT %d OFFSET %d
 		),
 		event_data AS (
@@ -1042,6 +658,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		%s
 	`,
 		cteClausesStr,
+		eventFilterSelectStr,
 		s.sharedFunctionService.buildPublishedCondition(filterFields),
 		s.sharedFunctionService.buildStatusCondition(filterFields),
 		func() string {
@@ -1063,6 +680,8 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 			return ""
 		}(),
 		joinConditionsStr,
+		eventFilterGroupByStr,
+		eventFilterOrderBy,
 		pagination.Limit, pagination.Offset,
 		fieldsString, finalGroupByClause, innerOrderBy,
 		finalGroupByClause, finalGroupByClause, s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true))
@@ -1095,8 +714,10 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		values := make([]interface{}, len(columns))
 		for i, col := range columns {
 			switch col {
-			case "event_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors":
+			case "event_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors", "inboundScore", "internationalScore", "inboundAttendance", "internationalAttendance":
 				values[i] = new(uint32)
+			case "score":
+				values[i] = new(int32)
 			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown":
 				values[i] = new(string)
 			case "start", "end":
@@ -1519,7 +1140,7 @@ func (s *SearchEventService) buildGroupByClause(fields []string) string {
 	return strings.Join(groupByFields, ",\n                        ")
 }
 
-func (s *SearchEventService) getDefaultAggregationDataClickHouse(filterFields models.FilterDataDto, pagination models.PaginationDto) (*AggregationResult, error) {
+func (s *SearchEventService) getAggregationDataClickHouse(filterFields models.FilterDataDto, pagination models.PaginationDto) (*AggregationResult, error) {
 	ctx := context.Background()
 
 	nestedQuery, err := s.sharedFunctionService.HandleNestedAggregation(filterFields, pagination)

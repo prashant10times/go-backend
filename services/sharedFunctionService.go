@@ -221,7 +221,7 @@ func (s *SharedFunctionService) parseSortFields(sort string, filterFields models
 	if sort == "" && filterFields.Q == "" {
 		return []SortClause{
 			{
-				Field: "id",
+				Field: models.SortFieldMap["score"],
 				Order: "asc",
 			},
 		}, nil
@@ -277,10 +277,7 @@ func (s *SharedFunctionService) buildOrderByClause(sortClause []SortClause, need
 			continue
 		}
 
-		fieldName := models.SortFieldMap[sort.Field]
-		if fieldName == "" {
-			fieldName = sort.Field
-		}
+		fieldName := sort.Field
 
 		if needsAnyJoin {
 			fieldName = fmt.Sprintf("ee.%s", fieldName)
@@ -386,59 +383,17 @@ func (s *SharedFunctionService) getPaginationURL(limit, offset int, paginationTy
 }
 
 func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDataDto) (string, error) {
-	nonFilterKeys := map[string]bool{
-		"Radius":             true,
-		"Unit":               true,
-		"View":               true,
-		"EventDistanceOrder": true,
-		"ToAggregate":        true,
-	}
-
-	hasActualFilters := false
-	v := reflect.ValueOf(filterFields)
-	t := reflect.TypeOf(filterFields)
-
-	for i := 0; i < v.NumField(); i++ {
-		field := v.Field(i)
-		fieldType := t.Field(i)
-		fieldName := fieldType.Name
-
-		if strings.HasPrefix(fieldName, "Parsed") {
-			continue
-		}
-		if nonFilterKeys[fieldName] {
-			continue
-		}
-
-		if field.Kind() == reflect.String {
-			fieldValue := field.String()
-			if fieldValue != "" {
-				hasActualFilters = true
-			}
-		} else if field.Kind() == reflect.Bool {
-			if field.Bool() {
-				hasActualFilters = true
-			}
-		}
-	}
-
 	isAggregationView := strings.Contains(filterFields.View, "agg")
 
-	log.Printf("hasActualFilters: %v, isAggregationView: %v, View: '%s'", hasActualFilters, isAggregationView, filterFields.View)
+	log.Printf("isAggregationView: %v, View: '%s'", isAggregationView, filterFields.View)
 
-	if !hasActualFilters && !isAggregationView {
-		log.Printf("Query type determined: DEFAULT_LIST")
-		return "DEFAULT_LIST", nil
-	} else if hasActualFilters && !isAggregationView {
-		log.Printf("Query type determined: FILTERED_LIST")
-		return "FILTERED_LIST", nil
-	} else if isAggregationView {
-		log.Printf("Query type determined: DEFAULT_AGGREGATION")
-		return "DEFAULT_AGGREGATION", nil
+	if isAggregationView {
+		log.Printf("Query type determined: AGGREGATION")
+		return "AGGREGATION", nil
 	}
 
-	log.Printf("Falling through to default return")
-	return "DEFAULT_LIST", nil
+	log.Printf("Query type determined: LIST")
+	return "LIST", nil
 }
 
 type ClickHouseQueryResult struct {
@@ -1256,6 +1211,8 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 		"venue_lat":         "venueLat",
 		"venue_long":        "venueLon",
 		"impact_score":      "impactScore",
+		"event_score":       "score",
+		"event_name":        "name",
 	}
 
 	if !useAliases {
@@ -1274,7 +1231,8 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 			"lon":                 "edition_city_long",
 			"venueLat":            "venue_lat",
 			"venueLon":            "venue_long",
-			"impactScore":         "impact_score",
+			"impactScore":         "impactScore",
+			"score":               "event_score",
 		}
 	}
 

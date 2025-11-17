@@ -17,7 +17,13 @@ var SortFieldMap = map[string]string{
 	"avgRating":           "event_avgRating",
 	"sponsors":            "event_sponsor",
 	"estimatedExhibitors": "exhibitors_mean",
-	"impactScore":         "impact_score",
+	"impactScore":         "impactScore",
+	"score":               "event_score",
+	"inboundScore":        "inboundScore",
+	"internationalScore":   "internationalScore",
+	"inboundEstimate": 		"inboundAttendance",
+	"internationalEstimate": "internationalAttendance",
+	"title":                 "event_name",
 }
 
 type PaginationDto struct {
