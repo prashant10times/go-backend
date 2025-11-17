@@ -556,7 +556,7 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 	eventDataQuery := fmt.Sprintf(`
 		WITH event_filter AS (
 			SELECT event_id, edition_id
-			FROM testing_db.event_edition_ch
+			FROM testing_db.allevent_ch
 			WHERE published = '1' 
 			AND status != 'U'
 			AND edition_type = 'current_edition'
@@ -567,7 +567,7 @@ func (s *SearchEventService) getDefaultListData(pagination models.PaginationDto,
 		),
 		event_data AS (
 			SELECT %s
-			FROM testing_db.event_edition_ch AS ee
+			FROM testing_db.allevent_ch AS ee
 			WHERE ee.edition_id in (SELECT edition_id from event_filter)
 			GROUP BY
 				%s
@@ -864,7 +864,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		baseFields = append(baseFields, "ee.event_economic_breakdown as economicImpactBreakdown")
 	}
 
-	if filterFields.ImpactScoreGte != "" || filterFields.ImpactScoreLte != ""{
+	if filterFields.ImpactScoreGte != "" || filterFields.ImpactScoreLte != "" {
 		baseFields = append(baseFields, "ee.impactScore as impactScore")
 	}
 
@@ -1015,7 +1015,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	eventDataQuery := fmt.Sprintf(`
 		WITH %sevent_filter AS (
 			SELECT event_id, edition_id
-			FROM testing_db.event_edition_ch AS ee
+			FROM testing_db.allevent_ch AS ee
 			WHERE %s 
 			AND %s
 			AND edition_type = 'current_edition'
@@ -1029,7 +1029,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 		),
 		event_data AS (
 			SELECT %s
-			FROM testing_db.event_edition_ch AS ee
+			FROM testing_db.allevent_ch AS ee
 			WHERE ee.edition_id in (SELECT edition_id from event_filter)
 			GROUP BY
 				%s
@@ -1204,7 +1204,7 @@ func (s *SearchEventService) getFilteredListData(pagination models.PaginationDto
 	relatedDataQuery := fmt.Sprintf(`
 		WITH current_events AS (
     		SELECT edition_id
-    		FROM testing_db.event_edition_ch
+    		FROM testing_db.allevent_ch
     		WHERE event_id IN (%s)
 			AND edition_type = 'current_edition'
 		)	

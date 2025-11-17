@@ -1061,7 +1061,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			}
 			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
 				SELECT event_id, edition_id
-				FROM testing_db.event_edition_ch AS ee
+				FROM testing_db.allevent_ch AS ee
 				WHERE event_id IN (SELECT %s FROM %s)
 				AND %s
 				GROUP BY event_id, edition_id
@@ -1071,7 +1071,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		} else {
 			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
 				SELECT event_id, edition_id
-				FROM testing_db.event_edition_ch AS ee
+				FROM testing_db.allevent_ch AS ee
 				WHERE %s
 				GROUP BY event_id, edition_id
 				ORDER BY event_id ASC
@@ -2582,7 +2582,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 			}
 			preEventFilterCTE = fmt.Sprintf(`pre_event_filter AS (
 			SELECT event_id, edition_id
-			FROM testing_db.event_edition_ch AS ee
+			FROM testing_db.allevent_ch AS ee
 			WHERE event_id IN (SELECT %s FROM %s)
 			AND %s
 			GROUP BY event_id, edition_id
@@ -2591,7 +2591,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		} else {
 			preEventFilterCTE = fmt.Sprintf(`pre_event_filter AS (
 			SELECT event_id, edition_id
-			FROM testing_db.event_edition_ch AS ee
+			FROM testing_db.allevent_ch AS ee
 			WHERE %s
 			GROUP BY event_id, edition_id
 			ORDER BY event_id ASC
@@ -2816,7 +2816,7 @@ func (s *SharedFunctionService) buildSingleFieldSelect(field string, fieldMappin
 }
 
 func (s *SharedFunctionService) buildFieldFrom(fields []string, cteClauses []string) string {
-	from := "FROM testing_db.event_edition_ch ee"
+	from := "FROM testing_db.allevent_ch ee"
 
 	hasCategory := s.contains(fields, "category")
 	hasTag := s.contains(fields, "tag")
