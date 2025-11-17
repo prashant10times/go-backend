@@ -479,6 +479,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		"event_score":           "score",
 		"inboundEstimate":       "inboundAttendance",
 		"internationalEstimate": "internationalAttendance",
+		"event_updated":         "updated",
 	}
 
 	var conditionalFields []string
@@ -544,6 +545,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		for _, sort := range sortClause {
 			if sort.Field == "duration" {
 				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "(end_date - start_date)", "duration")
+			} else if sort.Field == "event_updated" {
+				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "event_updated", "updated")
 			}
 		}
 		eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
@@ -566,8 +569,17 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 						eventFilterSelectFields = append(eventFilterSelectFields, "(end_date - start_date) as duration")
 						eventFilterGroupByFields = append(eventFilterGroupByFields, "duration")
 					} else {
-						eventFilterSelectFields = append(eventFilterSelectFields, sort.Field)
-						eventFilterGroupByFields = append(eventFilterGroupByFields, sort.Field)
+						alias := dbToAliasMap[sort.Field]
+						if alias == "" {
+							alias = sort.Field
+						}
+						if alias != sort.Field {
+							eventFilterSelectFields = append(eventFilterSelectFields, fmt.Sprintf("%s as %s", sort.Field, alias))
+							eventFilterGroupByFields = append(eventFilterGroupByFields, alias)
+						} else {
+							eventFilterSelectFields = append(eventFilterSelectFields, sort.Field)
+							eventFilterGroupByFields = append(eventFilterGroupByFields, sort.Field)
+						}
 					}
 				}
 			}
@@ -738,7 +750,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				values[i] = new(int32)
 			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown":
 				values[i] = new(string)
-			case "start", "end":
+			case "start", "end", "updated":
 				values[i] = new(time.Time)
 			case "avgRating":
 				values[i] = new(*decimal.Decimal)
@@ -777,7 +789,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				if eventUUID, ok := val.(*string); ok && eventUUID != nil {
 					rowData["id"] = *eventUUID
 				}
-			case "start", "end":
+			case "start", "end", "updated":
 				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
 					rowData[col] = dateVal.Format("2006-01-02")
 				}

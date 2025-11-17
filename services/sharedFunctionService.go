@@ -1272,6 +1272,7 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 		"impact_score":      "impactScore",
 		"event_score":       "score",
 		"event_name":        "name",
+		"event_updated":     "updated",
 	}
 
 	if !useAliases {
@@ -1292,6 +1293,7 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 			"venueLon":            "venue_long",
 			"impactScore":         "impactScore",
 			"score":               "event_score",
+			"updated":             "event_updated",
 		}
 	}
 
