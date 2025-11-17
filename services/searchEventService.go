@@ -487,11 +487,15 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		for _, sort := range sortClause {
 			if sort.Field != "" {
 				if !baseFieldMap[sort.Field] && !conditionalFieldMap[sort.Field] {
-					alias := dbToAliasMap[sort.Field]
-					if alias == "" {
-						alias = sort.Field
+					if sort.Field == "duration" {
+						conditionalFields = append(conditionalFields, "(ee.end_date - ee.start_date) as duration")
+					} else {
+						alias := dbToAliasMap[sort.Field]
+						if alias == "" {
+							alias = sort.Field
+						}
+						conditionalFields = append(conditionalFields, fmt.Sprintf("ee.%s as %s", sort.Field, alias))
 					}
-					conditionalFields = append(conditionalFields, fmt.Sprintf("ee.%s as %s", sort.Field, alias))
 					conditionalFieldMap[sort.Field] = true
 				}
 			}
@@ -537,6 +541,11 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	} else {
 		eventFilterOrderBy = strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
 		eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "ee.", "")
+		for _, sort := range sortClause {
+			if sort.Field == "duration" {
+				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "(end_date - start_date)", "duration")
+			}
+		}
 		eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
 	}
 
@@ -547,14 +556,19 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			if sort.Field != "" && sort.Field != "event_id" && sort.Field != "edition_id" {
 				alreadyAdded := false
 				for _, existing := range eventFilterSelectFields {
-					if existing == sort.Field {
+					if existing == sort.Field || (sort.Field == "duration" && strings.Contains(existing, "end_date - start_date")) {
 						alreadyAdded = true
 						break
 					}
 				}
 				if !alreadyAdded {
-					eventFilterSelectFields = append(eventFilterSelectFields, sort.Field)
-					eventFilterGroupByFields = append(eventFilterGroupByFields, sort.Field)
+					if sort.Field == "duration" {
+						eventFilterSelectFields = append(eventFilterSelectFields, "(end_date - start_date) as duration")
+						eventFilterGroupByFields = append(eventFilterGroupByFields, "duration")
+					} else {
+						eventFilterSelectFields = append(eventFilterSelectFields, sort.Field)
+						eventFilterGroupByFields = append(eventFilterGroupByFields, sort.Field)
+					}
 				}
 			}
 		}
@@ -720,7 +734,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			switch col {
 			case "event_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors", "inboundScore", "internationalScore", "inboundAttendance", "internationalAttendance":
 				values[i] = new(uint32)
-			case "score":
+			case "score", "duration":
 				values[i] = new(int32)
 			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown":
 				values[i] = new(string)

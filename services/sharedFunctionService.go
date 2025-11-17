@@ -277,10 +277,19 @@ func (s *SharedFunctionService) buildOrderByClause(sortClause []SortClause, need
 			continue
 		}
 
-		fieldName := sort.Field
+		var fieldName string
 
-		if needsAnyJoin {
-			fieldName = fmt.Sprintf("ee.%s", fieldName)
+		if sort.Field == "duration" {
+			if needsAnyJoin {
+				fieldName = "(ee.end_date - ee.start_date)"
+			} else {
+				fieldName = "(end_date - start_date)"
+			}
+		} else {
+			fieldName = sort.Field
+			if needsAnyJoin {
+				fieldName = fmt.Sprintf("ee.%s", fieldName)
+			}
 		}
 
 		orderByPart := fmt.Sprintf("%s %s", fieldName, strings.ToUpper(sort.Order))
