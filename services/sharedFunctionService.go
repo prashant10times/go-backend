@@ -706,6 +706,103 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		return fmt.Sprintf("ee.%s", field)
 	})
 
+	if filterFields.ParsedViewBound != nil && filterFields.ParsedViewBound.BoundType == models.BoundTypePoint {
+		var geoCoords models.GeoCoordinates
+		if err := json.Unmarshal(filterFields.ParsedViewBound.Coordinates, &geoCoords); err == nil {
+			unit := filterFields.ParsedViewBound.Unit
+			if unit == "" {
+				unit = "km"
+			}
+
+			radiusStr := fmt.Sprintf("%.2f", *geoCoords.Radius)
+			latStr := fmt.Sprintf("%.9f", geoCoords.Latitude)
+			lonStr := fmt.Sprintf("%.9f", geoCoords.Longitude)
+			_, _, radiusInMeters := s.parseCoordinates(latStr, lonStr, radiusStr, unit)
+
+			var latField, lonField string
+			var orderByLatField, orderByLonField string
+			if filterFields.ParsedViewBound.ToEvent {
+				latField = "ee.edition_city_lat"
+				lonField = "ee.edition_city_long"
+				orderByLatField = "lat"
+				orderByLonField = "lon"
+				whereConditions = append(whereConditions, "ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL")
+			} else {
+				latField = "ee.venue_lat"
+				lonField = "ee.venue_long"
+				orderByLatField = "venueLat"
+				orderByLonField = "venueLon"
+			}
+
+			whereConditions = append(whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
+				geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters))
+
+			if filterFields.EventDistanceOrder != "" {
+				orderDirection := "ASC"
+				if filterFields.EventDistanceOrder == "farthest" {
+					orderDirection = "DESC"
+				}
+				result.DistanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, %s, %s) %s",
+					geoCoords.Latitude, geoCoords.Longitude, orderByLatField, orderByLonField, orderDirection)
+			}
+		}
+	}
+
+	if len(filterFields.ParsedViewBounds) > 0 {
+		for _, viewBound := range filterFields.ParsedViewBounds {
+			if viewBound == nil {
+				continue
+			}
+
+			switch viewBound.BoundType {
+			case models.BoundTypePoint:
+				var geoCoords models.GeoCoordinates
+				if err := json.Unmarshal(viewBound.Coordinates, &geoCoords); err == nil {
+					unit := viewBound.Unit
+					if unit == "" {
+						unit = "km"
+					}
+
+					radiusStr := fmt.Sprintf("%.2f", *geoCoords.Radius)
+					latStr := fmt.Sprintf("%.9f", geoCoords.Latitude)
+					lonStr := fmt.Sprintf("%.9f", geoCoords.Longitude)
+					_, _, radiusInMeters := s.parseCoordinates(latStr, lonStr, radiusStr, unit)
+
+					var latField, lonField string
+					if viewBound.ToEvent {
+						latField = "ee.edition_city_lat"
+						lonField = "ee.edition_city_long"
+						whereConditions = append(whereConditions, "ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL")
+					} else {
+						latField = "ee.venue_lat"
+						lonField = "ee.venue_long"
+					}
+
+					whereConditions = append(whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
+						geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters))
+				}
+			// case models.BoundTypeBox:
+			// 	var boxCoords []float64
+			// 	if err := json.Unmarshal(viewBound.Coordinates, &boxCoords); err == nil && len(boxCoords) == 4 {
+			// 		minLng, minLat, maxLng, maxLat := boxCoords[0], boxCoords[1], boxCoords[2], boxCoords[3]
+
+			// 		var latField, lonField string
+			// 		if viewBound.ToEvent {
+			// 			latField = "ee.edition_city_lat"
+			// 			lonField = "ee.edition_city_long"
+			// 			whereConditions = append(whereConditions, "ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL")
+			// 		} else {
+			// 			latField = "ee.venue_lat"
+			// 			lonField = "ee.venue_long"
+			// 		}
+
+			// 		whereConditions = append(whereConditions, fmt.Sprintf("%s BETWEEN %f AND %f AND %s BETWEEN %f AND %f",
+			// 			latField, minLat, maxLat, lonField, minLng, maxLng))
+			// 	}
+			}
+		}
+	}
+
 	if len(filterFields.CreatedAt) > 0 {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_created >= '%s'", filterFields.CreatedAt))
 	}

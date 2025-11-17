@@ -63,6 +63,8 @@ type GeoCoordinates struct {
 type ViewBound struct {
 	BoundType   BoundType       `json:"boundType"`
 	Coordinates json.RawMessage `json:"coordinates"`
+	ToEvent     bool            `json:"toEvent,omitempty"`
+	Unit        string          `json:"unit,omitempty"`
 }
 
 type AlertSearchGroupBy string
@@ -192,7 +194,7 @@ type FilterDataDto struct {
 	Radius             string `json:"radius,omitempty" form:"radius"`
 	Unit               string `json:"unit,omitempty" form:"unit"`
 	EventDistanceOrder string `json:"eventDistanceOrder,omitempty" form:"eventDistanceOrder"`
-	Regions	           string `json:"regions,omitempty" form:"regions"`
+	Regions            string `json:"regions,omitempty" form:"regions"`
 
 	Company        string `json:"company,omitempty" form:"company"`
 	CompanyCountry string `json:"companyCountry,omitempty" form:"companyCountry"`
@@ -212,6 +214,7 @@ type FilterDataDto struct {
 	Published           string `json:"published,omitempty" form:"published"`
 	EventTypeGroup      string `json:"eventTypeGroup,omitempty" form:"eventTypeGroup"`
 	ViewBound           string `json:"viewBound,omitempty" form:"viewBound"`
+	ViewBounds          string `json:"viewBounds,omitempty" form:"viewBounds"`
 
 	VenueLatitude  string `json:"venueLatitude,omitempty" form:"venueLatitude"`
 	VenueLongitude string `json:"venueLongitude,omitempty" form:"venueLongitude"`
@@ -234,41 +237,42 @@ type FilterDataDto struct {
 	EconomicImpactGte     string `json:"economicImpact.gte,omitempty" form:"economicImpact.gte"`
 	EconomicImpactLte     string `json:"economicImpact.lte,omitempty" form:"economicImpact.lte"`
 
-	ParsedCategory       []string    `json:"-"`
-	ParsedCity           []string    `json:"-"`
-	ParsedCountry        []string    `json:"-"`
-	ParsedProducts       []string    `json:"-"`
-	ParsedType           []string    `json:"-"`
-	ParsedVenue          []string    `json:"-"`
-	ParsedCompany        []string    `json:"-"`
-	ParsedView           []string    `json:"-"`
-	ParsedToAggregate    []string    `json:"-"`
-	ParsedKeywords       *Keywords   `json:"-"`
-	ParsedIsBranded      *bool       `json:"-"`
-	ParsedMode           *string     `json:"-"`
-	ParsedStatus         []string    `json:"-"`
-	ParsedState          []string    `json:"-"`
-	ParsedCompanyState   []string    `json:"-"`
-	ParsedCompanyCity    []string    `json:"-"`
-	ParsedCompanyDomain  []string    `json:"-"`
-	ParsedCompanyCountry []string    `json:"-"`
-	ParsedSpeakerState   []string    `json:"-"`
-	ParsedExhibitorState []string    `json:"-"`
-	ParsedSponsorState   []string    `json:"-"`
-	ParsedVisitorState   []string    `json:"-"`
-	ParsedJobComposite   []string    `json:"-"`
-	ParsedEventRanking   []string    `json:"-"`
-	ParsedAudienceZone   []string    `json:"-"`
-	ParsedAudienceSpread []string    `json:"-"`
-	ParsedPublished      []string    `json:"-"`
-	ParsedEventTypeGroup *Groups     `json:"-"`
-	ParsedDesignationId  []string    `json:"-"`
-	ParsedSeniorityId    []string    `json:"-"`
-	ParsedViewBound      *ViewBound  `json:"-"`
-	ParsedEventIds       []string    `json:"-"`
-	ParsedNotEventIds    []string    `json:"-"`
-	ParsedSourceEventIds []string    `json:"-"`
-	ParsedDates          []DateRange `json:"-"`
+	ParsedCategory       []string     `json:"-"`
+	ParsedCity           []string     `json:"-"`
+	ParsedCountry        []string     `json:"-"`
+	ParsedProducts       []string     `json:"-"`
+	ParsedType           []string     `json:"-"`
+	ParsedVenue          []string     `json:"-"`
+	ParsedCompany        []string     `json:"-"`
+	ParsedView           []string     `json:"-"`
+	ParsedToAggregate    []string     `json:"-"`
+	ParsedKeywords       *Keywords    `json:"-"`
+	ParsedIsBranded      *bool        `json:"-"`
+	ParsedMode           *string      `json:"-"`
+	ParsedStatus         []string     `json:"-"`
+	ParsedState          []string     `json:"-"`
+	ParsedCompanyState   []string     `json:"-"`
+	ParsedCompanyCity    []string     `json:"-"`
+	ParsedCompanyDomain  []string     `json:"-"`
+	ParsedCompanyCountry []string     `json:"-"`
+	ParsedSpeakerState   []string     `json:"-"`
+	ParsedExhibitorState []string     `json:"-"`
+	ParsedSponsorState   []string     `json:"-"`
+	ParsedVisitorState   []string     `json:"-"`
+	ParsedJobComposite   []string     `json:"-"`
+	ParsedEventRanking   []string     `json:"-"`
+	ParsedAudienceZone   []string     `json:"-"`
+	ParsedAudienceSpread []string     `json:"-"`
+	ParsedPublished      []string     `json:"-"`
+	ParsedEventTypeGroup *Groups      `json:"-"`
+	ParsedDesignationId  []string     `json:"-"`
+	ParsedSeniorityId    []string     `json:"-"`
+	ParsedViewBound      *ViewBound   `json:"-"`
+	ParsedViewBounds     []*ViewBound `json:"-"`
+	ParsedEventIds       []string     `json:"-"`
+	ParsedNotEventIds    []string     `json:"-"`
+	ParsedSourceEventIds []string     `json:"-"`
+	ParsedDates          []DateRange  `json:"-"`
 	ParsedPastBetween    *struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
@@ -277,7 +281,7 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedRegions        []string    `json:"-"`
+	ParsedRegions []string `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -1110,9 +1114,29 @@ func (f *FilterDataDto) Validate() error {
 				if geoCoords.Longitude < -180 || geoCoords.Longitude > 180 {
 					return validation.NewError("invalid_longitude", "Longitude must be between -180 and 180")
 				}
-				if geoCoords.Radius != nil && *geoCoords.Radius > 10 {
-					return validation.NewError("invalid_radius", "Radius must be <= 10")
+				if geoCoords.Radius == nil {
+					defaultRadius := 10.0
+					geoCoords.Radius = &defaultRadius
 				}
+				// if *geoCoords.Radius > 10 {
+				// 	return validation.NewError("invalid_radius", "Radius must be <= 10")
+				// }
+				if viewBound.Unit == "" {
+					viewBound.Unit = "km"
+				}
+				validUnits := map[string]bool{
+					"km": true,
+					"mi": true,
+					"ft": true,
+				}
+				if !validUnits[viewBound.Unit] {
+					return validation.NewError("invalid_unit", "Invalid unit: "+viewBound.Unit+". Valid options are: km, mi, ft")
+				}
+				updatedCoords, err := json.Marshal(geoCoords)
+				if err != nil {
+					return validation.NewError("invalid_coordinates", "Failed to update coordinates: "+err.Error())
+				}
+				viewBound.Coordinates = updatedCoords
 			case BoundTypeBox:
 				var boxCoords []float64
 				if err := json.Unmarshal(viewBound.Coordinates, &boxCoords); err != nil {
@@ -1126,6 +1150,103 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			f.ParsedViewBound = &viewBound
+			return nil
+		}))),
+
+		validation.Field(&f.ViewBounds, validation.When(f.ViewBounds != "", validation.By(func(value interface{}) error {
+			viewBoundsStr := value.(string)
+			viewBoundsStr = strings.TrimSpace(viewBoundsStr)
+			if viewBoundsStr == "" {
+				return nil
+			}
+
+			var viewBoundsArray []ViewBound
+			if err := json.Unmarshal([]byte(viewBoundsStr), &viewBoundsArray); err != nil {
+				return validation.NewError("invalid_view_bounds", "Invalid viewBounds JSON array: "+err.Error())
+			}
+
+			if len(viewBoundsArray) == 0 {
+				return validation.NewError("empty_view_bounds", "viewBounds array cannot be empty")
+			}
+
+			f.ParsedViewBounds = make([]*ViewBound, 0, len(viewBoundsArray))
+
+			for i, viewBound := range viewBoundsArray {
+				boundTypeLower := strings.ToLower(strings.TrimSpace(string(viewBound.BoundType)))
+				validBoundTypes := map[string]BoundType{
+					"point": BoundTypePoint,
+					"box":   BoundTypeBox,
+				}
+
+				boundType, exists := validBoundTypes[boundTypeLower]
+				if !exists {
+					return validation.NewError("invalid_bound_type", fmt.Sprintf("Invalid boundType at index %d: %s. Valid options are: point, box", i, string(viewBound.BoundType)))
+				}
+				viewBound.BoundType = boundType
+
+				switch boundType {
+				case BoundTypePoint:
+					var geoCoords GeoCoordinates
+					if err := json.Unmarshal(viewBound.Coordinates, &geoCoords); err != nil {
+						return validation.NewError("invalid_coordinates", fmt.Sprintf("Invalid coordinates for point type at index %d: %s", i, err.Error()))
+					}
+					if geoCoords.Latitude < -90 || geoCoords.Latitude > 90 {
+						return validation.NewError("invalid_latitude", fmt.Sprintf("Latitude must be between -90 and 90 at index %d", i))
+					}
+					if geoCoords.Longitude < -180 || geoCoords.Longitude > 180 {
+						return validation.NewError("invalid_longitude", fmt.Sprintf("Longitude must be between -180 and 180 at index %d", i))
+					}
+					if geoCoords.Radius == nil {
+						return validation.NewError("missing_radius", fmt.Sprintf("Radius is required for point type at index %d", i))
+					}
+					if *geoCoords.Radius <= 0 {
+						return validation.NewError("invalid_radius", fmt.Sprintf("Radius must be greater than 0 at index %d", i))
+					}
+					if viewBound.Unit == "" {
+						viewBound.Unit = "km"
+					}
+					validUnits := map[string]bool{
+						"km": true,
+						"mi": true,
+						"ft": true,
+					}
+					if !validUnits[viewBound.Unit] {
+						return validation.NewError("invalid_unit", fmt.Sprintf("Invalid unit at index %d: %s. Valid options are: km, mi, ft", i, viewBound.Unit))
+					}
+					updatedCoords, err := json.Marshal(geoCoords)
+					if err != nil {
+						return validation.NewError("invalid_coordinates", fmt.Sprintf("Failed to update coordinates at index %d: %s", i, err.Error()))
+					}
+					viewBound.Coordinates = updatedCoords
+				// case BoundTypeBox:
+				// 	var boxCoords []float64
+				// 	if err := json.Unmarshal(viewBound.Coordinates, &boxCoords); err != nil {
+				// 		return validation.NewError("invalid_coordinates", fmt.Sprintf("Invalid coordinates for box type at index %d: %s", i, err.Error()))
+				// 	}
+				// 	if len(boxCoords) != 4 {
+				// 		return validation.NewError("invalid_box_coordinates", fmt.Sprintf("Box coordinates at index %d must have exactly 4 numbers [minLng, minLat, maxLng, maxLat]", i))
+				// 	}
+				// 	// Validate box coordinates: minLng, minLat, maxLng, maxLat
+				// 	minLng, minLat, maxLng, maxLat := boxCoords[0], boxCoords[1], boxCoords[2], boxCoords[3]
+				// 	if minLng < -180 || minLng > 180 || maxLng < -180 || maxLng > 180 {
+				// 		return validation.NewError("invalid_box_longitude", fmt.Sprintf("Longitude values at index %d must be between -180 and 180", i))
+				// 	}
+				// 	if minLat < -90 || minLat > 90 || maxLat < -90 || maxLat > 90 {
+				// 		return validation.NewError("invalid_box_latitude", fmt.Sprintf("Latitude values at index %d must be between -90 and 90", i))
+				// 	}
+				// 	if minLng >= maxLng {
+				// 		return validation.NewError("invalid_box_range", fmt.Sprintf("minLng must be less than maxLng at index %d", i))
+				// 	}
+				// 	if minLat >= maxLat {
+				// 		return validation.NewError("invalid_box_range", fmt.Sprintf("minLat must be less than maxLat at index %d", i))
+				// 	}
+				default:
+					return validation.NewError("invalid_bound_type", fmt.Sprintf("Invalid boundType at index %d: %s. Valid options are: point, box", i, string(viewBound.BoundType)))
+				}
+
+				f.ParsedViewBounds = append(f.ParsedViewBounds, &viewBound)
+			}
+
 			return nil
 		}))),
 	)

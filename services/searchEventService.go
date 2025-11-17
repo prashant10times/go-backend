@@ -585,8 +585,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			}
 		}
 	}
-	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
-	eventFilterGroupByStr := strings.Join(eventFilterGroupByFields, ", ")
 
 	finalOrderClause := queryResult.DistanceOrderClause
 	if finalOrderClause == "" {
@@ -595,13 +593,56 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
 		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
+			latAdded := false
+			lonAdded := false
+			for _, field := range eventFilterSelectFields {
+				if strings.Contains(field, "edition_city_lat as lat") {
+					latAdded = true
+				}
+				if strings.Contains(field, "edition_city_long as lon") {
+					lonAdded = true
+				}
+			}
+			if !latAdded {
+				eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_lat as lat")
+				eventFilterGroupByFields = append(eventFilterGroupByFields, "lat")
+			}
+			if !lonAdded {
+				eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_long as lon")
+				eventFilterGroupByFields = append(eventFilterGroupByFields, "lon")
+			}
 			conditionalFields = append(conditionalFields, "ee.edition_city_lat as lat")
 			conditionalFields = append(conditionalFields, "ee.edition_city_long as lon")
 		}
 		if strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon") {
+			venueLatAdded := false
+			venueLonAdded := false
+			for _, field := range eventFilterSelectFields {
+				if strings.Contains(field, "venue_lat as venueLat") {
+					venueLatAdded = true
+				}
+				if strings.Contains(field, "venue_long as venueLon") {
+					venueLonAdded = true
+				}
+			}
+			if !venueLatAdded {
+				eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_lat as venueLat")
+				eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLat")
+			}
+			if !venueLonAdded {
+				eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_long as venueLon")
+				eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLon")
+			}
 			conditionalFields = append(conditionalFields, "ee.venue_lat as venueLat")
 			conditionalFields = append(conditionalFields, "ee.venue_long as venueLon")
 		}
+	}
+
+	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
+	eventFilterGroupByStr := strings.Join(eventFilterGroupByFields, ", ")
+
+	if queryResult.DistanceOrderClause != "" {
+		eventFilterOrderBy = queryResult.DistanceOrderClause
 	}
 
 	requiredFieldsStatic = append(baseFields, conditionalFields...)
