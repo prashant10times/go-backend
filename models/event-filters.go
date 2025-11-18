@@ -173,6 +173,7 @@ type FilterDataDto struct {
 	ActiveLt  string `json:"active.lt,omitempty" form:"active.lt"`
 
 	Type       string `json:"type,omitempty" form:"type"`
+	EventTypes string `json:"eventTypes,omitempty" form:"eventTypes"`
 	Venue      string `json:"venue,omitempty" form:"venue"`
 	SpeakerGte string `json:"speaker.gte,omitempty" form:"speaker.gte"`
 	SpeakerLte string `json:"speaker.lte,omitempty" form:"speaker.lte"`
@@ -242,6 +243,7 @@ type FilterDataDto struct {
 	ParsedCountry        []string     `json:"-"`
 	ParsedProducts       []string     `json:"-"`
 	ParsedType           []string     `json:"-"`
+	ParsedEventTypes     []string     `json:"-"`
 	ParsedVenue          []string     `json:"-"`
 	ParsedCompany        []string     `json:"-"`
 	ParsedView           []string     `json:"-"`
@@ -718,6 +720,23 @@ func (f *FilterDataDto) Validate() error {
 				t = strings.TrimSpace(t)
 				if t != "" {
 					f.ParsedType = append(f.ParsedType, t)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.EventTypes, validation.When(f.EventTypes != "", validation.By(func(value interface{}) error {
+			eventTypesStr := value.(string)
+			eventTypes := strings.Split(eventTypesStr, ",")
+			f.ParsedEventTypes = make([]string, 0, len(eventTypes))
+			for _, et := range eventTypes {
+				et = strings.TrimSpace(et)
+				if et != "" {
+					matched, _ := regexp.MatchString(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, et)
+					if !matched {
+						return validation.NewError("invalid_event_type_uuid", "Invalid event type UUID format: "+et)
+					}
+					f.ParsedEventTypes = append(f.ParsedEventTypes, et)
 				}
 			}
 			return nil

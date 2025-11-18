@@ -174,120 +174,119 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	}
 
 	// // original api Logic
-	// validatedParameters, err := s.sharedFunctionService.validateParameters(filterFields)
-	// if err != nil {
-	// 	log.Printf("Error validating parameters: %v", err)
-	// 	statusCode = http.StatusBadRequest
-	// 	msg := err.Error()
-	// 	errorMessage = &msg
-	// 	return nil, middleware.NewBadRequestError("Invalid parameters", err.Error())
-	// }
+	validatedParameters, err := s.sharedFunctionService.validateParameters(filterFields)
+	if err != nil {
+		log.Printf("Error validating parameters: %v", err)
+		statusCode = http.StatusBadRequest
+		msg := err.Error()
+		errorMessage = &msg
+		return nil, middleware.NewBadRequestError("Invalid parameters", err.Error())
+	}
 
-	// log.Printf("Validated parameters: %v", validatedParameters)
+	log.Printf("Validated parameters: %v", validatedParameters)
 
-	// typeArray := strings.Split(filterFields.Type, ",")
-	// if filterFields.Type != "" && len(typeArray) == 1 && typeArray[0] == s.cfg.AlertId {
-	// 	// Build base alert params
-	// 	baseParams := models.AlertSearchParams{
-	// 		EventIds:  validatedParameters.ParsedEventIds,
-	// 		StartDate: &validatedParameters.ActiveGte,
-	// 		EndDate:   &validatedParameters.ActiveLte,
-	// 	}
+	typeArray := strings.Split(filterFields.Type, ",")
+	if filterFields.Type != "" && len(typeArray) == 1 && typeArray[0] == s.cfg.AlertId {
+		baseParams := models.AlertSearchParams{
+			EventIds:  validatedParameters.ParsedEventIds,
+			StartDate: &validatedParameters.ActiveGte,
+			EndDate:   &validatedParameters.ActiveLte,
+		}
 
-	// 	if validatedParameters.ParsedViewBound != nil {
-	// 		if validatedParameters.ParsedViewBound.BoundType == models.BoundTypePoint {
-	// 			var geoCoords models.GeoCoordinates
-	// 			if err := json.Unmarshal(validatedParameters.ParsedViewBound.Coordinates, &geoCoords); err == nil {
-	// 				baseParams.Coordinates = &geoCoords
-	// 			}
-	// 		}
-	// 	}
+		if validatedParameters.ParsedViewBound != nil {
+			if validatedParameters.ParsedViewBound.BoundType == models.BoundTypePoint {
+				var geoCoords models.GeoCoordinates
+				if err := json.Unmarshal(validatedParameters.ParsedViewBound.Coordinates, &geoCoords); err == nil {
+					baseParams.Coordinates = &geoCoords
+				}
+			}
+		}
 
-	// 	type alertResult struct {
-	// 		Data  interface{}
-	// 		Error error
-	// 	}
+		type alertResult struct {
+			Data  interface{}
+			Error error
+		}
 
-	// 	countChan := make(chan alertResult, 1)
-	// 	alertsChan := make(chan alertResult, 1)
+		countChan := make(chan alertResult, 1)
+		alertsChan := make(chan alertResult, 1)
 
-	// 	countParams := baseParams
-	// 	countParams.Required = "count"
-	// 	go func() {
-	// 		countData, err := s.getAlerts(countParams)
-	// 		countChan <- alertResult{Data: countData, Error: err}
-	// 	}()
+		countParams := baseParams
+		countParams.Required = "count"
+		go func() {
+			countData, err := s.getAlerts(countParams)
+			countChan <- alertResult{Data: countData, Error: err}
+		}()
 
-	// 	eventsParams := baseParams
-	// 	eventsParams.Required = "events"
-	// 	limit := pagination.Limit
-	// 	offset := pagination.Offset
-	// 	eventsParams.Limit = &limit
-	// 	eventsParams.Offset = &offset
+		eventsParams := baseParams
+		eventsParams.Required = "events"
+		limit := pagination.Limit
+		offset := pagination.Offset
+		eventsParams.Limit = &limit
+		eventsParams.Offset = &offset
 
-	// 	go func() {
-	// 		alertsData, err := s.getAlerts(eventsParams)
-	// 		alertsChan <- alertResult{Data: alertsData, Error: err}
-	// 	}()
+		go func() {
+			alertsData, err := s.getAlerts(eventsParams)
+			alertsChan <- alertResult{Data: alertsData, Error: err}
+		}()
 
-	// 	countResult := <-countChan
-	// 	alertsResult := <-alertsChan
+		countResult := <-countChan
+		alertsResult := <-alertsChan
 
-	// 	if countResult.Error != nil || alertsResult.Error != nil {
-	// 		var errMsg string
-	// 		if countResult.Error != nil {
-	// 			errMsg = countResult.Error.Error()
-	// 		} else if alertsResult.Error != nil {
-	// 			errMsg = alertsResult.Error.Error()
-	// 		} else {
-	// 			errMsg = "Unknown error"
-	// 		}
-	// 		statusCode = http.StatusBadRequest
-	// 		msg := errMsg
-	// 		errorMessage = &msg
-	// 		return nil, middleware.NewBadRequestError("Alert request failed", errMsg)
-	// 	}
+		if countResult.Error != nil || alertsResult.Error != nil {
+			var errMsg string
+			if countResult.Error != nil {
+				errMsg = countResult.Error.Error()
+			} else if alertsResult.Error != nil {
+				errMsg = alertsResult.Error.Error()
+			} else {
+				errMsg = "Unknown error"
+			}
+			statusCode = http.StatusBadRequest
+			msg := errMsg
+			errorMessage = &msg
+			return nil, middleware.NewBadRequestError("Alert request failed", errMsg)
+		}
 
-	// 	count := 0
-	// 	events := []interface{}{}
+		count := 0
+		events := []interface{}{}
 
-	// 	if countMap, ok := countResult.Data.(map[string]interface{}); ok {
-	// 		if c, exists := countMap["count"]; exists {
-	// 			if cFloat, ok := c.(float64); ok {
-	// 				count = int(cFloat)
-	// 			} else if cInt, ok := c.(int); ok {
-	// 				count = cInt
-	// 			}
-	// 		}
-	// 	}
+		if countMap, ok := countResult.Data.(map[string]interface{}); ok {
+			if c, exists := countMap["count"]; exists {
+				if cFloat, ok := c.(float64); ok {
+					count = int(cFloat)
+				} else if cInt, ok := c.(int); ok {
+					count = cInt
+				}
+			}
+		}
 
-	// 	if alertsMap, ok := alertsResult.Data.(map[string]interface{}); ok {
-	// 		if e, exists := alertsMap["events"]; exists {
-	// 			if eventsSlice, ok := e.([]interface{}); ok {
-	// 				events = eventsSlice
-	// 			}
-	// 		}
-	// 	}
+		if alertsMap, ok := alertsResult.Data.(map[string]interface{}); ok {
+			if e, exists := alertsMap["events"]; exists {
+				if eventsSlice, ok := e.([]interface{}); ok {
+					events = eventsSlice
+				}
+			}
+		}
 
-	// 	responseData := fiber.Map{
-	// 		"count":  count,
-	// 		"events": events,
-	// 	}
+		responseData := fiber.Map{
+			"count":  count,
+			"events": events,
+		}
 
-	// 	responseTime := time.Since(startTime).Seconds()
-	// 	successResponse := fiber.Map{
-	// 		"status":     "success",
-	// 		"statusCode": statusCode,
-	// 		"meta": fiber.Map{
-	// 			"responseTime": responseTime,
-	// 			"pagination": fiber.Map{
-	// 				"page": (pagination.Offset / pagination.Limit) + 1,
-	// 			},
-	// 		},
-	// 		"data": responseData,
-	// 	}
-	// 	return successResponse, nil
-	// }
+		responseTime := time.Since(startTime).Seconds()
+		successResponse := fiber.Map{
+			"status":     "success",
+			"statusCode": statusCode,
+			"meta": fiber.Map{
+				"responseTime": responseTime,
+				"pagination": fiber.Map{
+					"page": (pagination.Offset / pagination.Limit) + 1,
+				},
+			},
+			"data": responseData,
+		}
+		return successResponse, nil
+	}
 
 	queryType, err := s.sharedFunctionService.determineQueryType(filterFields)
 	if err != nil {

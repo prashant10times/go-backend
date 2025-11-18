@@ -611,6 +611,15 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		result.TypeWhereConditions = append(result.TypeWhereConditions, fmt.Sprintf("name IN (%s)", strings.Join(types, ",")))
 	}
 
+	if len(filterFields.ParsedEventTypes) > 0 {
+		result.NeedsTypeJoin = true
+		eventTypes := make([]string, len(filterFields.ParsedEventTypes))
+		for i, et := range filterFields.ParsedEventTypes {
+			eventTypes[i] = escapeSqlValue(et)
+		}
+		result.TypeWhereConditions = append(result.TypeWhereConditions, fmt.Sprintf("eventtype_uuid IN (%s)", strings.Join(eventTypes, ",")))
+	}
+
 	if len(filterFields.ParsedEventRanking) > 0 {
 		result.NeedsEventRankingJoin = true
 		eventRankingValue := filterFields.ParsedEventRanking[0]
@@ -781,24 +790,24 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 					whereConditions = append(whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
 						geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters))
 				}
-			// case models.BoundTypeBox:
-			// 	var boxCoords []float64
-			// 	if err := json.Unmarshal(viewBound.Coordinates, &boxCoords); err == nil && len(boxCoords) == 4 {
-			// 		minLng, minLat, maxLng, maxLat := boxCoords[0], boxCoords[1], boxCoords[2], boxCoords[3]
+				// case models.BoundTypeBox:
+				// 	var boxCoords []float64
+				// 	if err := json.Unmarshal(viewBound.Coordinates, &boxCoords); err == nil && len(boxCoords) == 4 {
+				// 		minLng, minLat, maxLng, maxLat := boxCoords[0], boxCoords[1], boxCoords[2], boxCoords[3]
 
-			// 		var latField, lonField string
-			// 		if viewBound.ToEvent {
-			// 			latField = "ee.edition_city_lat"
-			// 			lonField = "ee.edition_city_long"
-			// 			whereConditions = append(whereConditions, "ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL")
-			// 		} else {
-			// 			latField = "ee.venue_lat"
-			// 			lonField = "ee.venue_long"
-			// 		}
+				// 		var latField, lonField string
+				// 		if viewBound.ToEvent {
+				// 			latField = "ee.edition_city_lat"
+				// 			lonField = "ee.edition_city_long"
+				// 			whereConditions = append(whereConditions, "ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL")
+				// 		} else {
+				// 			latField = "ee.venue_lat"
+				// 			lonField = "ee.venue_long"
+				// 		}
 
-			// 		whereConditions = append(whereConditions, fmt.Sprintf("%s BETWEEN %f AND %f AND %s BETWEEN %f AND %f",
-			// 			latField, minLat, maxLat, lonField, minLng, maxLng))
-			// 	}
+				// 		whereConditions = append(whereConditions, fmt.Sprintf("%s BETWEEN %f AND %f AND %s BETWEEN %f AND %f",
+				// 			latField, minLat, maxLat, lonField, minLng, maxLng))
+				// 	}
 			}
 		}
 	}
@@ -3346,17 +3355,28 @@ func findValidEventTypes(eventTypes []string, eventTypeGroup string) []string {
 }
 
 func (s *SharedFunctionService) validateParameters(filterFields models.FilterDataDto) (models.FilterDataDto, error) {
-	validEventTypes := []string{}
-	if len(filterFields.Type) > 0 {
-		if filterFields.EventTypeGroup != "" {
-			validEventTypes = findValidEventTypes(strings.Split(filterFields.Type, ","), filterFields.EventTypeGroup)
-		} else {
-			validEventTypes = strings.Split(filterFields.Type, ",")
+	if filterFields.EventTypeGroup != "" {
+		if len(filterFields.EventTypes) > 0 {
+			validEventTypes := findValidEventTypes(strings.Split(filterFields.EventTypes, ","), filterFields.EventTypeGroup)
+			if len(validEventTypes) == 0 && filterFields.View != "detail" {
+				return filterFields, errors.New("no valid event types found for the specified event type group")
+			}
+			if len(validEventTypes) > 0 {
+				filterFields.EventTypes = strings.Join(validEventTypes, ",")
+				filterFields.ParsedEventTypes = validEventTypes
+			}
+		} else if len(filterFields.Type) > 0 {
+			validEventTypes := findValidEventTypes(strings.Split(filterFields.Type, ","), filterFields.EventTypeGroup)
+			if len(validEventTypes) == 0 && filterFields.View != "detail" {
+				return filterFields, errors.New("no valid event types found for the specified event type group. Use eventTypes parameter with UUIDs when using eventTypeGroup")
+			}
+			if len(validEventTypes) > 0 {
+				filterFields.EventTypes = strings.Join(validEventTypes, ",")
+				filterFields.ParsedEventTypes = validEventTypes
+				filterFields.Type = ""
+				filterFields.ParsedType = []string{}
+			}
 		}
-	}
-
-	if len(validEventTypes) == 0 && filterFields.View != "detail" {
-		return filterFields, errors.New("no valid event types found")
 	}
 
 	if len(filterFields.ParsedDesignationId) > 0 {
@@ -3373,10 +3393,6 @@ func (s *SharedFunctionService) validateParameters(filterFields models.FilterDat
 			return filterFields, fmt.Errorf("failed to expand seniority IDs by role: %w", err)
 		}
 		filterFields.ParsedSeniorityId = expandedIds
-	}
-
-	if len(validEventTypes) > 0 {
-		filterFields.Type = strings.Join(validEventTypes, ",")
 	}
 
 	return filterFields, nil
