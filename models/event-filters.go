@@ -107,6 +107,7 @@ type FilterDataDto struct {
 	State          string `json:"state,omitempty" form:"state"`
 	Country        string `json:"country,omitempty" form:"country"`
 	Products       string `json:"products,omitempty" form:"products"`
+	LocationIds    string `json:"locationIds,omitempty" form:"locationIds"`
 
 	Price     string `json:"price,omitempty" form:"price"`
 	AvgRating string `json:"avgRating,omitempty" form:"avgRating"`
@@ -239,6 +240,7 @@ type FilterDataDto struct {
 	EconomicImpactLte     string `json:"economicImpact.lte,omitempty" form:"economicImpact.lte"`
 
 	ParsedCategory       []string     `json:"-"`
+	ParsedLocationIds    []string     `json:"-"`
 	ParsedCity           []string     `json:"-"`
 	ParsedCountry        []string     `json:"-"`
 	ParsedProducts       []string     `json:"-"`
@@ -374,6 +376,20 @@ func (f *FilterDataDto) Validate() error {
 				if sourceEventId != "" {
 					quotedIds := fmt.Sprintf("'%s'", sourceEventId)
 					f.ParsedSourceEventIds = append(f.ParsedSourceEventIds, quotedIds)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.LocationIds, validation.When(f.LocationIds != "", validation.By(func(value interface{}) error {
+			locationIdsStr := value.(string)
+			locationIds := strings.Split(locationIdsStr, ",")
+			f.ParsedLocationIds = make([]string, 0, len(locationIds))
+			for _, locationId := range locationIds {
+				locationId = strings.TrimSpace(locationId)
+				if locationId != "" {
+					quotedIds := fmt.Sprintf("'%s'", locationId)
+					f.ParsedLocationIds = append(f.ParsedLocationIds, quotedIds)
 				}
 			}
 			return nil

@@ -448,7 +448,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		isEconomicImpactRangeFilter = true
 	}
 
-	if filterFields.EventEstimate || !!isEconomicImpactRangeFilter {
+	if filterFields.EventEstimate || isEconomicImpactRangeFilter {
 		baseFields = append(baseFields, "ee.event_economic_value as economicImpact")
 		baseFields = append(baseFields, "ee.event_economic_breakdown as economicImpactBreakdown")
 	}
@@ -542,13 +542,14 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		eventFilterOrderBy = strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
 		eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "ee.", "")
 		for _, sort := range sortClause {
-			if sort.Field == "duration" {
+			switch sort.Field {
+			case "duration":
 				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "(end_date - start_date)", "duration")
-			} else if sort.Field == "event_updated" {
+			case "event_updated":
 				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "event_updated", "updated")
 			}
+			eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
 		}
-		eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
 	}
 
 	eventFilterSelectFields := []string{"event_id", "edition_id"}
@@ -657,6 +658,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.needsDesignationJoin,
 		queryResult.needsAudienceSpreadJoin,
 		queryResult.NeedsRegionsJoin,
+		queryResult.NeedsLocationIdsJoin,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -667,8 +669,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.JobCompositeWhereConditions,
 		queryResult.AudienceSpreadWhereConditions,
 		queryResult.RegionsWhereConditions,
-		queryResult.HasRegionsFilter,
-		queryResult.HasCountryFilter,
+		queryResult.LocationIdsWhereConditions,
 		filterFields,
 	)
 
