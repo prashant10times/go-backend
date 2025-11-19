@@ -39,15 +39,13 @@ func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionSer
 	}
 }
 
-// validateAndProcessParameterAccess validates user access to parameters and modifies filterFields accordingly
-// Parameter mapping:
-// - eventEstimate: returns economicImpact, economicImpactBreakdown (triggered by EventEstimate=true or EconomicImpactGte/Lte filters)
-// - impactScore: returns impactScore field (triggered by ImpactScore=true or ImpactScoreGte/Lte filters)
 func (s *SearchEventService) validateAndProcessParameterAccess(
 	filterFields *models.FilterDataDto,
 	basicKeys []string,
 	advancedKeys []string,
 	allowedAdvancedParameters []string,
+	allowedFilters []string,
+	byPassAccess bool,
 ) error {
 	type ParameterConfig struct {
 		ParameterName     string
@@ -58,7 +56,7 @@ func (s *SearchEventService) validateAndProcessParameterAccess(
 
 	parameterConfigs := []ParameterConfig{
 		{
-			ParameterName:     "eventEstimate",
+			ParameterName:     "economicImpactData",
 			BooleanFieldName:  "EventEstimate",
 			RangeFilterFields: []string{"EconomicImpactGte", "EconomicImpactLte"},
 			ResponseFields:    []string{"economicImpact", "economicImpactBreakdown"},
@@ -71,23 +69,82 @@ func (s *SearchEventService) validateAndProcessParameterAccess(
 		},
 	}
 
+	if byPassAccess {
+		log.Printf("User has unlimited access - automatically enabling all requested parameters")
+		for _, config := range parameterConfigs {
+			v := reflect.ValueOf(filterFields).Elem()
+			boolField := v.FieldByName(config.BooleanFieldName)
+
+			if boolField.IsValid() && boolField.Kind() == reflect.Bool {
+				hasRangeFilter := false
+				for _, filterField := range config.RangeFilterFields {
+					field := v.FieldByName(filterField)
+					if field.IsValid() && field.Kind() == reflect.String && field.String() != "" {
+						hasRangeFilter = true
+						break
+					}
+				}
+
+				if boolField.Bool() || hasRangeFilter {
+					boolField.SetBool(true)
+				}
+			}
+		}
+		return nil
+	}
+
+	v := reflect.ValueOf(filterFields).Elem()
+	t := reflect.TypeOf(filterFields).Elem()
+
+	booleanFieldToJSONTag := make(map[string]string)
+	for i := 0; i < t.NumField(); i++ {
+		fieldType := t.Field(i)
+		if fieldType.Type.Kind() == reflect.Bool {
+			jsonTag := fieldType.Tag.Get("json")
+			if jsonTag != "" && jsonTag != "-" {
+				jsonTagName := strings.Split(jsonTag, ",")[0]
+				booleanFieldToJSONTag[fieldType.Name] = jsonTagName
+			}
+		}
+	}
+
 	var unauthorizedParameters []string
 	for _, config := range parameterConfigs {
-		v := reflect.ValueOf(filterFields).Elem()
 		boolField := v.FieldByName(config.BooleanFieldName)
 
 		if boolField.IsValid() && boolField.Kind() == reflect.Bool && boolField.Bool() {
-			isBasic := slices.Contains(basicKeys, config.ParameterName)
-			isAdvanced := slices.Contains(advancedKeys, config.ParameterName)
+			jsonTagName, hasJSONTag := booleanFieldToJSONTag[config.BooleanFieldName]
+			isFilter := hasJSONTag && slices.Contains(allowedFilters, jsonTagName)
 
-			if isBasic {
-				continue
-			} else if isAdvanced {
-				if !slices.Contains(allowedAdvancedParameters, config.ParameterName) {
-					unauthorizedParameters = append(unauthorizedParameters, config.ParameterName)
+			if isFilter {
+				log.Printf("Boolean field %s (JSON tag: %s) is a valid filter - allowing request. Checking parameter access for data return.", config.BooleanFieldName, jsonTagName)
+				isBasic := slices.Contains(basicKeys, config.ParameterName)
+				isAdvanced := slices.Contains(advancedKeys, config.ParameterName)
+
+				if isBasic {
+					continue
+				} else if isAdvanced {
+					if !slices.Contains(allowedAdvancedParameters, config.ParameterName) {
+						boolField.SetBool(false)
+						log.Printf("User doesn't have access to parameter %s. Setting %s to false (filtering allowed, data not returned).", config.ParameterName, config.BooleanFieldName)
+					}
+				} else {
+					log.Printf("Warning: Parameter %s requested but not found in API configuration", config.ParameterName)
+					boolField.SetBool(false)
 				}
 			} else {
-				log.Printf("Warning: Parameter %s requested but not found in API configuration", config.ParameterName)
+				isBasic := slices.Contains(basicKeys, config.ParameterName)
+				isAdvanced := slices.Contains(advancedKeys, config.ParameterName)
+
+				if isBasic {
+					continue
+				} else if isAdvanced {
+					if !slices.Contains(allowedAdvancedParameters, config.ParameterName) {
+						unauthorizedParameters = append(unauthorizedParameters, config.ParameterName)
+					}
+				} else {
+					log.Printf("Warning: Parameter %s requested but not found in API configuration", config.ParameterName)
+				}
 			}
 		}
 	}
@@ -95,42 +152,6 @@ func (s *SearchEventService) validateAndProcessParameterAccess(
 	if len(unauthorizedParameters) > 0 {
 		msg := "The requested parameters are not allowed in your current plan, please upgrade your plan to access these advanced parameters: " + strings.Join(unauthorizedParameters, ", ")
 		return middleware.NewForbiddenError("Unauthorized advanced parameters", msg)
-	}
-
-	for _, config := range parameterConfigs {
-		hasRangeFilter := false
-		for _, filterField := range config.RangeFilterFields {
-			v := reflect.ValueOf(filterFields).Elem()
-			field := v.FieldByName(filterField)
-			if field.IsValid() && field.Kind() == reflect.String && field.String() != "" {
-				hasRangeFilter = true
-				break
-			}
-		}
-
-		if hasRangeFilter {
-			v := reflect.ValueOf(filterFields).Elem()
-			boolField := v.FieldByName(config.BooleanFieldName)
-
-			if boolField.IsValid() && boolField.Kind() == reflect.Bool {
-				// Only process if boolean is not explicitly set to true (if true, it was already validated above)
-				if !boolField.Bool() {
-					isBasic := slices.Contains(basicKeys, config.ParameterName)
-					isAdvanced := slices.Contains(advancedKeys, config.ParameterName)
-					hasAccess := isBasic || (isAdvanced && slices.Contains(allowedAdvancedParameters, config.ParameterName))
-
-					if hasAccess {
-						// User has access and range filter is used - automatically enable parameter to return data
-						boolField.SetBool(true)
-						log.Printf("Range filter %v used and user has access to parameter %s. Setting %s to true (data will be returned).", config.RangeFilterFields, config.ParameterName, config.BooleanFieldName)
-					} else {
-						// User doesn't have access - keep boolean false (allow filtering but don't return data)
-						boolField.SetBool(false)
-						log.Printf("Range filter %v used but user doesn't have access to parameter %s. %s will remain false (filtering allowed, data not returned).", config.RangeFilterFields, config.ParameterName, config.BooleanFieldName)
-					}
-				}
-			}
-		}
 	}
 
 	return nil
@@ -195,7 +216,9 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	allowedFilters = result.AllowedFilters
 	allowedAdvancedParameters = result.AllowedAdvancedParameters
 
-	err = s.validateAndProcessParameterAccess(&filterFields, basicKeys, advancedKeys, allowedAdvancedParameters)
+	byPassAccess := s.sharedFunctionService.ByPassAccess(userId)
+
+	err = s.validateAndProcessParameterAccess(&filterFields, basicKeys, advancedKeys, allowedAdvancedParameters, allowedFilters, byPassAccess)
 	if err != nil {
 		log.Printf("Parameter access validation failed: %v", err)
 		statusCode = http.StatusForbidden
@@ -270,7 +293,6 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	requiredFields = append(requiredFields, basicKeys...)
 	requiredFields = append(requiredFields, selectedAdvancedKeys...)
 
-	// Parse sort fields
 	sortClause, err := s.sharedFunctionService.parseSortFields(pagination.Sort, filterFields)
 	if err != nil {
 		log.Printf("Error parsing sort fields: %v", err)
@@ -686,7 +708,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		baseFields = append(baseFields, "ee.event_economic_breakdown as economicImpactBreakdown")
 	}
 
-	log.Printf("Impact score: %v", filterFields.ImpactScore)
 	if filterFields.ImpactScore {
 		baseFields = append(baseFields, "ee.impactScore as impactScore")
 	}

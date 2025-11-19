@@ -9,6 +9,7 @@ import (
 	"log"
 	"reflect"
 	"regexp"
+	"search-event-go/config"
 	"search-event-go/models"
 	"sort"
 	"strconv"
@@ -25,6 +26,7 @@ import (
 type SharedFunctionService struct {
 	db                *gorm.DB
 	clickhouseService *ClickHouseService
+	cfg               *config.Config
 }
 type OrderedJSONMap struct {
 	Keys   []string
@@ -58,10 +60,11 @@ func (o OrderedJSONMap) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-func NewSharedFunctionService(db *gorm.DB, clickhouseService *ClickHouseService) *SharedFunctionService {
+func NewSharedFunctionService(db *gorm.DB, clickhouseService *ClickHouseService, cfg *config.Config) *SharedFunctionService {
 	return &SharedFunctionService{
 		db:                db,
 		clickhouseService: clickhouseService,
+		cfg:               cfg,
 	}
 }
 
@@ -113,6 +116,8 @@ type QuotaAndFilterResult struct {
 func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string) (*QuotaAndFilterResult, error) {
 	var result QuotaAndFilterResult
 
+	byPassAccess := s.ByPassAccess(userId)
+
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 
 		var updated int64
@@ -127,12 +132,48 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 			return gorm.ErrRecordNotFound
 		}
 
+		if byPassAccess {
+			var allFilters []models.APIFilter
+			err = tx.Where("api_id = ? AND is_active = ?", apiId, true).
+				Select("filter_name").
+				Find(&allFilters).Error
+			if err != nil {
+				return err
+			}
+
+			var allFilterNames []string
+			for _, filter := range allFilters {
+				allFilterNames = append(allFilterNames, filter.FilterName)
+			}
+			result.AllowedFilters = allFilterNames
+
+			var allParameters []models.APIParameter
+			err = tx.Where("api_id = ? AND is_active = ? AND parameter_type = ?", apiId, true, "ADVANCED").
+				Select("parameter_name").
+				Find(&allParameters).Error
+			if err != nil {
+				return err
+			}
+
+			for _, param := range allParameters {
+				result.AllowedAdvancedParameters = append(result.AllowedAdvancedParameters, param.ParameterName)
+			}
+
+			log.Printf("User %s has unlimited access - granting access to all filters and parameters", userId)
+			return nil
+		}
+
 		var basicFilters []models.APIFilter
 		err = tx.Where("api_id = ? AND is_active = ? AND filter_type = ?", apiId, true, "BASIC").
 			Select("filter_name").
 			Find(&basicFilters).Error
 		if err != nil {
 			return err
+		}
+
+		var basicFilterNames []string
+		for _, filter := range basicFilters {
+			basicFilterNames = append(basicFilterNames, filter.FilterName)
 		}
 
 		var userFilterAccess []struct {
@@ -154,10 +195,6 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 		}
 		log.Printf("userFilterAccess: %v", userFilterAccess)
 
-		var basicFilterNames []string
-		for _, filter := range basicFilters {
-			basicFilterNames = append(basicFilterNames, filter.FilterName)
-		}
 		var allowedAdvancedFilters []string
 		for _, access := range userFilterAccess {
 			if access.IsPaid {
@@ -202,6 +239,19 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 	}
 
 	return &result, nil
+}
+
+func (s *SharedFunctionService) ByPassAccess(userId string) bool {
+	if s.cfg == nil || s.cfg.UnlimitedAccessUserIDs == "" {
+		return false
+	}
+	userIDs := strings.Split(s.cfg.UnlimitedAccessUserIDs, ",")
+	for _, id := range userIDs {
+		if strings.TrimSpace(id) == userId {
+			return true
+		}
+	}
+	return false
 }
 
 type QuotaExceededError struct {
