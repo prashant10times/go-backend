@@ -734,7 +734,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addRangeFilters("following", "event_followers", &whereConditions, filterFields, false)
 	s.addRangeFilters("speaker", "event_speaker", &whereConditions, filterFields, false)
 	s.addRangeFilters("exhibitors", "event_exhibitor", &whereConditions, filterFields, false)
-	s.addRangeFilters("editions", "event_editionsCount", &whereConditions, filterFields, false)
+	s.addRangeFilters("editions", "event_editions", &whereConditions, filterFields, false)
 	s.addRangeFilters("start", "start_date", &whereConditions, filterFields, true)
 	s.addRangeFilters("end", "end_date", &whereConditions, filterFields, true)
 	s.addRangeFilters("createdAt", "event_created", &whereConditions, filterFields, true)
