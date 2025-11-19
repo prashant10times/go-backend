@@ -1330,7 +1330,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			event AS event_id,
 			'category' AS data_type,
 			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value
+			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value,
+			arrayStringConcat(groupArray(slug), ', ') AS slug_value,
+			'' AS eventGroupType_value
 		FROM testing_db.event_category_ch
 		WHERE event IN (%s) 
 		  AND is_group = 1
@@ -1342,7 +1344,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			event AS event_id,
 			'tags' AS data_type,
 			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value
+			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value,
+			arrayStringConcat(groupArray(slug), ', ') AS slug_value,
+			'' AS eventGroupType_value
 		FROM testing_db.event_category_ch
 		WHERE event IN (%s) 
 		  AND is_group = 0
@@ -1354,7 +1358,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			event_id,
 			'types' AS data_type,
 			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(eventtype_uuid), ', ') AS uuid_value
+			arrayStringConcat(groupArray(eventtype_uuid), ', ') AS uuid_value,
+			arrayStringConcat(groupArray(slug), ', ') AS slug_value,
+			arrayStringConcat(groupArray(eventGroupType), ', ') AS eventGroupType_value
 		FROM testing_db.event_type_ch
 		WHERE event_id IN (%s)
 		GROUP BY event_id
@@ -1374,7 +1380,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			event_id,
 			'jobComposite' AS data_type,
 			concat(display_name, '|||', role, '|||', department) AS value,
-			'' AS uuid_value
+			'' AS uuid_value,
+			'' AS slug_value,
+			'' AS eventGroupType_value
 		FROM testing_db.event_designation_ch
 		WHERE edition_id IN (SELECT edition_id FROM current_events) 
 			AND display_name IN (%s)
@@ -1390,7 +1398,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			event_id,
 			'countrySpread' AS data_type,
 			CAST(country_data as String) AS value,
-			'' AS uuid_value
+			'' AS uuid_value,
+			'' AS slug_value,
+			'' AS eventGroupType_value
 		FROM testing_db.event_visitorSpread_ch
 		ARRAY JOIN user_by_cntry AS country_data
 		WHERE event_id IN (` + eventIdsStrJoined + `)
@@ -1407,7 +1417,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			event_id,
 			'designationSpread' AS data_type,
 			CAST(designation_data as String) AS value,
-			'' AS uuid_value
+			'' AS uuid_value,
+			'' AS slug_value,
+			'' AS eventGroupType_value
 		FROM testing_db.event_visitorSpread_ch
 		ARRAY JOIN user_by_designation AS designation_data
 		WHERE event_id IN (` + eventIdsStrJoined + `)
@@ -1438,9 +1450,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 	for relatedDataResult.Next() {
 		var eventID uint32
-		var dataType, value, uuidValue string
+		var dataType, value, uuidValue, slugValue, eventGroupTypeValue string
 
-		if err := relatedDataResult.Scan(&eventID, &dataType, &value, &uuidValue); err != nil {
+		if err := relatedDataResult.Scan(&eventID, &dataType, &value, &uuidValue, &slugValue, &eventGroupTypeValue); err != nil {
 			log.Printf("Error scanning related data row: %v", err)
 			continue
 		}
@@ -1451,6 +1463,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		case "category":
 			names := strings.Split(value, ", ")
 			uuids := strings.Split(uuidValue, ", ")
+			slugs := strings.Split(slugValue, ", ")
 
 			var items []map[string]string
 			for i, name := range names {
@@ -1458,6 +1471,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					items = append(items, map[string]string{
 						"id":   strings.TrimSpace(uuids[i]),
 						"name": strings.TrimSpace(name),
+						"slug": strings.TrimSpace(slugs[i]),
 					})
 				}
 			}
@@ -1465,6 +1479,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		case "tags":
 			names := strings.Split(value, ", ")
 			uuids := strings.Split(uuidValue, ", ")
+			slugs := strings.Split(slugValue, ", ")
 
 			var items []map[string]string
 			for i, name := range names {
@@ -1472,6 +1487,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					items = append(items, map[string]string{
 						"id":   strings.TrimSpace(uuids[i]),
 						"name": strings.TrimSpace(name),
+						"slug": strings.TrimSpace(slugs[i]),
 					})
 				}
 			}
@@ -1479,13 +1495,17 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		case "types":
 			names := strings.Split(value, ", ")
 			uuids := strings.Split(uuidValue, ", ")
+			slugs := strings.Split(slugValue, ", ")
+			eventGroupTypes := strings.Split(eventGroupTypeValue, ", ")
 
 			var items []map[string]string
 			for i, name := range names {
 				if i < len(uuids) && name != "" {
 					items = append(items, map[string]string{
-						"id":   strings.TrimSpace(uuids[i]),
-						"name": strings.TrimSpace(name),
+						"id":             strings.TrimSpace(uuids[i]),
+						"name":           strings.TrimSpace(name),
+						"slug":           strings.TrimSpace(slugs[i]),
+						"eventGroupType": strings.TrimSpace(eventGroupTypes[i]),
 					})
 				}
 			}
