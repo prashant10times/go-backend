@@ -781,6 +781,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		"ee.event_avgRating as avgRating",
 		"ee.exhibitors_lower_bound as exhibitors_lower_bound",
 		"ee.exhibitors_upper_bound as exhibitors_upper_bound",
+		"ee.event_format as format",
+		"ee.yoyGrowth as yoyGrowth",
+		"ee.tickets as tickets",
 	}
 
 	if filterFields.EventEstimate {
@@ -1183,6 +1186,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				values[i] = new(float64)
 			case "keywords":
 				values[i] = new(string)
+			case "tickets":
+				values[i] = new([]string)
 			default:
 				values[i] = new(string)
 			}
@@ -1249,6 +1254,21 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					}
 				} else {
 					rowData[col] = "{}"
+				}
+			case "tickets":
+				if ticketsPtr, ok := val.(*[]string); ok && ticketsPtr != nil {
+					parsedTickets := make([]interface{}, 0, len(*ticketsPtr))
+					for _, str := range *ticketsPtr {
+						var jsonData interface{}
+						if err := json.Unmarshal([]byte(str), &jsonData); err == nil {
+							parsedTickets = append(parsedTickets, jsonData)
+						} else {
+							parsedTickets = append(parsedTickets, str)
+						}
+					}
+					rowData[col] = parsedTickets
+				} else {
+					rowData[col] = []interface{}{}
 				}
 			case "keywords":
 				var keywordsString string
