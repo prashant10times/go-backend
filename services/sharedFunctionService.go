@@ -965,11 +965,11 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		mode := *filterFields.ParsedMode
 		switch mode {
 		case "hybrid":
-			whereConditions = append(whereConditions, "ee.event_hybrid = '1'")
+			whereConditions = append(whereConditions, "ee.event_format = 'HYBRID'")
 		case "online":
-			whereConditions = append(whereConditions, "ee.edition_city = '1'")
+			whereConditions = append(whereConditions, "ee.event_format = 'ONLINE'")
 		case "physical":
-			whereConditions = append(whereConditions, "ee.edition_city != '1' AND ee.event_hybrid = '0'")
+			whereConditions = append(whereConditions, "ee.event_format = 'PHYSICAL'")
 		}
 	}
 
