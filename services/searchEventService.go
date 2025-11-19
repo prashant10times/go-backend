@@ -39,6 +39,77 @@ func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionSer
 	}
 }
 
+func getMatchedKeywords(keywordsString string, includeKeywords []string) (map[string]interface{}, error) {
+	if keywordsString == "" || len(includeKeywords) == 0 {
+		return map[string]interface{}{
+			"matchedKeywords":           []string{},
+			"matchedKeywordsPercentage": 0.0,
+		}, nil
+	}
+
+	keywordsSet := make(map[string]bool)
+	keywordsLower := strings.ToLower(keywordsString)
+	keywordParts := strings.Fields(keywordsLower)
+	for _, keyword := range keywordParts {
+		if keyword != "" {
+			keywordsSet[keyword] = true
+		}
+	}
+
+	matchedKeywordsCount := 0
+	matchedKeywords := []string{}
+
+	unescapeSqlLikePattern := func(s string) string {
+		s = strings.ReplaceAll(s, "\\%", "%")
+		s = strings.ReplaceAll(s, "\\_", "_")
+		return s
+	}
+
+	for _, keyword := range includeKeywords {
+		keyword = unescapeSqlLikePattern(keyword)
+		keywordLower := strings.ToLower(keyword)
+
+		if strings.Contains(keyword, "_") {
+			parts := strings.Split(keywordLower, "_")
+			if len(parts) == 2 {
+				if keywordsSet[parts[0]] && keywordsSet[parts[1]] {
+					matchedKeywordsCount++
+					matchedKeywords = append(matchedKeywords, keyword)
+				}
+			}
+		} else if strings.Contains(keyword, " ") {
+			subSpaceKeywords := strings.Fields(keywordLower)
+			allMatched := true
+			for _, subKeyword := range subSpaceKeywords {
+				if !keywordsSet[subKeyword] {
+					allMatched = false
+					break
+				}
+			}
+			if allMatched {
+				matchedKeywordsCount++
+				matchedKeywords = append(matchedKeywords, keyword)
+			}
+		} else {
+			if keywordsSet[keywordLower] {
+				matchedKeywordsCount++
+				matchedKeywords = append(matchedKeywords, keyword)
+			}
+		}
+	}
+
+	matchedKeywordsPercentage := 0.0
+	if len(includeKeywords) > 0 {
+		matchedKeywordsPercentage = float64(matchedKeywordsCount) / float64(len(includeKeywords)) * 100
+		matchedKeywordsPercentage = math.Round(matchedKeywordsPercentage*100) / 100
+	}
+
+	return map[string]interface{}{
+		"matchedKeywords":           matchedKeywords,
+		"matchedKeywordsPercentage": matchedKeywordsPercentage,
+	}, nil
+}
+
 func (s *SearchEventService) validateAndProcessParameterAccess(
 	filterFields *models.FilterDataDto,
 	basicKeys []string,
@@ -652,6 +723,10 @@ func (s *SearchEventService) getCountOnly(filterFields models.FilterDataDto) (in
 		queryResult.needsAudienceSpreadJoin,
 		queryResult.NeedsRegionsJoin,
 		queryResult.NeedsLocationIdsJoin,
+		queryResult.NeedsCountryIdsJoin,
+		queryResult.NeedsStateIdsJoin,
+		queryResult.NeedsCityIdsJoin,
+		queryResult.NeedsVenueIdsJoin,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -663,6 +738,10 @@ func (s *SearchEventService) getCountOnly(filterFields models.FilterDataDto) (in
 		queryResult.AudienceSpreadWhereConditions,
 		queryResult.RegionsWhereConditions,
 		queryResult.LocationIdsWhereConditions,
+		queryResult.CountryIdsWhereConditions,
+		queryResult.StateIdsWhereConditions,
+		queryResult.CityIdsWhereConditions,
+		queryResult.VenueIdsWhereConditions,
 		filterFields,
 	)
 
@@ -758,6 +837,10 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 	if len(filterFields.ParsedAudienceZone) > 0 {
 		conditionalFields = append(conditionalFields, "ee.audienceZone as audienceZone")
+	}
+
+	if filterFields.ParsedKeywords != nil && len(filterFields.ParsedKeywords.Include) > 0 {
+		conditionalFields = append(conditionalFields, "arrayStringConcat(ee.keywords, ' ') as keywords")
 	}
 
 	requiredFieldsStatic := append(baseFields, conditionalFields...)
@@ -914,6 +997,10 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.needsAudienceSpreadJoin,
 		queryResult.NeedsRegionsJoin,
 		queryResult.NeedsLocationIdsJoin,
+		queryResult.NeedsCountryIdsJoin,
+		queryResult.NeedsStateIdsJoin,
+		queryResult.NeedsCityIdsJoin,
+		queryResult.NeedsVenueIdsJoin,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -925,6 +1012,10 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.AudienceSpreadWhereConditions,
 		queryResult.RegionsWhereConditions,
 		queryResult.LocationIdsWhereConditions,
+		queryResult.CountryIdsWhereConditions,
+		queryResult.StateIdsWhereConditions,
+		queryResult.CityIdsWhereConditions,
+		queryResult.VenueIdsWhereConditions,
 		filterFields,
 	)
 
@@ -1089,6 +1180,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				values[i] = new(*decimal.Decimal)
 			case "lat", "lon", "venueLat", "venueLon", "economicImpact":
 				values[i] = new(float64)
+			case "keywords":
+				values[i] = new(string)
 			default:
 				values[i] = new(string)
 			}
@@ -1155,6 +1248,46 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					}
 				} else {
 					rowData[col] = "{}"
+				}
+			case "keywords":
+				var keywordsString string
+				var keywordsArray []string
+
+				if keywordsStr, ok := val.(*string); ok && keywordsStr != nil && *keywordsStr != "" {
+					keywordsString = *keywordsStr
+
+					if strings.HasPrefix(keywordsString, "[") && strings.HasSuffix(keywordsString, "]") {
+						if err := json.Unmarshal([]byte(keywordsString), &keywordsArray); err == nil {
+							keywordsString = strings.Join(keywordsArray, " ")
+						}
+					}
+
+					if len(keywordsArray) == 0 {
+						if strings.Contains(keywordsString, ",") {
+							parts := strings.Split(keywordsString, ",")
+							keywordsArray = make([]string, 0, len(parts))
+							for _, part := range parts {
+								trimmed := strings.TrimSpace(part)
+								if trimmed != "" {
+									keywordsArray = append(keywordsArray, trimmed)
+								}
+							}
+							keywordsString = strings.Join(keywordsArray, " ")
+						} else {
+							keywordsArray = strings.Fields(keywordsString)
+						}
+					}
+				}
+
+				if keywordsString != "" && filterFields.ParsedKeywords != nil && len(filterFields.ParsedKeywords.Include) > 0 {
+					matchedKeywordsData, err := getMatchedKeywords(keywordsString, filterFields.ParsedKeywords.Include)
+					if err == nil {
+						rowData["matchedKeywords"] = matchedKeywordsData["matchedKeywords"]
+						rowData["matchedKeywordsPercentage"] = matchedKeywordsData["matchedKeywordsPercentage"]
+					}
+				}
+				if len(keywordsArray) > 0 {
+					rowData["keywords"] = keywordsArray
 				}
 			default:
 				if ptr, ok := val.(*string); ok && ptr != nil {

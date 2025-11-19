@@ -458,9 +458,17 @@ type ClickHouseQueryResult struct {
 	AudienceSpreadWhereConditions []string
 	RegionsWhereConditions        []string
 	LocationIdsWhereConditions    []string
+	CountryIdsWhereConditions     []string
+	StateIdsWhereConditions       []string
+	CityIdsWhereConditions        []string
+	VenueIdsWhereConditions       []string
 	HasRegionsFilter              bool
 	HasCountryFilter              bool
 	NeedsLocationIdsJoin          bool
+	NeedsCountryIdsJoin           bool
+	NeedsStateIdsJoin             bool
+	NeedsCityIdsJoin              bool
+	NeedsVenueIdsJoin             bool
 }
 
 func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterDataDto) (*ClickHouseQueryResult, error) {
@@ -476,9 +484,17 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		AudienceSpreadWhereConditions: make([]string, 0),
 		RegionsWhereConditions:        make([]string, 0),
 		LocationIdsWhereConditions:    make([]string, 0),
+		CountryIdsWhereConditions:     make([]string, 0),
+		StateIdsWhereConditions:       make([]string, 0),
+		CityIdsWhereConditions:        make([]string, 0),
+		VenueIdsWhereConditions:       make([]string, 0),
 		HasRegionsFilter:              false,
 		HasCountryFilter:              false,
 		NeedsLocationIdsJoin:          false,
+		NeedsCountryIdsJoin:           false,
+		NeedsStateIdsJoin:             false,
+		NeedsCityIdsJoin:              false,
+		NeedsVenueIdsJoin:             false,
 	}
 
 	whereConditions := make([]string, 0)
@@ -693,7 +709,27 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		result.LocationIdsWhereConditions = append(result.LocationIdsWhereConditions, fmt.Sprintf("id_uuid IN (%s)", strings.Join(filterFields.ParsedLocationIds, ",")))
 	}
 
-	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin || result.needsDesignationJoin || result.needsAudienceSpreadJoin || result.NeedsRegionsJoin || result.NeedsLocationIdsJoin
+	if len(filterFields.ParsedCountryIds) > 0 {
+		result.NeedsCountryIdsJoin = true
+		result.CountryIdsWhereConditions = append(result.CountryIdsWhereConditions, fmt.Sprintf("location_type = 'COUNTRY' AND id_uuid IN (%s)", strings.Join(filterFields.ParsedCountryIds, ",")))
+	}
+
+	if len(filterFields.ParsedStateIds) > 0 {
+		result.NeedsStateIdsJoin = true
+		result.StateIdsWhereConditions = append(result.StateIdsWhereConditions, fmt.Sprintf("location_type = 'STATE' AND id_uuid IN (%s)", strings.Join(filterFields.ParsedStateIds, ",")))
+	}
+
+	if len(filterFields.ParsedCityIds) > 0 {
+		result.NeedsCityIdsJoin = true
+		result.CityIdsWhereConditions = append(result.CityIdsWhereConditions, fmt.Sprintf("location_type = 'CITY' AND id_uuid IN (%s)", strings.Join(filterFields.ParsedCityIds, ",")))
+	}
+
+	if len(filterFields.ParsedVenueIds) > 0 {
+		result.NeedsVenueIdsJoin = true
+		result.VenueIdsWhereConditions = append(result.VenueIdsWhereConditions, fmt.Sprintf("location_type = 'VENUE' AND id_uuid IN (%s)", strings.Join(filterFields.ParsedVenueIds, ",")))
+	}
+
+	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin || result.needsDesignationJoin || result.needsAudienceSpreadJoin || result.NeedsRegionsJoin || result.NeedsLocationIdsJoin || result.NeedsCountryIdsJoin || result.NeedsStateIdsJoin || result.NeedsCityIdsJoin || result.NeedsVenueIdsJoin
 
 	s.addRangeFilters("following", "event_followers", &whereConditions, filterFields, false)
 	s.addRangeFilters("speaker", "event_speaker", &whereConditions, filterFields, false)
@@ -989,6 +1025,22 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(locationConditions, " OR ")))
 	}
 
+	if result.NeedsCountryIdsJoin {
+		whereConditions = append(whereConditions, "ee.edition_country IN (SELECT iso FROM filtered_country_ids WHERE iso IS NOT NULL)")
+	}
+
+	if result.NeedsStateIdsJoin {
+		whereConditions = append(whereConditions, "ee.edition_city_state_id IN (SELECT id FROM filtered_state_ids WHERE id IS NOT NULL)")
+	}
+
+	if result.NeedsCityIdsJoin {
+		whereConditions = append(whereConditions, "ee.edition_city IN (SELECT id FROM filtered_city_ids WHERE id IS NOT NULL)")
+	}
+
+	if result.NeedsVenueIdsJoin {
+		whereConditions = append(whereConditions, "ee.venue_id IN (SELECT id FROM filtered_venue_ids WHERE id IS NOT NULL)")
+	}
+
 	result.WhereClause = strings.Join(whereConditions, " AND ")
 
 	return result, nil
@@ -1011,6 +1063,10 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsAudienceSpreadJoin bool,
 	needsRegionsJoin bool,
 	needsLocationIdsJoin bool,
+	needsCountryIdsJoin bool,
+	needsStateIdsJoin bool,
+	needsCityIdsJoin bool,
+	needsVenueIdsJoin bool,
 	visitorWhereConditions []string,
 	speakerWhereConditions []string,
 	exhibitorWhereConditions []string,
@@ -1022,6 +1078,10 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	audienceSpreadWhereConditions []string,
 	regionsWhereConditions []string,
 	locationIdsWhereConditions []string,
+	countryIdsWhereConditions []string,
+	stateIdsWhereConditions []string,
+	cityIdsWhereConditions []string,
+	venueIdsWhereConditions []string,
 	filterFields models.FilterDataDto,
 ) CTEAndJoinResult {
 	result := CTEAndJoinResult{
@@ -1050,6 +1110,50 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			WHERE %s
 		)`, locationIdsWhereClause)
 		result.CTEClauses = append(result.CTEClauses, locationIdsCTE)
+	}
+
+	if needsCountryIdsJoin && len(countryIdsWhereConditions) > 0 {
+		countryIdsWhereClause := strings.Join(countryIdsWhereConditions, " AND ")
+
+		countryIdsCTE := fmt.Sprintf(`filtered_country_ids AS (
+			SELECT iso
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, countryIdsWhereClause)
+		result.CTEClauses = append(result.CTEClauses, countryIdsCTE)
+	}
+
+	if needsStateIdsJoin && len(stateIdsWhereConditions) > 0 {
+		stateIdsWhereClause := strings.Join(stateIdsWhereConditions, " AND ")
+
+		stateIdsCTE := fmt.Sprintf(`filtered_state_ids AS (
+			SELECT id
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, stateIdsWhereClause)
+		result.CTEClauses = append(result.CTEClauses, stateIdsCTE)
+	}
+
+	if needsCityIdsJoin && len(cityIdsWhereConditions) > 0 {
+		cityIdsWhereClause := strings.Join(cityIdsWhereConditions, " AND ")
+
+		cityIdsCTE := fmt.Sprintf(`filtered_city_ids AS (
+			SELECT id
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, cityIdsWhereClause)
+		result.CTEClauses = append(result.CTEClauses, cityIdsCTE)
+	}
+
+	if needsVenueIdsJoin && len(venueIdsWhereConditions) > 0 {
+		venueIdsWhereClause := strings.Join(venueIdsWhereConditions, " AND ")
+
+		venueIdsCTE := fmt.Sprintf(`filtered_venue_ids AS (
+			SELECT id
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, venueIdsWhereClause)
+		result.CTEClauses = append(result.CTEClauses, venueIdsCTE)
 	}
 
 	if needsVisitorJoin {
@@ -2807,6 +2911,50 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 			WHERE %s
 		)`, locationIdsWhereClause)
 		cteClauses = append(cteClauses, locationIdsCTE)
+	}
+
+	if queryResult.NeedsCountryIdsJoin && len(queryResult.CountryIdsWhereConditions) > 0 {
+		countryIdsWhereClause := strings.Join(queryResult.CountryIdsWhereConditions, " AND ")
+
+		countryIdsCTE := fmt.Sprintf(`filtered_country_ids AS (
+			SELECT iso
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, countryIdsWhereClause)
+		cteClauses = append(cteClauses, countryIdsCTE)
+	}
+
+	if queryResult.NeedsStateIdsJoin && len(queryResult.StateIdsWhereConditions) > 0 {
+		stateIdsWhereClause := strings.Join(queryResult.StateIdsWhereConditions, " AND ")
+
+		stateIdsCTE := fmt.Sprintf(`filtered_state_ids AS (
+			SELECT id
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, stateIdsWhereClause)
+		cteClauses = append(cteClauses, stateIdsCTE)
+	}
+
+	if queryResult.NeedsCityIdsJoin && len(queryResult.CityIdsWhereConditions) > 0 {
+		cityIdsWhereClause := strings.Join(queryResult.CityIdsWhereConditions, " AND ")
+
+		cityIdsCTE := fmt.Sprintf(`filtered_city_ids AS (
+			SELECT id
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, cityIdsWhereClause)
+		cteClauses = append(cteClauses, cityIdsCTE)
+	}
+
+	if queryResult.NeedsVenueIdsJoin && len(queryResult.VenueIdsWhereConditions) > 0 {
+		venueIdsWhereClause := strings.Join(queryResult.VenueIdsWhereConditions, " AND ")
+
+		venueIdsCTE := fmt.Sprintf(`filtered_venue_ids AS (
+			SELECT id
+			FROM testing_db.location_ch
+			WHERE %s
+		)`, venueIdsWhereClause)
+		cteClauses = append(cteClauses, venueIdsCTE)
 	}
 
 	if queryResult.NeedsVisitorJoin {

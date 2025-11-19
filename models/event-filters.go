@@ -110,6 +110,11 @@ type FilterDataDto struct {
 	Products       string `json:"products,omitempty" form:"products"`
 	LocationIds    string `json:"locationIds,omitempty" form:"locationIds"`
 
+	CountryIds string `json:"countryIds,omitempty" form:"countryIds"`
+	StateIds   string `json:"stateIds,omitempty" form:"stateIds"`
+	CityIds    string `json:"cityIds,omitempty" form:"cityIds"`
+	VenueIds   string `json:"venueIds,omitempty" form:"venueIds"`
+
 	// SearchByEntity string `json:"searchByEntity,omitempty" form:"searchByEntity"`
 
 	Price     string `json:"price,omitempty" form:"price"`
@@ -290,7 +295,11 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedRegions []string `json:"-"`
+	ParsedRegions    []string `json:"-"`
+	ParsedCountryIds []string `json:"-"`
+	ParsedStateIds   []string `json:"-"`
+	ParsedCityIds    []string `json:"-"`
+	ParsedVenueIds   []string `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -395,6 +404,62 @@ func (f *FilterDataDto) Validate() error {
 				if locationId != "" {
 					quotedIds := fmt.Sprintf("'%s'", locationId)
 					f.ParsedLocationIds = append(f.ParsedLocationIds, quotedIds)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.CountryIds, validation.When(f.CountryIds != "", validation.By(func(value interface{}) error {
+			countryIdsStr := value.(string)
+			countryIds := strings.Split(countryIdsStr, ",")
+			f.ParsedCountryIds = make([]string, 0, len(countryIds))
+			for _, countryId := range countryIds {
+				countryId = strings.TrimSpace(countryId)
+				if countryId != "" {
+					quotedIds := fmt.Sprintf("'%s'", countryId)
+					f.ParsedCountryIds = append(f.ParsedCountryIds, quotedIds)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.StateIds, validation.When(f.StateIds != "", validation.By(func(value interface{}) error {
+			stateIdsStr := value.(string)
+			stateIds := strings.Split(stateIdsStr, ",")
+			f.ParsedStateIds = make([]string, 0, len(stateIds))
+			for _, stateId := range stateIds {
+				stateId = strings.TrimSpace(stateId)
+				if stateId != "" {
+					quotedIds := fmt.Sprintf("'%s'", stateId)
+					f.ParsedStateIds = append(f.ParsedStateIds, quotedIds)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.CityIds, validation.When(f.CityIds != "", validation.By(func(value interface{}) error {
+			cityIdsStr := value.(string)
+			cityIds := strings.Split(cityIdsStr, ",")
+			f.ParsedCityIds = make([]string, 0, len(cityIds))
+			for _, cityId := range cityIds {
+				cityId = strings.TrimSpace(cityId)
+				if cityId != "" {
+					quotedIds := fmt.Sprintf("'%s'", cityId)
+					f.ParsedCityIds = append(f.ParsedCityIds, quotedIds)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.VenueIds, validation.When(f.VenueIds != "", validation.By(func(value interface{}) error {
+			venueIdsStr := value.(string)
+			venueIds := strings.Split(venueIdsStr, ",")
+			f.ParsedVenueIds = make([]string, 0, len(venueIds))
+			for _, venueId := range venueIds {
+				venueId = strings.TrimSpace(venueId)
+				if venueId != "" {
+					quotedIds := fmt.Sprintf("'%s'", venueId)
+					f.ParsedVenueIds = append(f.ParsedVenueIds, quotedIds)
 				}
 			}
 			return nil
