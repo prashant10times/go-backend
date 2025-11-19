@@ -39,6 +39,103 @@ func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionSer
 	}
 }
 
+// validateAndProcessParameterAccess validates user access to parameters and modifies filterFields accordingly
+// Parameter mapping:
+// - eventEstimate: returns economicImpact, economicImpactBreakdown (triggered by EventEstimate=true or EconomicImpactGte/Lte filters)
+// - impactScore: returns impactScore field (triggered by ImpactScore=true or ImpactScoreGte/Lte filters)
+func (s *SearchEventService) validateAndProcessParameterAccess(
+	filterFields *models.FilterDataDto,
+	basicKeys []string,
+	advancedKeys []string,
+	allowedAdvancedParameters []string,
+) error {
+	type ParameterConfig struct {
+		ParameterName     string
+		BooleanFieldName  string
+		RangeFilterFields []string
+		ResponseFields    []string
+	}
+
+	parameterConfigs := []ParameterConfig{
+		{
+			ParameterName:     "eventEstimate",
+			BooleanFieldName:  "EventEstimate",
+			RangeFilterFields: []string{"EconomicImpactGte", "EconomicImpactLte"},
+			ResponseFields:    []string{"economicImpact", "economicImpactBreakdown"},
+		},
+		{
+			ParameterName:     "impactScore",
+			BooleanFieldName:  "ImpactScore",
+			RangeFilterFields: []string{"ImpactScoreGte", "ImpactScoreLte"},
+			ResponseFields:    []string{"impactScore"},
+		},
+	}
+
+	var unauthorizedParameters []string
+	for _, config := range parameterConfigs {
+		v := reflect.ValueOf(filterFields).Elem()
+		boolField := v.FieldByName(config.BooleanFieldName)
+
+		if boolField.IsValid() && boolField.Kind() == reflect.Bool && boolField.Bool() {
+			isBasic := slices.Contains(basicKeys, config.ParameterName)
+			isAdvanced := slices.Contains(advancedKeys, config.ParameterName)
+
+			if isBasic {
+				continue
+			} else if isAdvanced {
+				if !slices.Contains(allowedAdvancedParameters, config.ParameterName) {
+					unauthorizedParameters = append(unauthorizedParameters, config.ParameterName)
+				}
+			} else {
+				log.Printf("Warning: Parameter %s requested but not found in API configuration", config.ParameterName)
+			}
+		}
+	}
+
+	if len(unauthorizedParameters) > 0 {
+		msg := "The requested parameters are not allowed in your current plan, please upgrade your plan to access these advanced parameters: " + strings.Join(unauthorizedParameters, ", ")
+		return middleware.NewForbiddenError("Unauthorized advanced parameters", msg)
+	}
+
+	for _, config := range parameterConfigs {
+		hasRangeFilter := false
+		for _, filterField := range config.RangeFilterFields {
+			v := reflect.ValueOf(filterFields).Elem()
+			field := v.FieldByName(filterField)
+			if field.IsValid() && field.Kind() == reflect.String && field.String() != "" {
+				hasRangeFilter = true
+				break
+			}
+		}
+
+		if hasRangeFilter {
+			v := reflect.ValueOf(filterFields).Elem()
+			boolField := v.FieldByName(config.BooleanFieldName)
+
+			if boolField.IsValid() && boolField.Kind() == reflect.Bool {
+				// Only process if boolean is not explicitly set to true (if true, it was already validated above)
+				if !boolField.Bool() {
+					isBasic := slices.Contains(basicKeys, config.ParameterName)
+					isAdvanced := slices.Contains(advancedKeys, config.ParameterName)
+					hasAccess := isBasic || (isAdvanced && slices.Contains(allowedAdvancedParameters, config.ParameterName))
+
+					if hasAccess {
+						// User has access and range filter is used - automatically enable parameter to return data
+						boolField.SetBool(true)
+						log.Printf("Range filter %v used and user has access to parameter %s. Setting %s to true (data will be returned).", config.RangeFilterFields, config.ParameterName, config.BooleanFieldName)
+					} else {
+						// User doesn't have access - keep boolean false (allow filtering but don't return data)
+						boolField.SetBool(false)
+						log.Printf("Range filter %v used but user doesn't have access to parameter %s. %s will remain false (filtering allowed, data not returned).", config.RangeFilterFields, config.ParameterName, config.BooleanFieldName)
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
 func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, c *fiber.Ctx) (any, error) {
 	startTime := time.Now()
 	ipAddress := c.IP()
@@ -97,6 +194,15 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 
 	allowedFilters = result.AllowedFilters
 	allowedAdvancedParameters = result.AllowedAdvancedParameters
+
+	err = s.validateAndProcessParameterAccess(&filterFields, basicKeys, advancedKeys, allowedAdvancedParameters)
+	if err != nil {
+		log.Printf("Parameter access validation failed: %v", err)
+		statusCode = http.StatusForbidden
+		msg := err.Error()
+		errorMessage = &msg
+		return nil, err
+	}
 
 	var requestedFilters []string
 	v := reflect.ValueOf(filterFields)
@@ -575,17 +681,13 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		"ee.exhibitors_upper_bound as exhibitors_upper_bound",
 	}
 
-	isEconomicImpactRangeFilter := false
-	if filterFields.EconomicImpactGte != "" || filterFields.EconomicImpactLte != "" {
-		isEconomicImpactRangeFilter = true
-	}
-
-	if filterFields.EventEstimate || isEconomicImpactRangeFilter {
+	if filterFields.EventEstimate {
 		baseFields = append(baseFields, "ee.event_economic_value as economicImpact")
 		baseFields = append(baseFields, "ee.event_economic_breakdown as economicImpactBreakdown")
 	}
 
-	if filterFields.ImpactScoreGte != "" || filterFields.ImpactScoreLte != "" {
+	log.Printf("Impact score: %v", filterFields.ImpactScore)
+	if filterFields.ImpactScore {
 		baseFields = append(baseFields, "ee.impactScore as impactScore")
 	}
 

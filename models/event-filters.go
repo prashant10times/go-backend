@@ -230,6 +230,7 @@ type FilterDataDto struct {
 	EventRanking   string `json:"eventRanking,omitempty" form:"eventRanking"`
 	AudienceZone   string `json:"audienceZone,omitempty" form:"audienceZone"`
 	EventEstimate  bool   `json:"eventEstimate,omitempty" form:"eventEstimate"`
+	ImpactScore    bool   `json:"impactScore,omitempty" form:"impactScore"`
 	AudienceSpread string `json:"audienceSpread,omitempty" form:"audienceSpread"`
 
 	InboundScoreGte       string `json:"inboundScore.gte,omitempty" form:"inboundScore.gte"`

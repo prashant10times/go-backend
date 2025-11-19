@@ -35,28 +35,32 @@ func (s *AuthService) GiveFilterAndApiAccess(tx *gorm.DB, userId string, apiId s
 		return err
 	}
 
-	// Get all basic filters for this API
-	var basicFilters []models.APIFilter
-	err = tx.Where("api_id = ? AND is_active = ? AND filter_type = ?", apiId, true, "BASIC").Find(&basicFilters).Error
-	if err != nil {
-		return err
-	}
-
-	// Grant access to all basic filters
-	for _, filter := range basicFilters {
-		userFilterAccess := models.UserFilterAccess{
-			UserID:    userId,
-			FilterID:  filter.ID,
-			HasAccess: true,
-		}
-
-		err = tx.Where("user_id = ? AND filter_id = ?", userId, filter.ID).
-			Assign(models.UserFilterAccess{HasAccess: true}).
-			FirstOrCreate(&userFilterAccess).Error
-		if err != nil {
-			return err
-		}
-	}
+	// NOTE: Basic filters are automatically included for all users and don't need UserFilterAccess entries.
+	// The quotaAndFilterVerification function retrieves basic filters directly from APIFilter table.
+	// Only advanced filters require explicit UserFilterAccess entries.
+	//
+	// // Get all basic filters for this API
+	// var basicFilters []models.APIFilter
+	// err = tx.Where("api_id = ? AND is_active = ? AND filter_type = ?", apiId, true, "BASIC").Find(&basicFilters).Error
+	// if err != nil {
+	// 	return err
+	// }
+	//
+	// // Grant access to all basic filters
+	// for _, filter := range basicFilters {
+	// 	userFilterAccess := models.UserFilterAccess{
+	// 		UserID:    userId,
+	// 		FilterID:  filter.ID,
+	// 		HasAccess: true,
+	// 	}
+	//
+	// 	err = tx.Where("user_id = ? AND filter_id = ?", userId, filter.ID).
+	// 		Assign(models.UserFilterAccess{HasAccess: true}).
+	// 		FirstOrCreate(&userFilterAccess).Error
+	// 	if err != nil {
+	// 		return err
+	// 	}
+	// }
 
 	return nil
 }
