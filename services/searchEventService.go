@@ -772,6 +772,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		"ee.start_date as start",
 		"ee.end_date as end",
 		"ee.event_name as name",
+		"ee.event_abbr_name as shortName",
 		"ee.edition_city_name as city",
 		"ee.edition_country as country",
 		"ee.event_description as description",
