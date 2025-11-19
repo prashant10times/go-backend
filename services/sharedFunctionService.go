@@ -303,11 +303,21 @@ func (s *SharedFunctionService) buildOrderByClause(sortClause []SortClause, need
 	return "", nil
 }
 
-func (s *SharedFunctionService) BuildClickhouseListViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, c *fiber.Ctx) (interface{}, error) {
+func (s *SharedFunctionService) BuildClickhouseListViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx) (interface{}, error) {
+	var nextURL *string
+	if pagination.Offset+pagination.Limit < totalCount {
+		nextURL = s.getPaginationURL(pagination.Limit, pagination.Offset, "next", c)
+	}
+
+	var previousURL *string
+	if pagination.Offset > 0 {
+		previousURL = s.getPaginationURL(pagination.Limit, pagination.Offset, "previous", c)
+	}
+
 	response := fiber.Map{
-		"count":    len(eventData),
-		"next":     s.getPaginationURL(pagination.Limit, pagination.Offset, "next", c),
-		"previous": s.getPaginationURL(pagination.Limit, pagination.Offset, "previous", c),
+		"count":    totalCount,
+		"next":     nextURL,
+		"previous": previousURL,
 		"data":     eventData,
 	}
 	return response, nil
@@ -351,6 +361,12 @@ func (s *SharedFunctionService) getPaginationURL(limit, offset int, paginationTy
 }
 
 func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDataDto) (string, error) {
+	log.Printf("filterFields: %v", filterFields.View)
+	if strings.Contains(filterFields.View, "count") {
+		log.Printf("Query type determined: COUNT")
+		return "COUNT", nil
+	}
+
 	isAggregationView := strings.Contains(filterFields.View, "agg")
 
 	log.Printf("isAggregationView: %v, View: '%s'", isAggregationView, filterFields.View)
@@ -1146,7 +1162,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 		typeQuery += `
 			GROUP BY event_id
-			ORDER BY event_id
+			-- ORDER BY event_id
 		)`
 
 		result.CTEClauses = append(result.CTEClauses, typeQuery)
@@ -1567,6 +1583,76 @@ func (s *SharedFunctionService) buildPublishedCondition(filterFields models.Filt
 		publishedValues[i] = fmt.Sprintf("'%s'", published)
 	}
 	return fmt.Sprintf("published IN (%s)", strings.Join(publishedValues, ","))
+}
+
+func (s *SharedFunctionService) buildListDataCountQuery(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	eventFilterSelectStr string,
+	eventFilterGroupByStr string,
+	hasEndDateFilters bool,
+	filterFields models.FilterDataDto,
+) string {
+	today := time.Now().Format("2006-01-02")
+
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	countQuery := fmt.Sprintf(`
+		WITH %sevent_filter AS (
+			SELECT %s
+			FROM testing_db.allevent_ch AS ee
+			WHERE %s 
+			AND %s
+			AND edition_type = 'current_edition'
+			%s
+			%s
+			%s
+			%s
+			GROUP BY %s
+		),
+		event_data AS (
+			SELECT edition_id
+			FROM testing_db.allevent_ch AS ee
+			WHERE ee.edition_id in (SELECT edition_id from event_filter)
+			GROUP BY edition_id
+		)
+		SELECT count(*) as total_count
+		FROM event_data
+	`,
+		cteClausesStr,
+		eventFilterSelectStr,
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		func() string {
+			if !hasEndDateFilters {
+				return fmt.Sprintf("AND end_date >= '%s'", today)
+			}
+			return ""
+		}(),
+		func() string {
+			if queryResult.WhereClause != "" {
+				return fmt.Sprintf("AND %s", queryResult.WhereClause)
+			}
+			return ""
+		}(),
+		func() string {
+			if queryResult.SearchClause != "" {
+				return fmt.Sprintf("AND %s", queryResult.SearchClause)
+			}
+			return ""
+		}(),
+		joinConditionsStr,
+		eventFilterGroupByStr)
+
+	return countQuery
 }
 
 func (s *SharedFunctionService) buildMultiDayDateSelect() string {

@@ -45,6 +45,7 @@ const (
 	ViewCalendar View = "calendar"
 	ViewTracker  View = "tracker"
 	ViewPromote  View = "promote"
+	ViewCount    View = "count"
 )
 
 type BoundType string
@@ -108,6 +109,8 @@ type FilterDataDto struct {
 	Country        string `json:"country,omitempty" form:"country"`
 	Products       string `json:"products,omitempty" form:"products"`
 	LocationIds    string `json:"locationIds,omitempty" form:"locationIds"`
+
+	// SearchByEntity string `json:"searchByEntity,omitempty" form:"searchByEntity"`
 
 	Price     string `json:"price,omitempty" form:"price"`
 	AvgRating string `json:"avgRating,omitempty" form:"avgRating"`
@@ -205,6 +208,7 @@ type FilterDataDto struct {
 	CompanyState   string `json:"companyState,omitempty" form:"companyState"`
 
 	View                string `json:"view,omitempty" form:"view"`
+	ShowCount           bool   `json:"showCount,omitempty" form:"showCount"`
 	Frequency           string `json:"frequency,omitempty" form:"frequency"`
 	Visibility          string `json:"visibility,omitempty" form:"visibility"`
 	Mode                string `json:"mode,omitempty" form:"mode"`
@@ -407,13 +411,14 @@ func (f *FilterDataDto) Validate() error {
 				"calendar": ViewCalendar,
 				"tracker":  ViewTracker,
 				"promote":  ViewPromote,
+				"count":    ViewCount,
 			}
 
 			if view, exists := validViews[viewLower]; exists {
 				f.ParsedView = []string{string(view)}
 				f.View = viewLower
 			} else {
-				validOptions := []string{"list", "map", "detail", "calendar", "tracker", "promote"}
+				validOptions := []string{"list", "map", "detail", "calendar", "tracker", "promote", "count"}
 				return validation.NewError("invalid_view", "Invalid view value: "+viewStr+". Valid options are: "+strings.Join(validOptions, ", "))
 			}
 			return nil

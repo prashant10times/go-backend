@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -107,7 +108,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		if len(fieldType.Name) >= 6 && fieldType.Name[:6] == "Parsed" {
 			continue
 		}
-		if fieldType.Name == "View" || fieldType.Name == "Radius" || fieldType.Name == "Unit" || fieldType.Name == "EventDistanceOrder" || fieldType.Name == "Q" {
+		if fieldType.Name == "View" || fieldType.Name == "ShowCount" || fieldType.Name == "Radius" || fieldType.Name == "Unit" || fieldType.Name == "EventDistanceOrder" || fieldType.Name == "Q" {
 			continue
 		}
 		if field.Kind() == reflect.String && field.String() != "" {
@@ -188,9 +189,10 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	typeArray := strings.Split(filterFields.Type, ",")
 	if filterFields.Type != "" && len(typeArray) == 1 && typeArray[0] == s.cfg.AlertId {
 		baseParams := models.AlertSearchParams{
-			EventIds:  validatedParameters.ParsedEventIds,
-			StartDate: &validatedParameters.ActiveGte,
-			EndDate:   &validatedParameters.ActiveLte,
+			EventIds:    validatedParameters.ParsedEventIds,
+			StartDate:   &validatedParameters.ActiveGte,
+			EndDate:     &validatedParameters.ActiveLte,
+			LocationIds: validatedParameters.ParsedLocationIds,
 		}
 
 		if validatedParameters.ParsedViewBound != nil {
@@ -336,7 +338,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			return nil, fmt.Errorf("unexpected data type: %T", eventData)
 		}
 
-		response, err = s.sharedFunctionService.BuildClickhouseListViewResponse(eventDataSlice, pagination, c)
+		response, err = s.sharedFunctionService.BuildClickhouseListViewResponse(eventDataSlice, pagination, result.Count, c)
 		if err != nil {
 			log.Printf("Error building response: %v", err)
 			return nil, err
@@ -360,6 +362,20 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		}
 
 		response = result.Response
+
+	case "COUNT":
+		count, err := s.getCountOnly(filterFields)
+		if err != nil {
+			log.Printf("Error getting count: %v", err)
+			statusCode = http.StatusInternalServerError
+			msg := err.Error()
+			errorMessage = &msg
+			return nil, middleware.NewInternalServerError("Count query failed", err.Error())
+		}
+
+		response = fiber.Map{
+			"count": count,
+		}
 
 	default:
 		statusCode = http.StatusBadRequest
@@ -416,6 +432,7 @@ func (s *SearchEventService) getAlerts(params models.AlertSearchParams) (interfa
 
 type ListResult struct {
 	Data         interface{}
+	Count        int
 	StatusCode   int
 	ErrorMessage string
 }
@@ -424,6 +441,121 @@ type AggregationResult struct {
 	StatusCode int
 	Response   interface{}
 	Error      error
+}
+
+func (s *SearchEventService) getListDataCount(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	eventFilterSelectStr string,
+	eventFilterGroupByStr string,
+	hasEndDateFilters bool,
+	filterFields models.FilterDataDto,
+) (int, error) {
+	countQuery := s.sharedFunctionService.buildListDataCountQuery(
+		queryResult,
+		cteAndJoinResult,
+		eventFilterSelectStr,
+		eventFilterGroupByStr,
+		hasEndDateFilters,
+		filterFields,
+	)
+
+	log.Printf("Count query: %s", countQuery)
+
+	countQueryTime := time.Now()
+	countResult, err := s.clickhouseService.ExecuteQuery(context.Background(), countQuery)
+	if err != nil {
+		log.Printf("ClickHouse count query error: %v", err)
+		return 0, err
+	}
+	defer countResult.Close()
+
+	countQueryDuration := time.Since(countQueryTime)
+	log.Printf("Count query time: %v", countQueryDuration)
+
+	var totalCount uint64
+	if countResult.Next() {
+		if err := countResult.Scan(&totalCount); err != nil {
+			log.Printf("Error scanning count result: %v", err)
+			return 0, err
+		}
+	}
+
+	return int(totalCount), nil
+}
+
+func (s *SearchEventService) getCountOnly(filterFields models.FilterDataDto) (int, error) {
+	queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
+	if err != nil {
+		log.Printf("Error building ClickHouse query: %v", err)
+		return 0, err
+	}
+
+	eventFilterSelectFields := []string{"event_id", "edition_id"}
+	eventFilterGroupByFields := []string{"event_id", "edition_id"}
+
+	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
+		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_lat as lat")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "lat")
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_long as lon")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "lon")
+		}
+		if strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon") {
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_lat as venueLat")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLat")
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_long as venueLon")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLon")
+		}
+	}
+
+	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
+	eventFilterGroupByStr := strings.Join(eventFilterGroupByFields, ", ")
+
+	cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
+		queryResult.NeedsVisitorJoin,
+		queryResult.NeedsSpeakerJoin,
+		queryResult.NeedsExhibitorJoin,
+		queryResult.NeedsSponsorJoin,
+		queryResult.NeedsCategoryJoin,
+		queryResult.NeedsTypeJoin,
+		queryResult.NeedsEventRankingJoin,
+		queryResult.needsDesignationJoin,
+		queryResult.needsAudienceSpreadJoin,
+		queryResult.NeedsRegionsJoin,
+		queryResult.NeedsLocationIdsJoin,
+		queryResult.VisitorWhereConditions,
+		queryResult.SpeakerWhereConditions,
+		queryResult.ExhibitorWhereConditions,
+		queryResult.SponsorWhereConditions,
+		queryResult.CategoryWhereConditions,
+		queryResult.TypeWhereConditions,
+		queryResult.EventRankingWhereConditions,
+		queryResult.JobCompositeWhereConditions,
+		queryResult.AudienceSpreadWhereConditions,
+		queryResult.RegionsWhereConditions,
+		queryResult.LocationIdsWhereConditions,
+		filterFields,
+	)
+
+	hasEndDateFilters := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
+		filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != "" ||
+		filterFields.CreatedAt != "" || len(filterFields.ParsedEventIds) > 0 || len(filterFields.ParsedNotEventIds) > 0 || len(filterFields.ParsedSourceEventIds) > 0 || len(filterFields.ParsedDates) > 0 || filterFields.ParsedPastBetween != nil || filterFields.ParsedActiveBetween != nil
+
+	count, err := s.getListDataCount(
+		queryResult,
+		&cteAndJoinResult,
+		eventFilterSelectStr,
+		eventFilterGroupByStr,
+		hasEndDateFilters,
+		filterFields,
+	)
+
+	if err != nil {
+		return 0, err
+	}
+
+	return count, nil
 }
 
 func (s *SearchEventService) getListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto) (*ListResult, error) {
@@ -759,18 +891,55 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 	log.Printf("Event data query: %s", eventDataQuery)
 
-	eventDataQueryTime := time.Now()
-	eventDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), eventDataQuery)
-	if err != nil {
-		log.Printf("ClickHouse query error: %v", err)
-		return &ListResult{
-			StatusCode:   500,
-			ErrorMessage: err.Error(),
-		}, nil
+	type dataResult struct {
+		Rows driver.Rows
+		Err  error
 	}
 
-	eventDataQueryDuration := time.Since(eventDataQueryTime)
-	log.Printf("Event data query time: %v", eventDataQueryDuration)
+	type countResult struct {
+		Count int
+		Err   error
+	}
+
+	dataChan := make(chan dataResult, 1)
+	countChan := make(chan countResult, 1)
+
+	go func() {
+		eventDataQueryTime := time.Now()
+		eventDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), eventDataQuery)
+		eventDataQueryDuration := time.Since(eventDataQueryTime)
+		log.Printf("Event data query time: %v", eventDataQueryDuration)
+		dataChan <- dataResult{Rows: eventDataResult, Err: err}
+	}()
+
+	go func() {
+		count, err := s.getListDataCount(
+			queryResult,
+			&cteAndJoinResult,
+			eventFilterSelectStr,
+			eventFilterGroupByStr,
+			hasEndDateFilters,
+			filterFields,
+		)
+		countChan <- countResult{Count: count, Err: err}
+	}()
+
+	dataRes := <-dataChan
+	if dataRes.Err != nil {
+		log.Printf("ClickHouse query error: %v", dataRes.Err)
+		return &ListResult{
+			StatusCode:   500,
+			ErrorMessage: dataRes.Err.Error(),
+		}, nil
+	}
+	eventDataResult := dataRes.Rows
+
+	countRes := <-countChan
+	if countRes.Err != nil {
+		log.Printf("ClickHouse count query error: %v", countRes.Err)
+		log.Printf("Warning: Count query failed, continuing without count")
+	}
+	totalCount := countRes.Count
 
 	var eventIds []uint32
 	var eventData []map[string]interface{}
@@ -884,6 +1053,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		return &ListResult{
 			StatusCode: 200,
 			Data:       []interface{}{},
+			Count:      totalCount,
 		}, nil
 	}
 
@@ -1193,6 +1363,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	return &ListResult{
 		StatusCode: 200,
 		Data:       combinedData,
+		Count:      totalCount,
 	}, nil
 }
 
