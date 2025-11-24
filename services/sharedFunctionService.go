@@ -3000,21 +3000,21 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 				selectColumn = "event_id"
 			}
 			preEventFilterCTE = fmt.Sprintf(`pre_event_filter AS (
-			SELECT event_id, edition_id
-			FROM testing_db.allevent_ch AS ee
-			WHERE event_id IN (SELECT %s FROM %s)
-			AND %s
-			GROUP BY event_id, edition_id
-			ORDER BY event_id ASC
-		)`, selectColumn, previousCTE, preEventFilterWhereClause)
+				SELECT event_id, edition_id
+				FROM testing_db.allevent_ch AS ee
+				WHERE event_id IN (SELECT %s FROM %s)
+				AND %s
+				GROUP BY event_id, edition_id
+				ORDER BY event_id ASC
+			)`, selectColumn, previousCTE, preEventFilterWhereClause)
 		} else {
 			preEventFilterCTE = fmt.Sprintf(`pre_event_filter AS (
-			SELECT event_id, edition_id
-			FROM testing_db.allevent_ch AS ee
-			WHERE %s
-			GROUP BY event_id, edition_id
-			ORDER BY event_id ASC
-		)`, preEventFilterWhereClause)
+				SELECT event_id, edition_id
+				FROM testing_db.allevent_ch AS ee
+				WHERE %s
+				GROUP BY event_id, edition_id
+				ORDER BY event_id ASC
+			)`, preEventFilterWhereClause)
 		}
 
 		cteClauses = append(cteClauses, preEventFilterCTE)
@@ -3033,7 +3033,6 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 			}
 			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
 		}
-
 		if hasCategoryFilter {
 			categories := make([]string, len(filterFields.ParsedCategory))
 			for i, category := range filterFields.ParsedCategory {
@@ -3041,7 +3040,6 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 			}
 			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
 		}
-
 		if !hasCountryFilter && !hasCategoryFilter {
 			eventRankingConditions = append(eventRankingConditions, "((country = '' AND category_name = ''))")
 		}
@@ -3049,7 +3047,6 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		if len(queryResult.EventRankingWhereConditions) > 0 {
 			eventRankingConditions = append(eventRankingConditions, queryResult.EventRankingWhereConditions...)
 		}
-
 		eventRankingLimit := filterFields.ParsedEventRanking[0]
 
 		filteredEventRankingCTE := fmt.Sprintf(`filtered_event_ranking AS (
@@ -3804,12 +3801,15 @@ func (s *SharedFunctionService) TransformRankings(rankingsStr string, filterFiel
 
 func (s *SharedFunctionService) DetermineRankingType(filterFields models.FilterDataDto) RankingType {
 	hasCategories := len(filterFields.ParsedCategory) > 0
+	hasCountries := len(filterFields.ParsedCountry) > 0
 	hasLocationIds := len(filterFields.ParsedLocationIds) > 0
 
-	if hasCategories && hasLocationIds {
+	hasLocation := hasCountries || hasLocationIds
+
+	if hasCategories && hasLocation {
 		return RankingTypeCategoryCountry
 	}
-	if hasLocationIds {
+	if hasLocation {
 		return RankingTypeCountry
 	}
 	if hasCategories {
@@ -3821,7 +3821,7 @@ func (s *SharedFunctionService) DetermineRankingType(filterFields models.FilterD
 func (s *SharedFunctionService) PrioritizeRankings(filterFields models.FilterDataDto, ranks Rankings, rankType RankingType) *PrioritizedRank {
 	switch rankType {
 	case RankingTypeGlobal:
-		if ranks.Global != nil {
+		if ranks.Global != nil && *ranks.Global != 0 {
 			return &PrioritizedRank{
 				Rank:       *ranks.Global,
 				RankType:   RankingTypeGlobal,
@@ -3834,12 +3834,26 @@ func (s *SharedFunctionService) PrioritizeRankings(filterFields models.FilterDat
 
 	case RankingTypeCountry:
 		if ranks.Country != nil {
-			return &PrioritizedRank{
-				Rank:       ranks.Country.Rank,
-				RankType:   RankingTypeCountry,
-				RankRange:  s.GetRankRange(ranks.Country.Rank),
-				CategoryID: nil,
-				CountryID:  &ranks.Country.ID,
+			matchesFilter := len(filterFields.ParsedCountry) == 0 && len(filterFields.ParsedLocationIds) == 0
+			if !matchesFilter {
+				for _, countryID := range filterFields.ParsedCountry {
+					if ranks.Country.ID == countryID {
+						matchesFilter = true
+						break
+					}
+				}
+				if !matchesFilter && len(filterFields.ParsedLocationIds) > 0 {
+					matchesFilter = true
+				}
+			}
+			if matchesFilter {
+				return &PrioritizedRank{
+					Rank:       ranks.Country.Rank,
+					RankType:   RankingTypeCountry,
+					RankRange:  s.GetRankRange(ranks.Country.Rank),
+					CategoryID: nil,
+					CountryID:  &ranks.Country.ID,
+				}
 			}
 		}
 		return nil

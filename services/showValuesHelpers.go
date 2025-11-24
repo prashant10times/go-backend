@@ -590,10 +590,10 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 			event_id,
 			'rankings' AS data_type,
 			arrayStringConcat(
-				groupArray(
+				groupUniqArray(
 					concat(
 						if(toString(country) = '', 'null', toString(country)), '<val-sep>',
-						if(toString(category) = '', 'null', toString(category)), '<val-sep>',
+						if(toString(category_name) = '', 'null', toString(category_name)), '<val-sep>',
 						toString(ifNull(event_rank, 0))
 					)
 				),

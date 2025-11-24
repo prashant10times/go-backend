@@ -1867,11 +1867,14 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				parsedRankings := s.sharedFunctionService.TransformRankings(rankingsValue, filterFields)
 				if parsedRankings != nil {
 					grouper.AddField("rankings", parsedRankings)
+				} else {
 				}
+			} else {
 			}
 		}
 
 		if processor.IsGroupedStructure() {
+
 			if len(requestedFieldsSet) == 0 || requestedFieldsSet["impactScore"] || requestedFieldsSet["inboundScore"] || requestedFieldsSet["internationalScore"] {
 				scoresData := make(map[string]interface{})
 				hasScores := false
