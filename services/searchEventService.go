@@ -2,6 +2,9 @@ package services
 
 import (
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -228,7 +231,7 @@ func (s *SearchEventService) validateAndProcessParameterAccess(
 	return nil
 }
 
-func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, c *fiber.Ctx) (any, error) {
+func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, showValues string, c *fiber.Ctx) (any, error) {
 	startTime := time.Now()
 	ipAddress := c.IP()
 	statusCode := 200
@@ -373,7 +376,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		return nil, middleware.NewBadRequestError("Invalid sort fields", err.Error())
 	}
 
-	// // original api Logic
+	//original api Logic
 	validatedParameters, err := s.sharedFunctionService.validateParameters(filterFields)
 	if err != nil {
 		log.Printf("Error validating parameters: %v", err)
@@ -503,7 +506,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 
 	switch queryType {
 	case "LIST":
-		result, err := s.getListData(pagination, sortClause, filterFields)
+		result, err := s.getListData(pagination, sortClause, filterFields, showValues)
 		if err != nil {
 			log.Printf("Error getting list data: %v", err)
 			statusCode = http.StatusInternalServerError
@@ -765,45 +768,15 @@ func (s *SearchEventService) getCountOnly(filterFields models.FilterDataDto) (in
 	return count, nil
 }
 
-func (s *SearchEventService) getListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto) (*ListResult, error) {
-	baseFields := []string{
-		"ee.event_uuid as id",
-		"ee.event_id",
-		"ee.start_date as start",
-		"ee.end_date as end",
-		"ee.event_name as name",
-		"ee.event_abbr_name as shortName",
-		"ee.edition_city_name as city",
-		"ee.edition_country as country",
-		"ee.event_description as description",
-		"ee.event_followers as followers",
-		"ee.event_logo as logo",
-		"ee.event_avgRating as avgRating",
-		"ee.exhibitors_lower_bound as exhibitors_lower_bound",
-		"ee.exhibitors_upper_bound as exhibitors_upper_bound",
-		"ee.event_format as format",
-		"ee.yoyGrowth as yoyGrowth",
-		"ee.tickets as tickets",
-	}
+func (s *SearchEventService) getListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto, showValues string) (*ListResult, error) {
+	processor := NewShowValuesProcessor(showValues)
+	requestedFieldsSet := processor.GetRequestedFieldsSet()
+	requestedGroupsSet := processor.GetRequestedGroups()
 
-	if filterFields.EventEstimate {
-		baseFields = append(baseFields, "ee.event_economic_value as economicImpact")
-		baseFields = append(baseFields, "ee.event_economic_breakdown as economicImpactBreakdown")
-	}
-
-	if filterFields.ImpactScore {
-		baseFields = append(baseFields, "ee.impactScore as impactScore")
-	}
-
-	baseFieldMap := make(map[string]bool)
-	for _, field := range baseFields {
-		fieldName := strings.Replace(field, "ee.", "", 1)
-		if strings.Contains(fieldName, " as ") {
-			parts := strings.Split(fieldName, " as ")
-			fieldName = strings.TrimSpace(parts[0])
-		}
-		baseFieldMap[fieldName] = true
-	}
+	fieldsSelector := NewBaseFieldsSelector(processor, filterFields)
+	baseFields := fieldsSelector.GetBaseFields()
+	baseFieldMap := fieldsSelector.BuildBaseFieldMap(baseFields)
+	dbColumnToAliasMap := fieldsSelector.BuildDBColumnToAliasMap(baseFields)
 
 	dbToAliasMap := map[string]string{
 		"event_exhibitor":       "exhibitors",
@@ -817,6 +790,18 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		"inboundEstimate":       "inboundAttendance",
 		"internationalEstimate": "internationalAttendance",
 		"event_updated":         "updated",
+		"start_date":            "start",
+		"end_date":              "end",
+		"event_followers":       "followers",
+		"event_avgRating":       "avgRating",
+		"event_name":            "name",
+		"event_abbr_name":       "shortName",
+		"edition_city_name":     "city",
+		"edition_country":       "country",
+		"event_description":     "description",
+		"event_logo":            "logo",
+		"event_format":          "format",
+		"yoyGrowth":             "yoyGrowth",
 	}
 
 	var conditionalFields []string
@@ -824,17 +809,44 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	if len(sortClause) > 0 {
 		for _, sort := range sortClause {
 			if sort.Field != "" {
-				if !baseFieldMap[sort.Field] && !conditionalFieldMap[sort.Field] {
+				alias := dbColumnToAliasMap[sort.Field]
+				if alias == "" {
+					alias = dbToAliasMap[sort.Field]
+				}
+				if alias == "" {
+					alias = sort.Field
+				}
+
+				fieldAlreadyIncluded := baseFieldMap[sort.Field] || baseFieldMap[alias]
+
+				if !fieldAlreadyIncluded && !conditionalFieldMap[sort.Field] && !conditionalFieldMap[alias] {
 					if sort.Field == "duration" {
 						conditionalFields = append(conditionalFields, "(ee.end_date - ee.start_date) as duration")
+						conditionalFieldMap["duration"] = true
 					} else {
-						alias := dbToAliasMap[sort.Field]
-						if alias == "" {
-							alias = sort.Field
+						dbColumn := sort.Field
+						sortFieldToDBColumn := map[string]string{
+							"start":               "start_date",
+							"end":                 "end_date",
+							"created":             "event_created",
+							"following":           "event_followers",
+							"exhibitors":          "event_exhibitor",
+							"speakers":            "event_speaker",
+							"sponsors":            "event_sponsor",
+							"avgRating":           "event_avgRating",
+							"title":               "event_name",
+							"estimatedExhibitors": "exhibitors_mean",
+							"score":               "event_score",
+							"updated":             "event_updated",
 						}
-						conditionalFields = append(conditionalFields, fmt.Sprintf("ee.%s as %s", sort.Field, alias))
+						if mappedColumn, exists := sortFieldToDBColumn[sort.Field]; exists {
+							dbColumn = mappedColumn
+						}
+
+						conditionalFields = append(conditionalFields, fmt.Sprintf("ee.%s as %s", dbColumn, alias))
+						conditionalFieldMap[sort.Field] = true
+						conditionalFieldMap[alias] = true
 					}
-					conditionalFieldMap[sort.Field] = true
 				}
 			}
 		}
@@ -1032,9 +1044,24 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 	innerOrderBy := func() string {
 		if finalOrderClause != "" {
+			fixedOrderBy := fieldsSelector.FixOrderByForFields(finalOrderClause, requiredFieldsStatic)
+			if fixedOrderBy != "" {
+				return fixedOrderBy
+			}
 			return s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true)
 		}
 		return "ORDER BY score ASC"
+	}()
+
+	finalOrderByClause := func() string {
+		if finalOrderClause != "" {
+			fixedOrderBy := fieldsSelector.FixOrderByForFields(finalOrderClause, requiredFieldsStatic)
+			if fixedOrderBy != "" {
+				return fixedOrderBy
+			}
+			return s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true)
+		}
+		return ""
 	}()
 
 	today := time.Now().Format("2006-01-02")
@@ -1105,7 +1132,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		eventFilterOrderBy,
 		pagination.Limit, pagination.Offset,
 		fieldsString, finalGroupByClause, innerOrderBy,
-		finalGroupByClause, finalGroupByClause, s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true))
+		finalGroupByClause, finalGroupByClause, finalOrderByClause)
 
 	log.Printf("Event data query: %s", eventDataQuery)
 
@@ -1172,22 +1199,32 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		values := make([]interface{}, len(columns))
 		for i, col := range columns {
 			switch col {
-			case "event_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors", "inboundScore", "internationalScore", "inboundAttendance", "internationalAttendance":
+			case "event_id", "edition_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors", "inboundScore", "internationalScore", "inboundAttendance", "internationalAttendance", "exhibitorsCount", "speakersCount", "sponsorsCount", "editions", "estimatedAttendanceMean", "organizer_companyId", "trustScore":
 				values[i] = new(uint32)
 			case "score", "duration":
 				values[i] = new(int32)
-			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown":
+			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown", "shortName", "format", "entryType", "website", "10timesEventPageUrl", "estimatedVisitorRangeTag", "maturity", "frequency", "organizer_id", "organizer_name", "organizer_website", "organizer_logoUrl", "organizer_address", "organizer_city", "organizer_state", "organizer_country", "audienceZone":
 				values[i] = new(string)
-			case "start", "end", "updated":
+			case "futureExpectedStartDate", "futureExpectedEndDate":
 				values[i] = new(time.Time)
-			case "avgRating":
+			case "isBranded", "isSeries":
+				values[i] = new(string)
+			case "publishStatus":
+				values[i] = new(int8)
+			case "start", "end", "updated", "createdAt", "lastVerifiedOn", "start_date", "end_date", "event_created", "event_updated", "verifiedOn":
+				values[i] = new(time.Time)
+			case "avgRating", "event_avgRating":
 				values[i] = new(*decimal.Decimal)
-			case "lat", "lon", "venueLat", "venueLon", "economicImpact":
+			case "lat", "lon", "venueLat", "venueLon", "economicImpact", "trustChangePercentage", "reputationChangePercentage", "edition_city_lat", "edition_city_long", "venue_lat", "venue_long", "event_economic_value":
 				values[i] = new(float64)
+			case "yoyGrowth":
+				values[i] = new(uint32)
 			case "keywords":
 				values[i] = new(string)
-			case "tickets":
+			case "tickets", "timings":
 				values[i] = new([]string)
+			case "isNew":
+				values[i] = new(bool)
 			default:
 				values[i] = new(string)
 			}
@@ -1219,11 +1256,55 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				}
 			case "id":
 				if eventUUID, ok := val.(*string); ok && eventUUID != nil {
-					rowData["id"] = *eventUUID
+					if strings.TrimSpace(*eventUUID) == "" {
+						rowData["id"] = nil
+					} else {
+						rowData["id"] = *eventUUID
+					}
+				} else {
+					rowData["id"] = nil
 				}
-			case "start", "end", "updated":
+			case "start", "end", "updated", "createdAt", "start_date", "end_date", "event_created", "event_updated":
+				var fieldName string
+				switch col {
+				case "start_date":
+					fieldName = "start"
+				case "end_date":
+					fieldName = "end"
+				case "event_created":
+					fieldName = "createdAt"
+				case "event_updated":
+					fieldName = "updated"
+				default:
+					fieldName = col
+				}
+
 				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
-					rowData[col] = dateVal.Format("2006-01-02")
+					rowData[fieldName] = dateVal.Format("2006-01-02")
+				}
+			case "lastVerifiedOn":
+				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
+					if dateVal.IsZero() {
+						rowData[col] = nil
+					} else {
+						rowData[col] = dateVal.Format("2006-01-02")
+					}
+				} else {
+					rowData[col] = nil
+				}
+			case "futureExpectedStartDate", "futureExpectedEndDate":
+				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
+					if dateVal.IsZero() {
+						rowData[col] = nil
+					} else {
+						rowData[col] = dateVal.Format("2006-01-02")
+					}
+				} else {
+					rowData[col] = nil
+				}
+			case "isNew":
+				if isNewVal, ok := val.(*bool); ok && isNewVal != nil {
+					rowData[col] = *isNewVal
 				}
 			case "avgRating":
 				if avgRating, ok := val.(**decimal.Decimal); ok && avgRating != nil && *avgRating != nil {
@@ -1244,8 +1325,16 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				} else {
 					rowData[col] = "$0"
 				}
+			case "yoyGrowth":
+				if yoyGrowthVal, ok := val.(*uint32); ok && yoyGrowthVal != nil {
+					rowData[col] = float64(*yoyGrowthVal)
+				} else if yoyGrowthVal, ok := val.(*float64); ok && yoyGrowthVal != nil {
+					rowData[col] = *yoyGrowthVal
+				} else {
+					rowData[col] = 0.0
+				}
 			case "economicImpactBreakdown":
-				if economicBreakdown, ok := val.(*string); ok && economicBreakdown != nil {
+				if economicBreakdown, ok := val.(*string); ok && economicBreakdown != nil && strings.TrimSpace(*economicBreakdown) != "" {
 					var jsonData interface{}
 					if err := json.Unmarshal([]byte(*economicBreakdown), &jsonData); err == nil {
 						rowData[col] = jsonData
@@ -1253,20 +1342,20 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 						rowData[col] = *economicBreakdown
 					}
 				} else {
-					rowData[col] = "{}"
+					rowData[col] = nil
 				}
-			case "tickets":
-				if ticketsPtr, ok := val.(*[]string); ok && ticketsPtr != nil {
-					parsedTickets := make([]interface{}, 0, len(*ticketsPtr))
-					for _, str := range *ticketsPtr {
+			case "tickets", "timings":
+				if arrayPtr, ok := val.(*[]string); ok && arrayPtr != nil {
+					parsedArray := make([]interface{}, 0, len(*arrayPtr))
+					for _, str := range *arrayPtr {
 						var jsonData interface{}
 						if err := json.Unmarshal([]byte(str), &jsonData); err == nil {
-							parsedTickets = append(parsedTickets, jsonData)
+							parsedArray = append(parsedArray, jsonData)
 						} else {
-							parsedTickets = append(parsedTickets, str)
+							parsedArray = append(parsedArray, str)
 						}
 					}
-					rowData[col] = parsedTickets
+					rowData[col] = parsedArray
 				} else {
 					rowData[col] = []interface{}{}
 				}
@@ -1310,9 +1399,35 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				if len(keywordsArray) > 0 {
 					rowData["keywords"] = keywordsArray
 				}
+			case "isBranded", "isSeries":
+				if uuidVal, ok := val.(*string); ok && uuidVal != nil && *uuidVal != "" {
+					rowData[col] = *uuidVal
+				} else {
+					rowData[col] = nil
+				}
+			case "publishStatus":
+				if publishStatusVal, ok := val.(*int8); ok && publishStatusVal != nil {
+					rowData[col] = fmt.Sprintf("%d", *publishStatusVal)
+				} else if publishStatusStr, ok := val.(*string); ok && publishStatusStr != nil {
+					rowData[col] = *publishStatusStr
+				}
+			case "PrimaryEventType":
+				if uuidVal, ok := val.(*string); ok && uuidVal != nil && *uuidVal != "" {
+					if eventTypeName, exists := EventTypeById[*uuidVal]; exists {
+						rowData[col] = eventTypeName
+					} else {
+						rowData[col] = nil
+					}
+				} else {
+					rowData[col] = nil
+				}
 			default:
 				if ptr, ok := val.(*string); ok && ptr != nil {
-					rowData[col] = *ptr
+					if strings.TrimSpace(*ptr) == "" {
+						rowData[col] = nil
+					} else {
+						rowData[col] = *ptr
+					}
 				} else if ptr, ok := val.(*uint32); ok && ptr != nil {
 					rowData[col] = *ptr
 				} else if ptr, ok := val.(*float64); ok && ptr != nil {
@@ -1340,113 +1455,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
 
-	relatedDataQuery := fmt.Sprintf(`
-		WITH current_events AS (
-    		SELECT edition_id
-    		FROM testing_db.allevent_ch
-    		WHERE event_id IN (%s)
-			AND edition_type = 'current_edition'
-		)	
-		SELECT 
-			event AS event_id,
-			'category' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value,
-			arrayStringConcat(groupArray(slug), ', ') AS slug_value,
-			'' AS eventGroupType_value
-		FROM testing_db.event_category_ch
-		WHERE event IN (%s) 
-		  AND is_group = 1
-		GROUP BY event
-
-		UNION ALL
-
-		SELECT 
-			event AS event_id,
-			'tags' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value,
-			arrayStringConcat(groupArray(slug), ', ') AS slug_value,
-			'' AS eventGroupType_value
-		FROM testing_db.event_category_ch
-		WHERE event IN (%s) 
-		  AND is_group = 0
-		GROUP BY event
-
-		UNION ALL
-
-		SELECT 
-			event_id,
-			'types' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(eventtype_uuid), ', ') AS uuid_value,
-			arrayStringConcat(groupArray(slug), ', ') AS slug_value,
-			arrayStringConcat(groupArray(eventGroupType), ', ') AS eventGroupType_value
-		FROM testing_db.event_type_ch
-		WHERE event_id IN (%s)
-		GROUP BY event_id
-	`, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined, eventIdsStrJoined)
-
-	if len(filterFields.ParsedJobComposite) > 0 && queryResult.needsDesignationJoin {
-		escapedDesignations := make([]string, len(filterFields.ParsedJobComposite))
-		for i, designation := range filterFields.ParsedJobComposite {
-			escapedDesignations[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(designation, "'", "''"))
-		}
-		designationsStr := strings.Join(escapedDesignations, ",")
-
-		relatedDataQuery += fmt.Sprintf(`
-		UNION ALL
-
-		SELECT 
-			event_id,
-			'jobComposite' AS data_type,
-			concat(display_name, '|||', role, '|||', department) AS value,
-			'' AS uuid_value,
-			'' AS slug_value,
-			'' AS eventGroupType_value
-		FROM testing_db.event_designation_ch
-		WHERE edition_id IN (SELECT edition_id FROM current_events) 
-			AND display_name IN (%s)
-			AND total_visitors >= 5
-		ORDER BY event_id, total_visitors DESC
-		`, designationsStr)
-	}
-	if len(filterFields.ParsedAudienceSpread) > 0 && queryResult.needsAudienceSpreadJoin {
-		relatedDataQuery += `
-		UNION ALL
-
-		SELECT 
-			event_id,
-			'countrySpread' AS data_type,
-			CAST(country_data as String) AS value,
-			'' AS uuid_value,
-			'' AS slug_value,
-			'' AS eventGroupType_value
-		FROM testing_db.event_visitorSpread_ch
-		ARRAY JOIN user_by_cntry AS country_data
-		WHERE event_id IN (` + eventIdsStrJoined + `)
-		ORDER BY event_id, JSONExtractInt(CAST(country_data as String), 'total_count') DESC
-		LIMIT 5 BY event_id
-		`
-	}
-
-	if len(filterFields.ParsedAudienceSpread) > 0 && queryResult.needsAudienceSpreadJoin {
-		relatedDataQuery += `
-		UNION ALL
-
-		SELECT 
-			event_id,
-			'designationSpread' AS data_type,
-			CAST(designation_data as String) AS value,
-			'' AS uuid_value,
-			'' AS slug_value,
-			'' AS eventGroupType_value
-		FROM testing_db.event_visitorSpread_ch
-		ARRAY JOIN user_by_designation AS designation_data
-		WHERE event_id IN (` + eventIdsStrJoined + `)
-		ORDER BY event_id, JSONExtractInt(CAST(designation_data as String), 'total_count') DESC
-		`
-	}
+	queryBuilder := NewRelatedDataQueryBuilder(processor, filterFields, queryResult, eventIdsStrJoined)
+	relatedDataQuery := queryBuilder.BuildQuery()
 
 	log.Printf("Related data query: %s", relatedDataQuery)
 	relatedDataQueryTime := time.Now()
@@ -1468,6 +1478,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	jobCompositeMap := make(map[string][]map[string]string)
 	countrySpreadMap := make(map[string][]map[string]interface{})
 	designationSpreadMap := make(map[string][]map[string]interface{})
+	rankingsMap := make(map[string]string)
 
 	for relatedDataResult.Next() {
 		var eventID uint32
@@ -1602,59 +1613,319 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				}
 				designationSpreadMap[eventIDStr] = append(designationSpreadMap[eventIDStr], transformedDesignationData)
 			}
+		case "rankings":
+			rankingsMap[eventIDStr] = value
 		}
 	}
 
 	var combinedData []map[string]interface{}
 	for _, event := range eventData {
 		eventID := fmt.Sprintf("%d", event["event_id"])
-		combinedEvent := make(map[string]interface{})
-		for k, v := range event {
-			combinedEvent[k] = v
-		}
-		combinedEvent["categories"] = categoriesMap[eventID]
-		combinedEvent["tags"] = tagsMap[eventID]
-		combinedEvent["types"] = typesMap[eventID]
 
-		if jobCompositeData, ok := jobCompositeMap[eventID]; ok && len(jobCompositeData) > 0 {
-			var jobCompositeArray []map[string]interface{}
-			for _, designation := range jobCompositeData {
-				jobCompositeArray = append(jobCompositeArray, map[string]interface{}{
-					"name":       designation["name"],
-					"role":       designation["role"],
-					"department": designation["department"],
-				})
+		grouper := NewFieldGrouper(processor)
+		grouper.ProcessEventFields(event)
+
+		var combinedEvent map[string]interface{}
+		var groupedFields map[ResponseGroups]map[string]interface{}
+
+		if processor.IsGroupedStructure() {
+			groupedFields = grouper.GetGroupedFields()
+			combinedEvent = make(map[string]interface{})
+		} else {
+			combinedEvent = grouper.GetFlatEvent()
+		}
+
+		if len(requestedFieldsSet) == 0 || requestedFieldsSet["isNew"] {
+			var createdTime, updatedTime time.Time
+			var hasCreated, hasUpdated bool
+
+			if createdAtStr, ok := event["createdAt"].(string); ok && createdAtStr != "" {
+				if t, err := time.Parse("2006-01-02", createdAtStr); err == nil {
+					createdTime = t
+					hasCreated = true
+				}
+			} else if createdAtTime, ok := event["createdAt"].(time.Time); ok {
+				createdTime = createdAtTime
+				hasCreated = true
 			}
-			combinedEvent["jobComposite"] = jobCompositeArray
+
+			if updatedStr, ok := event["updated"].(string); ok && updatedStr != "" {
+				if t, err := time.Parse("2006-01-02", updatedStr); err == nil {
+					updatedTime = t
+					hasUpdated = true
+				}
+			} else if updatedTimeVal, ok := event["updated"].(time.Time); ok {
+				updatedTime = updatedTimeVal
+				hasUpdated = true
+			}
+
+			var isNewValue bool
+			if hasCreated && hasUpdated {
+				isNewValue = updatedTime.After(createdTime) || updatedTime.Equal(createdTime)
+			} else if hasCreated {
+				isNewValue = false
+			}
+
+			grouper.AddField("isNew", isNewValue)
 		}
 
-		audienceData := make(map[string]interface{})
-		if countrySpreadData, ok := countrySpreadMap[eventID]; ok && len(countrySpreadData) > 0 {
-			audienceData["countrySpread"] = countrySpreadData
-		}
-		if designationSpreadData, ok := designationSpreadMap[eventID]; ok && len(designationSpreadData) > 0 {
-			audienceData["designationSpread"] = designationSpreadData
+		if len(requestedFieldsSet) == 0 || requestedFieldsSet["organizer"] {
+			organizer := make(map[string]interface{})
+			hasOrganizerData := false
+
+			if id, ok := event["organizer_id"].(string); ok && id != "" {
+				organizer["id"] = id
+				hasOrganizerData = true
+			}
+			if name, ok := event["organizer_name"].(string); ok && name != "" {
+				organizer["name"] = name
+				hasOrganizerData = true
+			}
+			if website, ok := event["organizer_website"].(string); ok && website != "" {
+				organizer["website"] = website
+				hasOrganizerData = true
+			}
+			if logoUrl, ok := event["organizer_logoUrl"].(string); ok && logoUrl != "" {
+				organizer["logoUrl"] = logoUrl
+				hasOrganizerData = true
+			}
+
+			var companyIdStr string
+			if idStr, ok := event["organizer_companyId"].(string); ok && idStr != "" {
+				companyIdStr = idStr
+			} else if idUint, ok := event["organizer_companyId"].(uint32); ok {
+				companyIdStr = fmt.Sprintf("%d", idUint)
+			}
+			if companyIdStr != "" {
+				textToEncrypt := companyIdStr + s.cfg.TEN_TIMES_ID_ENCRYPT_KEY
+				encrypted, err := s.encrypt(textToEncrypt)
+				if err != nil {
+					log.Printf("Error encrypting prospectId: %v", err)
+
+					organizer["prospectId"] = companyIdStr
+				} else {
+					organizer["prospectId"] = encrypted
+				}
+				hasOrganizerData = true
+			}
+
+			location := make(map[string]interface{})
+			if address, ok := event["organizer_address"].(string); ok && strings.TrimSpace(address) != "" {
+				location["address"] = strings.TrimSpace(address)
+				hasOrganizerData = true
+			}
+			if city, ok := event["organizer_city"].(string); ok && strings.TrimSpace(city) != "" {
+				location["city"] = strings.TrimSpace(city)
+				hasOrganizerData = true
+			}
+			if state, ok := event["organizer_state"].(string); ok && strings.TrimSpace(state) != "" {
+				location["state"] = strings.TrimSpace(state)
+				hasOrganizerData = true
+			}
+			if country, ok := event["organizer_country"].(string); ok && strings.TrimSpace(country) != "" {
+				location["country"] = strings.TrimSpace(country)
+				hasOrganizerData = true
+			}
+			if len(location) > 0 {
+				organizer["location"] = location
+			}
+
+			if hasOrganizerData {
+				grouper.AddNestedField("organizer", organizer)
+			}
 		}
 
-		if len(audienceData) > 0 {
-			combinedEvent["audience"] = audienceData
+		categories := categoriesMap[eventID]
+		tags := tagsMap[eventID]
+		types := typesMap[eventID]
+		grouper.AddField("categories", categories)
+		grouper.AddField("tags", tags)
+		grouper.AddField("eventTypes", types)
+
+		if processor.GetRequestedGroups()[ResponseGroupBasic] {
+			grouper.AddField("designations", []interface{}{})
 		}
 
+		if processor.GetRequestedGroups()[ResponseGroupBasic] {
+			grouper.AddField("bannerUrl", nil)
+		}
+
+		if processor.GetRequestedGroups()[ResponseGroupBasic] {
+			grouper.AddField("eventLocation", nil)
+		}
+
+		if len(requestedFieldsSet) == 0 || requestedFieldsSet["jobComposite"] {
+			if jobCompositeData, ok := jobCompositeMap[eventID]; ok && len(jobCompositeData) > 0 {
+				var jobCompositeArray []map[string]interface{}
+				for _, designation := range jobCompositeData {
+					jobCompositeArray = append(jobCompositeArray, map[string]interface{}{
+						"name":       designation["name"],
+						"role":       designation["role"],
+						"department": designation["department"],
+					})
+				}
+				grouper.AddField("jobComposite", jobCompositeArray)
+			}
+		}
+
+		var audienceZone interface{}
+		if zone, ok := event["audienceZone"].(string); ok && strings.TrimSpace(zone) != "" {
+			audienceZone = zone
+		} else {
+			audienceZone = nil
+		}
+		countrySpreadData, _ := countrySpreadMap[eventID]
+		designationSpreadData, _ := designationSpreadMap[eventID]
+		grouper.AddAudienceData(countrySpreadData, designationSpreadData, audienceZone)
+
+		var estimatedExhibitorsValue string
 		if lowerBound, ok := event["exhibitors_lower_bound"].(uint32); ok {
 			if upperBound, ok := event["exhibitors_upper_bound"].(uint32); ok {
 				if lowerBound > 0 || upperBound > 0 {
-					combinedEvent["estimatedExhibitors"] = fmt.Sprintf("%d-%d", lowerBound, upperBound)
+					estimatedExhibitorsValue = fmt.Sprintf("%d-%d", lowerBound, upperBound)
 				} else {
-					combinedEvent["estimatedExhibitors"] = "0-0"
+					estimatedExhibitorsValue = "0-0"
 				}
-				delete(combinedEvent, "exhibitors_lower_bound")
-				delete(combinedEvent, "exhibitors_upper_bound")
 			}
 		} else {
-			combinedEvent["estimatedExhibitors"] = "0-0"
+			estimatedExhibitorsValue = "0-0"
 		}
+		grouper.AddField("estimatedExhibitors", estimatedExhibitorsValue)
+
+		if len(requestedFieldsSet) == 0 || requestedFieldsSet["trustChangeTag"] {
+			var trustChangeTagValue interface{}
+			if trustChangePercentageVal, ok := event["trustChangePercentage"].(float64); ok {
+				if trustChangePercentageVal > 10 {
+					trustChangeTagValue = "improved"
+				} else if trustChangePercentageVal < -10 {
+					trustChangeTagValue = "declined"
+				} else {
+					trustChangeTagValue = "neutral"
+				}
+			} else if trustChangePercentageStr, ok := event["trustChangePercentage"].(string); ok {
+				if trustChangePercentageStr == "null" {
+					trustChangeTagValue = nil
+				} else {
+					if num, err := strconv.ParseFloat(trustChangePercentageStr, 64); err == nil {
+						if num > 10 {
+							trustChangeTagValue = "improved"
+						} else if num < -10 {
+							trustChangeTagValue = "declined"
+						} else {
+							trustChangeTagValue = "neutral"
+						}
+					} else {
+						trustChangeTagValue = nil
+					}
+				}
+			} else {
+				trustChangeTagValue = nil
+			}
+
+			grouper.AddField("trustChangeTag", trustChangeTagValue)
+		}
+
+		if len(requestedFieldsSet) == 0 || requestedFieldsSet["reputationChangeTag"] {
+			var reputationChangeTagValue interface{}
+			if reputationChangePercentageVal, ok := event["reputationChangePercentage"].(float64); ok {
+				if reputationChangePercentageVal > 10 {
+					reputationChangeTagValue = "improved"
+				} else if reputationChangePercentageVal < -10 {
+					reputationChangeTagValue = "declined"
+				} else {
+					reputationChangeTagValue = "neutral"
+				}
+			} else if reputationChangePercentageStr, ok := event["reputationChangePercentage"].(string); ok {
+				if reputationChangePercentageStr == "null" {
+					reputationChangeTagValue = nil
+				} else {
+					if num, err := strconv.ParseFloat(reputationChangePercentageStr, 64); err == nil {
+						if num > 10 {
+							reputationChangeTagValue = "improved"
+						} else if num < -10 {
+							reputationChangeTagValue = "declined"
+						} else {
+							reputationChangeTagValue = "neutral"
+						}
+					} else {
+						reputationChangeTagValue = nil
+					}
+				}
+			} else {
+				reputationChangeTagValue = nil
+			}
+
+			grouper.AddField("reputationChangeTag", reputationChangeTagValue)
+		}
+
+		shouldIncludeRankings := len(requestedFieldsSet) == 0 || requestedFieldsSet["rankings"]
+		if !shouldIncludeRankings && len(requestedGroupsSet) > 0 {
+			shouldIncludeRankings = requestedGroupsSet[ResponseGroupInsights]
+		}
+		if shouldIncludeRankings {
+			if rankingsValue, ok := rankingsMap[eventID]; ok && rankingsValue != "" {
+				parsedRankings := s.sharedFunctionService.TransformRankings(rankingsValue, filterFields)
+				if parsedRankings != nil {
+					grouper.AddField("rankings", parsedRankings)
+				}
+			}
+		}
+
+		if processor.IsGroupedStructure() {
+			if len(requestedFieldsSet) == 0 || requestedFieldsSet["impactScore"] || requestedFieldsSet["inboundScore"] || requestedFieldsSet["internationalScore"] {
+				scoresData := make(map[string]interface{})
+				hasScores := false
+
+				extractScore := func(source map[string]interface{}, key string) (interface{}, bool) {
+					if val, exists := source[key]; exists && val != nil {
+						if score, ok := val.(float64); ok {
+							return score, true
+						}
+						if score, ok := val.(uint32); ok {
+							return float64(score), true
+						}
+					}
+					return nil, false
+				}
+
+				if insightsGroup, ok := groupedFields[ResponseGroupInsights]; ok {
+					if score, ok := extractScore(insightsGroup, "impactScore"); ok {
+						scoresData["impactScore"] = score
+						hasScores = true
+						delete(insightsGroup, "impactScore")
+					}
+					if score, ok := extractScore(insightsGroup, "inboundScore"); ok {
+						scoresData["inboundScore"] = score
+						hasScores = true
+						delete(insightsGroup, "inboundScore")
+					}
+					if score, ok := extractScore(insightsGroup, "internationalScore"); ok {
+						scoresData["internationalScore"] = score
+						hasScores = true
+						delete(insightsGroup, "internationalScore")
+					}
+					if hasScores {
+						insightsGroup["scores"] = scoresData
+					}
+				}
+			}
+		}
+
+		combinedEvent = grouper.GetFinalEvent()
 		delete(combinedEvent, "event_id")
 		combinedData = append(combinedData, combinedEvent)
+	}
+
+	if processor.GetShowValues() != "" && filterFields.View != "" {
+		viewLower := strings.ToLower(strings.TrimSpace(filterFields.View))
+		if viewLower == "promote" {
+			transformedData := s.getPromoteEventListingResponse(combinedData)
+			return &ListResult{
+				StatusCode: 200,
+				Data:       transformedData,
+				Count:      totalCount,
+			}, nil
+		}
 	}
 
 	return &ListResult{
@@ -1662,6 +1933,235 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		Data:       combinedData,
 		Count:      totalCount,
 	}, nil
+}
+
+func (s *SearchEventService) getPromoteEventListingResponse(events []map[string]interface{}) interface{} {
+	var transformedEvents []map[string]interface{}
+
+	for _, event := range events {
+		var basic map[string]interface{}
+		if basicVal, ok := event["basic"].(map[string]interface{}); ok {
+			basic = basicVal
+		} else {
+			basic = event
+		}
+
+		var id, name interface{}
+		var startDate, endDate interface{}
+		var eventLocation map[string]interface{}
+		var description, format, primaryEventType interface{}
+
+		if val, ok := basic["id"]; ok {
+			id = val
+		}
+		if val, ok := basic["name"]; ok {
+			name = val
+		}
+		if val, ok := basic["startDateTime"]; ok {
+			startDate = val
+		} else if val, ok := basic["start"]; ok {
+			startDate = val
+		}
+		if val, ok := basic["endDateTime"]; ok {
+			endDate = val
+		} else if val, ok := basic["end"]; ok {
+			endDate = val
+		}
+		if val, ok := basic["eventLocation"].(map[string]interface{}); ok {
+			eventLocation = val
+		}
+		if val, ok := basic["description"]; ok {
+			description = val
+		}
+		if val, ok := basic["format"]; ok {
+			format = val
+		}
+		if val, ok := basic["primaryEventType"]; ok {
+			primaryEventType = val
+		}
+
+		data := make(map[string]interface{})
+		if startDate != nil {
+			data["start_date"] = startDate
+		} else {
+			data["start_date"] = nil
+		}
+		if endDate != nil {
+			data["end_date"] = endDate
+		} else {
+			data["end_date"] = nil
+		}
+
+		if eventLocation != nil {
+			locationType, _ := eventLocation["locationType"].(string)
+			if locationType == "VENUE" {
+				if cityId, ok := eventLocation["cityId"]; ok {
+					data["location_city_id"] = cityId
+				} else {
+					data["location_city_id"] = nil
+				}
+				if cityName, ok := eventLocation["cityName"]; ok {
+					data["location_city"] = cityName
+				} else {
+					data["location_city"] = nil
+				}
+				if countryName, ok := eventLocation["countryName"]; ok {
+					data["location_country"] = countryName
+				} else {
+					data["location_country"] = nil
+				}
+				if countryId, ok := eventLocation["countryId"]; ok {
+					data["location_country_id"] = countryId
+				} else {
+					data["location_country_id"] = nil
+				}
+				if countryIso, ok := eventLocation["countryIso"]; ok {
+					data["location_country_iso_code"] = countryIso
+				} else {
+					data["location_country_iso_code"] = nil
+				}
+				if stateName, ok := eventLocation["stateName"]; ok {
+					data["location_state"] = stateName
+				} else {
+					data["location_state"] = nil
+				}
+				if stateId, ok := eventLocation["stateId"]; ok {
+					data["location_state_id"] = stateId
+				} else {
+					data["location_state_id"] = nil
+				}
+				if venueName, ok := eventLocation["name"]; ok {
+					data["venue_name"] = venueName
+				} else {
+					data["venue_name"] = nil
+				}
+				if address, ok := eventLocation["address"]; ok {
+					data["venue_address"] = address
+				} else {
+					data["venue_address"] = nil
+				}
+				if latitude, ok := eventLocation["latitude"]; ok {
+					data["venue_latitude"] = latitude
+				} else {
+					data["venue_latitude"] = nil
+				}
+				if longitude, ok := eventLocation["longitude"]; ok {
+					data["venue_longitude"] = longitude
+				} else {
+					data["venue_longitude"] = nil
+				}
+				if venueId, ok := eventLocation["id"]; ok {
+					data["venue_id"] = venueId
+				} else {
+					data["venue_id"] = nil
+				}
+				if cityLatitude, ok := eventLocation["cityLatitude"]; ok {
+					data["latitude"] = cityLatitude
+				} else {
+					data["latitude"] = nil
+				}
+				if cityLongitude, ok := eventLocation["cityLongitude"]; ok {
+					data["longitude"] = cityLongitude
+				} else {
+					data["longitude"] = nil
+				}
+			} else {
+				if locationId, ok := eventLocation["id"]; ok {
+					data["location_city_id"] = locationId
+				} else {
+					data["location_city_id"] = nil
+				}
+				if locationName, ok := eventLocation["name"]; ok {
+					data["location_city"] = locationName
+				} else {
+					data["location_city"] = nil
+				}
+				if countryName, ok := eventLocation["countryName"]; ok {
+					data["location_country"] = countryName
+				} else {
+					data["location_country"] = nil
+				}
+				if countryId, ok := eventLocation["countryId"]; ok {
+					data["location_country_id"] = countryId
+				} else {
+					data["location_country_id"] = nil
+				}
+				if countryIso, ok := eventLocation["countryIso"]; ok {
+					data["location_country_iso_code"] = countryIso
+				} else {
+					data["location_country_iso_code"] = nil
+				}
+				if stateName, ok := eventLocation["stateName"]; ok {
+					data["location_state"] = stateName
+				} else {
+					data["location_state"] = nil
+				}
+				if stateId, ok := eventLocation["stateId"]; ok {
+					data["location_state_id"] = stateId
+				} else {
+					data["location_state_id"] = nil
+				}
+				data["venue_name"] = nil
+				data["venue_address"] = nil
+				data["venue_latitude"] = nil
+				data["venue_longitude"] = nil
+				data["venue_id"] = nil
+				if latitude, ok := eventLocation["latitude"]; ok {
+					data["latitude"] = latitude
+				} else {
+					data["latitude"] = nil
+				}
+				if longitude, ok := eventLocation["longitude"]; ok {
+					data["longitude"] = longitude
+				} else {
+					data["longitude"] = nil
+				}
+			}
+		} else {
+			data["location_city_id"] = nil
+			data["location_city"] = nil
+			data["location_country"] = nil
+			data["location_country_id"] = nil
+			data["location_country_iso_code"] = nil
+			data["location_state"] = nil
+			data["location_state_id"] = nil
+			data["venue_name"] = nil
+			data["venue_address"] = nil
+			data["venue_latitude"] = nil
+			data["venue_longitude"] = nil
+			data["venue_id"] = nil
+			data["latitude"] = nil
+			data["longitude"] = nil
+		}
+
+		if description != nil {
+			data["description"] = description
+		} else {
+			data["description"] = nil
+		}
+		if format != nil {
+			data["format"] = format
+		} else {
+			data["format"] = nil
+		}
+		if primaryEventType != nil {
+			data["event_type"] = primaryEventType
+		} else {
+			data["event_type"] = nil
+		}
+
+		data["isMicroServiceData"] = true
+
+		transformedEvent := map[string]interface{}{
+			"id":   id,
+			"name": name,
+			"data": data,
+		}
+
+		transformedEvents = append(transformedEvents, transformedEvent)
+	}
+
+	return transformedEvents
 }
 
 func (s *SearchEventService) buildGroupByClause(fields []string) string {
@@ -2274,4 +2774,64 @@ func (s *SearchEventService) parseClickHouseStringArray(str string) []interface{
 	}
 
 	return result
+}
+
+// encrypt encrypts text using AES-256-CBC algorithm
+// This matches the TypeScript implementation: encrypt(text, key) using AES-256-CBC
+func (s *SearchEventService) encrypt(text string) (string, error) {
+	if s.cfg.EventQueryEncrypt == "" {
+		return "", fmt.Errorf("EVENT_QUERY_ENCRYPT not configured")
+	}
+	if s.cfg.EventChiprIV == "" {
+		return "", fmt.Errorf("EVENT_CHIPR_IV not configured")
+	}
+
+	// Parse IV from hex string
+	iv, err := hex.DecodeString(s.cfg.EventChiprIV)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode IV: %w", err)
+	}
+
+	key := []byte(s.cfg.EventQueryEncrypt)
+	if len(key) != 32 {
+		keyBytes := make([]byte, 32)
+		copy(keyBytes, key)
+		if len(key) < 32 {
+			// Pad with zeros if key is shorter
+			for i := len(key); i < 32; i++ {
+				keyBytes[i] = 0
+			}
+		}
+		key = keyBytes
+	}
+
+	// Create cipher block
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	// Ensure IV is 16 bytes (AES block size)
+	if len(iv) != 16 {
+		return "", fmt.Errorf("IV must be 16 bytes, got %d", len(iv))
+	}
+
+	// Create cipher mode
+	mode := cipher.NewCBCEncrypter(block, iv)
+
+	// Pad plaintext to block size (PKCS7 padding)
+	plaintext := []byte(text)
+	padding := 16 - len(plaintext)%16
+	padtext := make([]byte, padding)
+	for i := range padtext {
+		padtext[i] = byte(padding)
+	}
+	plaintext = append(plaintext, padtext...)
+
+	// Encrypt
+	ciphertext := make([]byte, len(plaintext))
+	mode.CryptBlocks(ciphertext, plaintext)
+
+	// Return hex encoded result
+	return hex.EncodeToString(ciphertext), nil
 }

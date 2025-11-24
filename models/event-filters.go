@@ -1363,7 +1363,8 @@ type SearchEventsRequest struct {
 	PaginationDto
 	ResponseDataDto
 	// UserID       string        `json:"user_id"`
-	APIID string `json:"api_id" form:"api_id"`
+	APIID      string `json:"api_id" form:"api_id"`
+	ShowValues string `json:"showValues,omitempty" form:"showValues"`
 }
 
 func (s *SearchEventsRequest) Validate() error {

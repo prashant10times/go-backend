@@ -133,7 +133,6 @@ func GlobalErrorHandler(c *fiber.Ctx, err error) error {
 		},
 	}
 
-	// Ensure the status code is properly set
 	c.Status(statusCode)
 	return c.JSON(errorResponse)
 }

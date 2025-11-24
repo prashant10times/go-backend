@@ -6,7 +6,6 @@ import (
 	"gorm.io/datatypes"
 )
 
-// Status enum
 type Status string
 
 const (
@@ -14,7 +13,6 @@ const (
 	StatusInactive Status = "INACTIVE"
 )
 
-// FilterType enum
 type FilterType string
 
 const (
@@ -22,15 +20,15 @@ const (
 	FilterTypeAdvanced FilterType = "ADVANCED"
 )
 
-// ParameterType enum
 type ParameterType string
 
 const (
 	ParameterTypeBasic    ParameterType = "BASIC"
 	ParameterTypeAdvanced ParameterType = "ADVANCED"
+	ParameterTypeInsights ParameterType = "INSIGHTS"
+	ParameterTypeAudience ParameterType = "AUDIENCE"
 )
 
-// User model
 type User struct {
 	ID           string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	Email        string    `gorm:"uniqueIndex;not null" json:"email"`
@@ -39,7 +37,6 @@ type User struct {
 	Status       *Status   `gorm:"type:status" json:"status,omitempty"`
 	CreatedAt    time.Time `gorm:"autoCreateTime;column:created_at" json:"created_at"`
 	UpdatedAt    time.Time `gorm:"autoUpdateTime;column:updated_at" json:"updated_at"`
-	// Relationships
 	APITokens         []APIToken            `gorm:"foreignKey:UserID" json:"api_tokens"`
 	APIAccesses       []UserAPIAccess       `gorm:"foreignKey:UserID" json:"api_accesses"`
 	UsageLogs         []APIUsageLog         `gorm:"foreignKey:UserID" json:"usage_logs"`
@@ -47,7 +44,6 @@ type User struct {
 	ParameterAccesses []UserParameterAccess `gorm:"foreignKey:UserID" json:"parameter_accesses"`
 }
 
-// API model
 type API struct {
 	ID        string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	APIName   string    `gorm:"uniqueIndex;not null" json:"api_name"`
@@ -55,14 +51,12 @@ type API struct {
 	IsActive  bool      `gorm:"default:true;index" json:"is_active"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt time.Time `gorm:"autoUpdateTime" json:"updated_at"`
-	// Relationships
 	UserAPIAccesses []UserAPIAccess `gorm:"foreignKey:APIID" json:"user_api_accesses"`
 	UsageLogs       []APIUsageLog   `gorm:"foreignKey:APIID" json:"usage_logs"`
 	APIFilters      []APIFilter     `gorm:"foreignKey:APIID" json:"api_filters"`
 	APIParameters   []APIParameter  `gorm:"foreignKey:APIID" json:"api_parameters"`
 }
 
-// APIToken model
 type APIToken struct {
 	ID          string     `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	UserID      string     `gorm:"not null" json:"user_id"`
@@ -72,11 +66,9 @@ type APIToken struct {
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 	RefreshedAt *time.Time `json:"refreshed_at,omitempty"`
 
-	// Relationships
 	User User `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
 }
 
-// UserAPIAccess model
 type UserAPIAccess struct {
 	ID         string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	UserID     string    `gorm:"not null" json:"user_id"`
@@ -86,12 +78,10 @@ type UserAPIAccess struct {
 	CreatedAt  time.Time `gorm:"autoCreateTime" json:"created_at"`
 	UpdatedAt  time.Time `gorm:"autoUpdateTime" json:"updated_at"`
 
-	// Relationships
 	User User `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
 	API  API  `gorm:"foreignKey:APIID;constraint:OnDelete:CASCADE" json:"api"`
 }
 
-// APIUsageLog model
 type APIUsageLog struct {
 	ID              string          `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	UserID          string          `gorm:"not null" json:"user_id"`
@@ -104,12 +94,10 @@ type APIUsageLog struct {
 	CreatedAt       time.Time       `gorm:"autoCreateTime;index:idx_user_api_created,priority:3;index:idx_created;index:idx_user_api_status,priority:3" json:"created_at"`
 	APIResponseTime *float64        `json:"api_response_time,omitempty"`
 
-	// Relationships
 	User User `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
 	API  API  `gorm:"foreignKey:APIID;constraint:OnDelete:CASCADE" json:"api"`
 }
 
-// APIFilter model
 type APIFilter struct {
 	ID         string     `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	APIID      string     `gorm:"not null" json:"api_id"`
@@ -119,12 +107,10 @@ type APIFilter struct {
 	IsActive   bool       `gorm:"default:true" json:"is_active"`
 	CreatedAt  time.Time  `gorm:"autoCreateTime" json:"created_at"`
 
-	// Relationships
 	API          API                `gorm:"foreignKey:APIID;constraint:OnDelete:CASCADE" json:"api"`
 	UserAccesses []UserFilterAccess `gorm:"foreignKey:FilterID" json:"user_accesses"`
 }
 
-// UserFilterAccess model
 type UserFilterAccess struct {
 	ID        string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	UserID    string    `gorm:"not null" json:"user_id"`
@@ -132,12 +118,10 @@ type UserFilterAccess struct {
 	HasAccess bool      `gorm:"default:true" json:"has_access"`
 	CreatedAt time.Time `gorm:"autoCreateTime" json:"created_at"`
 
-	// Relationships
 	User   User      `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
 	Filter APIFilter `gorm:"foreignKey:FilterID;constraint:OnDelete:CASCADE" json:"filter"`
 }
 
-// APIParameter model
 type APIParameter struct {
 	ID            string        `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	APIID         string        `gorm:"not null" json:"api_id"`
@@ -147,12 +131,10 @@ type APIParameter struct {
 	IsActive      bool          `gorm:"default:true" json:"is_active"`
 	CreatedAt     time.Time     `json:"created_at"`
 
-	// Relationships
 	API          API                   `gorm:"foreignKey:APIID;constraint:OnDelete:CASCADE" json:"api"`
 	UserAccesses []UserParameterAccess `gorm:"foreignKey:ParameterID" json:"user_accesses"`
 }
 
-// UserParameterAccess model
 type UserParameterAccess struct {
 	ID          string    `gorm:"type:text;primary_key;default:uuid_generate_v4()" json:"id"`
 	UserID      string    `gorm:"not null" json:"user_id"`
@@ -160,7 +142,6 @@ type UserParameterAccess struct {
 	HasAccess   bool      `gorm:"default:true" json:"has_access"`
 	CreatedAt   time.Time `json:"created_at"`
 
-	// Relationships
 	User      User         `gorm:"foreignKey:UserID;constraint:OnDelete:CASCADE" json:"user"`
 	Parameter APIParameter `gorm:"foreignKey:ParameterID;constraint:OnDelete:CASCADE" json:"parameter"`
 }

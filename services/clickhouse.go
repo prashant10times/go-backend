@@ -37,7 +37,7 @@ func NewClickHouseService(cfg *config.Config) (*ClickHouseService, error) {
 		Protocol: clickhouse.HTTP,
 		Addr:     []string{fmt.Sprintf("%s:%s", host, port)},
 		Auth: clickhouse.Auth{
-			Database: strings.TrimPrefix(parsedURL.Path, "/"), // Remove leading slash
+			Database: strings.TrimPrefix(parsedURL.Path, "/"),
 			Username: username,
 			Password: password,
 		},

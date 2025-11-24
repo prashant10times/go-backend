@@ -1010,16 +1010,12 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	if result.NeedsLocationIdsJoin {
 		var locationConditions []string
 
-		// filter by iso on edition_country
 		locationConditions = append(locationConditions, "ee.edition_country IN (SELECT iso FROM filtered_locations WHERE location_type = 'COUNTRY' AND iso IS NOT NULL)")
 
-		// filter by id on edition_city
 		locationConditions = append(locationConditions, "ee.edition_city IN (SELECT id FROM filtered_locations WHERE location_type = 'CITY' AND id IS NOT NULL)")
 
-		// filter by id on edition_city_state
 		locationConditions = append(locationConditions, "ee.edition_city_state_id IN (SELECT id FROM filtered_locations WHERE location_type = 'STATE' AND id IS NOT NULL)")
 
-		// filter by id on venue_id
 		locationConditions = append(locationConditions, "ee.venue_id IN (SELECT id FROM filtered_locations WHERE location_type = 'VENUE' AND id IS NOT NULL)")
 
 		whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(locationConditions, " OR ")))
@@ -3684,4 +3680,264 @@ func (s *SharedFunctionService) validateParameters(filterFields models.FilterDat
 	}
 
 	return filterFields, nil
+}
+
+type Rankings struct {
+	Global          *int
+	Country         *CountryRank
+	Categories      []CategoryRank
+	CategoryCountry []CategoryCountryRank
+}
+
+type CountryRank struct {
+	ID   string
+	Rank int
+}
+
+type CategoryRank struct {
+	ID   string
+	Rank int
+}
+
+type CategoryCountryRank struct {
+	CategoryID string
+	CountryID  string
+	Rank       int
+}
+
+type RankingType string
+
+const (
+	RankingTypeGlobal          RankingType = "global"
+	RankingTypeCountry         RankingType = "country"
+	RankingTypeCategory        RankingType = "category"
+	RankingTypeCategoryCountry RankingType = "category_country"
+)
+
+type PrioritizedRank struct {
+	Rank       int
+	RankType   RankingType
+	RankRange  string
+	CategoryID *string
+	CountryID  *string
+}
+
+func (s *SharedFunctionService) TransformRankings(rankingsStr string, filterFields models.FilterDataDto) map[string]interface{} {
+	if rankingsStr == "" {
+		return nil
+	}
+
+	ranks := Rankings{
+		Categories:      []CategoryRank{},
+		CategoryCountry: []CategoryCountryRank{},
+	}
+
+	rankingLines := strings.Split(rankingsStr, "<line-sep>")
+	for _, line := range rankingLines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "<val-sep>")
+		if len(parts) != 3 {
+			continue
+		}
+
+		var countryID, categoryID *string
+		if parts[0] != "null" && parts[0] != "" {
+			countryID = &parts[0]
+		}
+		if parts[1] != "null" && parts[1] != "" {
+			categoryID = &parts[1]
+		}
+
+		rankVal, err := strconv.Atoi(parts[2])
+		if err != nil {
+			continue
+		}
+
+		if categoryID != nil && countryID != nil {
+			ranks.CategoryCountry = append(ranks.CategoryCountry, CategoryCountryRank{
+				CategoryID: *categoryID,
+				CountryID:  *countryID,
+				Rank:       rankVal,
+			})
+		} else if categoryID != nil && countryID == nil {
+			ranks.Categories = append(ranks.Categories, CategoryRank{
+				ID:   *categoryID,
+				Rank: rankVal,
+			})
+		} else if countryID != nil && categoryID == nil {
+			ranks.Country = &CountryRank{
+				ID:   *countryID,
+				Rank: rankVal,
+			}
+		} else {
+			ranks.Global = &rankVal
+		}
+	}
+
+	rankType := s.DetermineRankingType(filterFields)
+
+	prioritizedRank := s.PrioritizeRankings(filterFields, ranks, rankType)
+	if prioritizedRank == nil {
+		return nil
+	}
+
+	result := map[string]interface{}{
+		"rank":      prioritizedRank.Rank,
+		"rankType":  string(prioritizedRank.RankType),
+		"rankRange": prioritizedRank.RankRange,
+	}
+	if prioritizedRank.CategoryID != nil {
+		result["categoryId"] = *prioritizedRank.CategoryID
+	} else {
+		result["categoryId"] = nil
+	}
+	if prioritizedRank.CountryID != nil {
+		result["countryId"] = *prioritizedRank.CountryID
+	} else {
+		result["countryId"] = nil
+	}
+
+	return result
+}
+
+func (s *SharedFunctionService) DetermineRankingType(filterFields models.FilterDataDto) RankingType {
+	hasCategories := len(filterFields.ParsedCategory) > 0
+	hasLocationIds := len(filterFields.ParsedLocationIds) > 0
+
+	if hasCategories && hasLocationIds {
+		return RankingTypeCategoryCountry
+	}
+	if hasLocationIds {
+		return RankingTypeCountry
+	}
+	if hasCategories {
+		return RankingTypeCategory
+	}
+	return RankingTypeGlobal
+}
+
+func (s *SharedFunctionService) PrioritizeRankings(filterFields models.FilterDataDto, ranks Rankings, rankType RankingType) *PrioritizedRank {
+	switch rankType {
+	case RankingTypeGlobal:
+		if ranks.Global != nil {
+			return &PrioritizedRank{
+				Rank:       *ranks.Global,
+				RankType:   RankingTypeGlobal,
+				RankRange:  s.GetRankRange(*ranks.Global),
+				CategoryID: nil,
+				CountryID:  nil,
+			}
+		}
+		return nil
+
+	case RankingTypeCountry:
+		if ranks.Country != nil {
+			return &PrioritizedRank{
+				Rank:       ranks.Country.Rank,
+				RankType:   RankingTypeCountry,
+				RankRange:  s.GetRankRange(ranks.Country.Rank),
+				CategoryID: nil,
+				CountryID:  &ranks.Country.ID,
+			}
+		}
+		return nil
+
+	case RankingTypeCategory:
+		validCategoriesRank := []CategoryRank{}
+		for _, catRank := range ranks.Categories {
+			for _, catID := range filterFields.ParsedCategory {
+				if catRank.ID == catID {
+					validCategoriesRank = append(validCategoriesRank, catRank)
+					break
+				}
+			}
+		}
+		if len(validCategoriesRank) == 0 {
+			return nil
+		}
+		if len(validCategoriesRank) == 1 {
+			return &PrioritizedRank{
+				Rank:       validCategoriesRank[0].Rank,
+				RankType:   RankingTypeCategory,
+				RankRange:  s.GetRankRange(validCategoriesRank[0].Rank),
+				CategoryID: &validCategoriesRank[0].ID,
+				CountryID:  nil,
+			}
+		}
+		minRank := validCategoriesRank[0].Rank
+		for _, catRank := range validCategoriesRank {
+			if catRank.Rank < minRank {
+				minRank = catRank.Rank
+			}
+		}
+		for _, catRank := range validCategoriesRank {
+			if catRank.Rank == minRank {
+				return &PrioritizedRank{
+					Rank:       catRank.Rank,
+					RankType:   RankingTypeCategory,
+					RankRange:  s.GetRankRange(catRank.Rank),
+					CategoryID: &catRank.ID,
+					CountryID:  nil,
+				}
+			}
+		}
+		return nil
+
+	case RankingTypeCategoryCountry:
+		validCategoriesCountryRank := []CategoryCountryRank{}
+		for _, catCountryRank := range ranks.CategoryCountry {
+			for _, catID := range filterFields.ParsedCategory {
+				if catCountryRank.CategoryID == catID {
+					validCategoriesCountryRank = append(validCategoriesCountryRank, catCountryRank)
+					break
+				}
+			}
+		}
+		if len(validCategoriesCountryRank) == 0 {
+			return nil
+		}
+		if len(validCategoriesCountryRank) == 1 {
+			return &PrioritizedRank{
+				Rank:       validCategoriesCountryRank[0].Rank,
+				RankType:   RankingTypeCategoryCountry,
+				RankRange:  s.GetRankRange(validCategoriesCountryRank[0].Rank),
+				CategoryID: &validCategoriesCountryRank[0].CategoryID,
+				CountryID:  &validCategoriesCountryRank[0].CountryID,
+			}
+		}
+		minRank := validCategoriesCountryRank[0].Rank
+		for _, catCountryRank := range validCategoriesCountryRank {
+			if catCountryRank.Rank < minRank {
+				minRank = catCountryRank.Rank
+			}
+		}
+		for _, catCountryRank := range validCategoriesCountryRank {
+			if catCountryRank.Rank == minRank {
+				return &PrioritizedRank{
+					Rank:       catCountryRank.Rank,
+					RankType:   RankingTypeCategoryCountry,
+					RankRange:  s.GetRankRange(catCountryRank.Rank),
+					CategoryID: &catCountryRank.CategoryID,
+					CountryID:  &catCountryRank.CountryID,
+				}
+			}
+		}
+		return nil
+
+	default:
+		return nil
+	}
+}
+
+func (s *SharedFunctionService) GetRankRange(rank int) string {
+	if rank <= 100 {
+		return "100"
+	} else if rank <= 500 {
+		return "500"
+	} else if rank <= 1000 {
+		return "1000"
+	}
+	return "1000+"
 }

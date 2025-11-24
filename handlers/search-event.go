@@ -93,6 +93,7 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 	request.ImpactScoreLte = c.Query("impactScore.lte")
 	request.EconomicImpactGte = c.Query("economicImpact.gte")
 	request.EconomicImpactLte = c.Query("economicImpact.lte")
+	request.ShowValues = c.Query("showValues")
 
 	userID, ok := c.Locals("userId").(string)
 	if !ok || userID == "" {
@@ -106,7 +107,7 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 		return middleware.NewValidationError("Request validation failed", err.Error())
 	}
 
-	result, err := h.searchEventService.GetEventDataV2(userID, request.APIID, request.FilterDataDto, request.PaginationDto, request.ResponseDataDto, c)
+	result, err := h.searchEventService.GetEventDataV2(userID, request.APIID, request.FilterDataDto, request.PaginationDto, request.ResponseDataDto, request.ShowValues, c)
 	if err != nil {
 		if strings.Contains(err.Error(), "unauthorized filters") {
 			return middleware.NewForbiddenError("Unauthorized filters", err.Error())

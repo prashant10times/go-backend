@@ -8,26 +8,29 @@ import (
 )
 
 type Config struct {
-	Port                   string
-	DirectDBURL            string
-	DBURL                  string
-	RedisHost              string
-	RedisPort              string
-	JWTSecret              string
-	JWTExpiresIn           string
-	ElasticSearchHost      string
-	SwaggerSecret          string
-	IndexName              string
-	ThrottleLimit          string
-	ThrottleTTL            string
-	ThrottleBlockDuration  string
-	ServerHost             string
-	TestingIndex           string
-	ClickhouseURL          string
-	Origin                 string
-	AllowMethods           string
-	AlertId                string
-	UnlimitedAccessUserIDs string // Comma-separated list of user IDs with unlimited access to all filters and parameters
+	Port                     string
+	DirectDBURL              string
+	DBURL                    string
+	RedisHost                string
+	RedisPort                string
+	JWTSecret                string
+	JWTExpiresIn             string
+	ElasticSearchHost        string
+	SwaggerSecret            string
+	IndexName                string
+	ThrottleLimit            string
+	ThrottleTTL              string
+	ThrottleBlockDuration    string
+	ServerHost               string
+	TestingIndex             string
+	ClickhouseURL            string
+	Origin                   string
+	AllowMethods             string
+	AlertId                  string
+	UnlimitedAccessUserIDs   string // Comma-separated list of user IDs with unlimited access to all filters and parameters
+	EventQueryEncrypt        string 
+	EventChiprIV             string 
+	TEN_TIMES_ID_ENCRYPT_KEY string 
 }
 
 func LoadConfig() *Config {
@@ -36,26 +39,29 @@ func LoadConfig() *Config {
 	}
 
 	config := &Config{
-		Port:                   getEnv("PORT", "2000"),
-		DirectDBURL:            getEnv("DIRECT_DB_URL", ""),
-		DBURL:                  getEnv("DB_URL", ""),
-		RedisHost:              getEnv("REDIS_HOST", "localhost"),
-		RedisPort:              getEnv("REDIS_PORT", "6379"),
-		JWTSecret:              getEnv("JWT_SECRET", ""),
-		JWTExpiresIn:           getEnv("JWT_EXPIRES_IN", "1d"),
-		ElasticSearchHost:      getEnv("ELASTIC_SEARCH_HOST", ""),
-		SwaggerSecret:          getEnv("SWAGGER_SECRET", ""),
-		IndexName:              getEnv("INDEX_NAME", ""),
-		ThrottleLimit:          getEnv("THROTTLE_LIMIT", "100"),
-		ThrottleTTL:            getEnv("THROTTLE_TTL", "30000"),
-		ThrottleBlockDuration:  getEnv("THROTTLE_BLOCK_DURATION", "60000"),
-		ServerHost:             getEnv("SERVER_HOST", ""),
-		TestingIndex:           getEnv("TESTING_INDEX", ""),
-		ClickhouseURL:          getEnv("CLICKHOUSE_URL", ""),
-		Origin:                 getEnv("ORIGIN", ""),
-		AllowMethods:           getEnv("ALLOWED_METHODS", ""),
-		AlertId:                getEnv("ALERT_ID", ""),
-		UnlimitedAccessUserIDs: getEnv("UNLIMITED_ACCESS_USER_IDS", ""),
+		Port:                     getEnv("PORT", "2000"),
+		DirectDBURL:              getEnv("DIRECT_DB_URL", ""),
+		DBURL:                    getEnv("DB_URL", ""),
+		RedisHost:                getEnv("REDIS_HOST", "localhost"),
+		RedisPort:                getEnv("REDIS_PORT", "6379"),
+		JWTSecret:                getEnv("JWT_SECRET", ""),
+		JWTExpiresIn:             getEnv("JWT_EXPIRES_IN", "1d"),
+		ElasticSearchHost:        getEnv("ELASTIC_SEARCH_HOST", ""),
+		SwaggerSecret:            getEnv("SWAGGER_SECRET", ""),
+		IndexName:                getEnv("INDEX_NAME", ""),
+		ThrottleLimit:            getEnv("THROTTLE_LIMIT", "100"),
+		ThrottleTTL:              getEnv("THROTTLE_TTL", "30000"),
+		ThrottleBlockDuration:    getEnv("THROTTLE_BLOCK_DURATION", "60000"),
+		ServerHost:               getEnv("SERVER_HOST", ""),
+		TestingIndex:             getEnv("TESTING_INDEX", ""),
+		ClickhouseURL:            getEnv("CLICKHOUSE_URL", ""),
+		Origin:                   getEnv("ORIGIN", ""),
+		AllowMethods:             getEnv("ALLOWED_METHODS", ""),
+		AlertId:                  getEnv("ALERT_ID", ""),
+		UnlimitedAccessUserIDs:   getEnv("UNLIMITED_ACCESS_USER_IDS", ""),
+		EventQueryEncrypt:        getEnv("EVENT_QUERY_ENCRYPT", ""),
+		EventChiprIV:             getEnv("EVENT_CHIPR_IV", ""),
+		TEN_TIMES_ID_ENCRYPT_KEY: getEnv("TEN_TIMES_ID_ENCRYPT_KEY", ""),
 	}
 	return config
 }
