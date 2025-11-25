@@ -2074,6 +2074,7 @@ func (s *SearchEventService) getPromoteEventListingResponse(events []map[string]
 
 		if eventLocation != nil {
 			locationType, _ := eventLocation["locationType"].(string)
+
 			if locationType == "VENUE" {
 				if cityId, ok := eventLocation["cityId"]; ok {
 					data["location_city_id"] = cityId
@@ -2084,66 +2085,6 @@ func (s *SearchEventService) getPromoteEventListingResponse(events []map[string]
 					data["location_city"] = cityName
 				} else {
 					data["location_city"] = nil
-				}
-				if countryName, ok := eventLocation["countryName"]; ok {
-					data["location_country"] = countryName
-				} else {
-					data["location_country"] = nil
-				}
-				if countryId, ok := eventLocation["countryId"]; ok {
-					data["location_country_id"] = countryId
-				} else {
-					data["location_country_id"] = nil
-				}
-				if countryIso, ok := eventLocation["countryIso"]; ok {
-					data["location_country_iso_code"] = countryIso
-				} else {
-					data["location_country_iso_code"] = nil
-				}
-				if stateName, ok := eventLocation["stateName"]; ok {
-					data["location_state"] = stateName
-				} else {
-					data["location_state"] = nil
-				}
-				if stateId, ok := eventLocation["stateId"]; ok {
-					data["location_state_id"] = stateId
-				} else {
-					data["location_state_id"] = nil
-				}
-				if venueName, ok := eventLocation["name"]; ok {
-					data["venue_name"] = venueName
-				} else {
-					data["venue_name"] = nil
-				}
-				if address, ok := eventLocation["address"]; ok {
-					data["venue_address"] = address
-				} else {
-					data["venue_address"] = nil
-				}
-				if latitude, ok := eventLocation["latitude"]; ok {
-					data["venue_latitude"] = latitude
-				} else {
-					data["venue_latitude"] = nil
-				}
-				if longitude, ok := eventLocation["longitude"]; ok {
-					data["venue_longitude"] = longitude
-				} else {
-					data["venue_longitude"] = nil
-				}
-				if venueId, ok := eventLocation["id"]; ok {
-					data["venue_id"] = venueId
-				} else {
-					data["venue_id"] = nil
-				}
-				if cityLatitude, ok := eventLocation["cityLatitude"]; ok {
-					data["latitude"] = cityLatitude
-				} else {
-					data["latitude"] = nil
-				}
-				if cityLongitude, ok := eventLocation["cityLongitude"]; ok {
-					data["longitude"] = cityLongitude
-				} else {
-					data["longitude"] = nil
 				}
 			} else {
 				if locationId, ok := eventLocation["id"]; ok {
@@ -2156,36 +2097,81 @@ func (s *SearchEventService) getPromoteEventListingResponse(events []map[string]
 				} else {
 					data["location_city"] = nil
 				}
-				if countryName, ok := eventLocation["countryName"]; ok {
-					data["location_country"] = countryName
+			}
+
+			if countryName, ok := eventLocation["countryName"]; ok {
+				data["location_country"] = countryName
+			} else {
+				data["location_country"] = nil
+			}
+			if countryId, ok := eventLocation["countryId"]; ok {
+				data["location_country_id"] = countryId
+			} else {
+				data["location_country_id"] = nil
+			}
+			if countryIso, ok := eventLocation["countryIso"]; ok {
+				data["location_country_iso_code"] = countryIso
+			} else {
+				data["location_country_iso_code"] = nil
+			}
+
+			if stateName, ok := eventLocation["stateName"]; ok {
+				data["location_state"] = stateName
+			} else {
+				data["location_state"] = nil
+			}
+			if stateId, ok := eventLocation["stateId"]; ok {
+				data["location_state_id"] = stateId
+			} else {
+				data["location_state_id"] = nil
+			}
+
+			if locationType == "VENUE" {
+				if venueName, ok := eventLocation["name"]; ok {
+					data["venue_name"] = venueName
 				} else {
-					data["location_country"] = nil
+					data["venue_name"] = nil
 				}
-				if countryId, ok := eventLocation["countryId"]; ok {
-					data["location_country_id"] = countryId
+				if address, ok := eventLocation["address"]; ok {
+					data["venue_address"] = address
 				} else {
-					data["location_country_id"] = nil
+					data["venue_address"] = nil
 				}
-				if countryIso, ok := eventLocation["countryIso"]; ok {
-					data["location_country_iso_code"] = countryIso
+				if venueLatitude, ok := eventLocation["latitude"]; ok {
+					data["venue_latitude"] = venueLatitude
 				} else {
-					data["location_country_iso_code"] = nil
+					data["venue_latitude"] = nil
 				}
-				if stateName, ok := eventLocation["stateName"]; ok {
-					data["location_state"] = stateName
+				if venueLongitude, ok := eventLocation["longitude"]; ok {
+					data["venue_longitude"] = venueLongitude
 				} else {
-					data["location_state"] = nil
+					data["venue_longitude"] = nil
 				}
-				if stateId, ok := eventLocation["stateId"]; ok {
-					data["location_state_id"] = stateId
+				if venueId, ok := eventLocation["id"]; ok {
+					data["venue_id"] = venueId
 				} else {
-					data["location_state_id"] = nil
+					data["venue_id"] = nil
 				}
+			} else {
 				data["venue_name"] = nil
 				data["venue_address"] = nil
 				data["venue_latitude"] = nil
 				data["venue_longitude"] = nil
 				data["venue_id"] = nil
+			}
+
+			if locationType == "VENUE" {
+				if cityLatitude, ok := eventLocation["cityLatitude"]; ok {
+					data["latitude"] = cityLatitude
+				} else {
+					data["latitude"] = nil
+				}
+				if cityLongitude, ok := eventLocation["cityLongitude"]; ok {
+					data["longitude"] = cityLongitude
+				} else {
+					data["longitude"] = nil
+				}
+			} else {
 				if latitude, ok := eventLocation["latitude"]; ok {
 					data["latitude"] = latitude
 				} else {
