@@ -3955,3 +3955,523 @@ func (s *SharedFunctionService) GetRankRange(rank int) string {
 	}
 	return "1000+"
 }
+
+type EventLocationData struct {
+	VenueID            *uint32
+	VenueCity          *uint32
+	EditionCityStateID *uint32
+	EditionCountry     *string
+}
+
+func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32) (map[uint32]*EventLocationData, error) {
+	if len(eventIds) == 0 {
+		return make(map[uint32]*EventLocationData), nil
+	}
+
+	var eventIdsStr []string
+	for _, id := range eventIds {
+		eventIdsStr = append(eventIdsStr, fmt.Sprintf("%d", id))
+	}
+	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
+
+	query := fmt.Sprintf(`
+		SELECT 
+			event_id,
+			venue_id,
+			venue_city,
+			edition_city_state_id,
+			edition_country
+		FROM testing_db.allevent_ch
+		WHERE event_id IN (%s)
+		AND edition_type = 'current_edition'
+		GROUP BY event_id, venue_id, venue_city, edition_city_state_id, edition_country
+	`, eventIdsStrJoined)
+
+	log.Printf("Event location data query: %s", query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("Error fetching event location data: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	locationDataMap := make(map[uint32]*EventLocationData)
+
+	for rows.Next() {
+		var eventID uint32
+		var venueID, venueCity, editionCityStateID *uint32
+		var editionCountry *string
+
+		if err := rows.Scan(&eventID, &venueID, &venueCity, &editionCityStateID, &editionCountry); err != nil {
+			log.Printf("Error scanning event location data row: %v", err)
+			continue
+		}
+
+		locationDataMap[eventID] = &EventLocationData{
+			VenueID:            venueID,
+			VenueCity:          venueCity,
+			EditionCityStateID: editionCityStateID,
+			EditionCountry:     editionCountry,
+		}
+	}
+
+	return locationDataMap, nil
+}
+
+func (s *SharedFunctionService) FetchLocations(locationDataMap map[uint32]*EventLocationData) (map[uint32]map[string]interface{}, error) {
+	if len(locationDataMap) == 0 {
+		return make(map[uint32]map[string]interface{}), nil
+	}
+
+	venueIDSet := make(map[uint32]bool)
+	cityIDSet := make(map[uint32]bool)
+	stateIDSet := make(map[uint32]bool)
+	countryISOSet := make(map[string]bool)
+
+	for _, data := range locationDataMap {
+		if data.VenueID != nil {
+			venueIDSet[*data.VenueID] = true
+		}
+		if data.VenueCity != nil {
+			cityIDSet[*data.VenueCity] = true
+		}
+		if data.EditionCityStateID != nil {
+			stateIDSet[*data.EditionCityStateID] = true
+		}
+		if data.EditionCountry != nil && *data.EditionCountry != "" {
+			countryISOSet[*data.EditionCountry] = true
+		}
+	}
+
+	log.Printf("Location query stats - Venues: %d, Cities: %d, States: %d, Countries: %d, Total events: %d",
+		len(venueIDSet), len(cityIDSet), len(stateIDSet), len(countryISOSet), len(locationDataMap))
+
+	var whereConditions []string
+
+	if len(venueIDSet) > 0 {
+		var venueIDs []string
+		for id := range venueIDSet {
+			venueIDs = append(venueIDs, fmt.Sprintf("%d", id))
+		}
+		venueIDsStr := strings.Join(venueIDs, ",")
+		whereConditions = append(whereConditions, fmt.Sprintf("(location_type = 'VENUE' AND id IN (%s))", venueIDsStr))
+	}
+
+	if len(cityIDSet) > 0 {
+		var cityIDs []string
+		for id := range cityIDSet {
+			cityIDs = append(cityIDs, fmt.Sprintf("%d", id))
+		}
+		cityIDsStr := strings.Join(cityIDs, ",")
+		whereConditions = append(whereConditions, fmt.Sprintf("(location_type = 'CITY' AND id IN (%s))", cityIDsStr))
+	}
+
+	if len(stateIDSet) > 0 {
+		var stateIDs []string
+		for id := range stateIDSet {
+			stateIDs = append(stateIDs, fmt.Sprintf("%d", id))
+		}
+		stateIDsStr := strings.Join(stateIDs, ",")
+		whereConditions = append(whereConditions, fmt.Sprintf("(location_type = 'STATE' AND location_id IN (%s))", stateIDsStr))
+	}
+
+	if len(countryISOSet) > 0 {
+		var countryISOs []string
+		for iso := range countryISOSet {
+			countryISOs = append(countryISOs, fmt.Sprintf("'%s'", iso))
+		}
+		countryISOsStr := strings.Join(countryISOs, ",")
+		whereConditions = append(whereConditions, fmt.Sprintf("(location_type = 'COUNTRY' AND iso IN (%s))", countryISOsStr))
+	}
+
+	if len(whereConditions) == 0 {
+		return make(map[uint32]map[string]interface{}), nil
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			CASE 
+				WHEN location_type = 'VENUE' THEN toUInt32(grouping_id_num)
+				WHEN location_type = 'CITY' THEN toUInt32(grouping_id_num)
+				WHEN location_type = 'STATE' THEN toUInt32(grouping_id_num)
+				WHEN location_type = 'COUNTRY' THEN toUInt32(0)
+				ELSE toUInt32(0)
+			END AS lookup_id,
+			location_type,
+			toString(id_uuid) AS id,
+			name,
+			toString(city_uuid) AS cityId,
+			city_name AS cityName,
+			toString(state_uuid) AS stateId,
+			state_name AS stateName,
+			toString(country_uuid) AS countryId,
+			country_name AS countryName,
+			toString(latitude) AS latitude,
+			toString(longitude) AS longitude,
+			address,
+			regions,
+			toString(iso) AS countryIso
+		FROM (
+			SELECT 
+				location_type,
+				grouping_key,
+				argMax(id_uuid, last_updated_at) AS id_uuid,
+				argMax(name, last_updated_at) AS name,
+				argMax(city_uuid, last_updated_at) AS city_uuid,
+				argMax(city_name, last_updated_at) AS city_name,
+				argMax(state_uuid, last_updated_at) AS state_uuid,
+				argMax(state_name, last_updated_at) AS state_name,
+				argMax(country_uuid, last_updated_at) AS country_uuid,
+				argMax(country_name, last_updated_at) AS country_name,
+				argMax(latitude, last_updated_at) AS latitude,
+				argMax(longitude, last_updated_at) AS longitude,
+				argMax(address, last_updated_at) AS address,
+				argMax(regions, last_updated_at) AS regions,
+				argMax(iso, last_updated_at) AS iso,
+				argMax(grouping_id_num, last_updated_at) AS grouping_id_num
+			FROM (
+				SELECT 
+					location_type,
+					CASE 
+						WHEN location_type = 'VENUE' THEN toString(id)
+						WHEN location_type = 'CITY' THEN toString(id)
+						WHEN location_type = 'STATE' THEN toString(location_id)
+						WHEN location_type = 'COUNTRY' THEN toString(iso)
+						ELSE ''
+					END AS grouping_key,
+					CASE 
+						WHEN location_type = 'VENUE' THEN id
+						WHEN location_type = 'CITY' THEN id
+						WHEN location_type = 'STATE' THEN location_id
+						WHEN location_type = 'COUNTRY' THEN 0
+						ELSE 0
+					END AS grouping_id_num,
+					id_uuid,
+					name,
+					city_uuid,
+					city_name,
+					state_uuid,
+					state_name,
+					country_uuid,
+					country_name,
+					latitude,
+					longitude,
+					address,
+					regions,
+					iso,
+					last_updated_at
+				FROM testing_db.location_ch
+				WHERE %s
+			)
+			GROUP BY location_type, grouping_key
+		)
+	`, strings.Join(whereConditions, " OR "))
+
+	log.Printf("Locations query: %s", query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("Error fetching locations: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	locationLookup := make(map[string]map[string]interface{})
+	rowCount := 0
+
+	for rows.Next() {
+		rowCount++
+		var lookupID uint32
+		var locationType, id, name, cityID, cityName, stateID, stateName, countryID, countryName, latitude, longitude, address, countryIso *string
+		var regions []string
+
+		if err := rows.Scan(&lookupID, &locationType, &id, &name, &cityID, &cityName, &stateID, &stateName, &countryID, &countryName, &latitude, &longitude, &address, &regions, &countryIso); err != nil {
+			log.Printf("Error scanning location row: %v", err)
+			continue
+		}
+
+		var lookupKey string
+		if locationType != nil {
+			if *locationType == "COUNTRY" && countryIso != nil {
+				lookupKey = fmt.Sprintf("%s:%s", *locationType, *countryIso)
+			} else {
+				lookupKey = fmt.Sprintf("%s:%d", *locationType, lookupID)
+			}
+		}
+
+		if lookupKey != "" {
+			locationLookup[lookupKey] = s.buildLocationMap(id, name, cityID, cityName, stateID, stateName, countryID, countryName, latitude, longitude, address, locationType, countryIso, regions)
+		}
+	}
+
+	locationsByEvent := make(map[uint32]map[string]map[string]interface{})
+
+	for eventID, data := range locationDataMap {
+		locations := make(map[string]map[string]interface{})
+
+		if data.VenueID != nil {
+			lookupKey := fmt.Sprintf("VENUE:%d", *data.VenueID)
+			if loc, ok := locationLookup[lookupKey]; ok {
+				locations["venue"] = loc
+			}
+		}
+
+		if data.VenueCity != nil {
+			lookupKey := fmt.Sprintf("CITY:%d", *data.VenueCity)
+			if loc, ok := locationLookup[lookupKey]; ok {
+				locations["city"] = loc
+			}
+		}
+
+		if data.EditionCityStateID != nil {
+			lookupKey := fmt.Sprintf("STATE:%d", *data.EditionCityStateID)
+			if loc, ok := locationLookup[lookupKey]; ok {
+				locations["state"] = loc
+			}
+		}
+
+		if data.EditionCountry != nil && *data.EditionCountry != "" {
+			lookupKey := fmt.Sprintf("COUNTRY:%s", *data.EditionCountry)
+			if loc, ok := locationLookup[lookupKey]; ok {
+				locations["country"] = loc
+			}
+		}
+
+		if len(locations) > 0 {
+			locationsByEvent[eventID] = locations
+		}
+	}
+
+	result := make(map[uint32]map[string]interface{})
+	for eventID, locations := range locationsByEvent {
+		result[eventID] = s.transformAndPrioritizeLocation(locations)
+	}
+
+	return result, nil
+}
+
+func (s *SharedFunctionService) buildLocationMap(id, name, cityID, cityName, stateID, stateName, countryID, countryName, latitude, longitude, address, locationType, countryIso *string, regions []string) map[string]interface{} {
+	location := make(map[string]interface{})
+
+	if id != nil {
+		location["id"] = *id
+	}
+	if name != nil {
+		location["name"] = *name
+	}
+	if locationType != nil {
+		location["locationType"] = *locationType
+	}
+	if latitude != nil && *latitude != "null" && *latitude != "" {
+		location["latitude"] = *latitude
+	} else {
+		location["latitude"] = nil
+	}
+	if longitude != nil && *longitude != "null" && *longitude != "" {
+		location["longitude"] = *longitude
+	} else {
+		location["longitude"] = nil
+	}
+	if countryIso != nil && *countryIso != "null" && *countryIso != "" {
+		location["countryIso"] = *countryIso
+	} else {
+		location["countryIso"] = nil
+	}
+
+	locType := ""
+	if locationType != nil {
+		locType = *locationType
+	}
+
+	switch locType {
+	case "VENUE":
+		if address != nil && *address != "null" && *address != "" {
+			location["address"] = *address
+		}
+		if cityID != nil && *cityID != "null" && *cityID != "" {
+			location["cityId"] = *cityID
+		} else {
+			location["cityId"] = nil
+		}
+		if cityName != nil && *cityName != "null" && *cityName != "" {
+			location["cityName"] = *cityName
+		} else {
+			location["cityName"] = nil
+		}
+		if stateID != nil && *stateID != "null" && *stateID != "" {
+			location["stateId"] = *stateID
+		} else {
+			location["stateId"] = nil
+		}
+		if stateName != nil && *stateName != "null" && *stateName != "" {
+			location["stateName"] = *stateName
+		} else {
+			location["stateName"] = nil
+		}
+		if countryID != nil && *countryID != "null" && *countryID != "" {
+			location["countryId"] = *countryID
+		} else {
+			location["countryId"] = nil
+		}
+		if countryName != nil && *countryName != "null" && *countryName != "" {
+			location["countryName"] = *countryName
+		} else {
+			location["countryName"] = nil
+		}
+	case "CITY":
+		if stateID != nil && *stateID != "null" && *stateID != "" {
+			location["stateId"] = *stateID
+		} else {
+			location["stateId"] = nil
+		}
+		if stateName != nil && *stateName != "null" && *stateName != "" {
+			location["stateName"] = *stateName
+		} else {
+			location["stateName"] = nil
+		}
+		if countryID != nil && *countryID != "null" && *countryID != "" {
+			location["countryId"] = *countryID
+		} else {
+			location["countryId"] = nil
+		}
+		if countryName != nil && *countryName != "null" && *countryName != "" {
+			location["countryName"] = *countryName
+		} else {
+			location["countryName"] = nil
+		}
+	case "STATE":
+		if countryID != nil && *countryID != "null" && *countryID != "" {
+			location["countryId"] = *countryID
+		} else {
+			location["countryId"] = nil
+		}
+		if countryName != nil && *countryName != "null" && *countryName != "" {
+			location["countryName"] = *countryName
+		} else {
+			location["countryName"] = nil
+		}
+	case "COUNTRY":
+		if len(regions) > 0 {
+			location["region"] = regions
+		} else {
+			location["region"] = nil
+		}
+		if countryIso != nil && *countryIso != "null" && *countryIso != "" {
+			location["iso"] = *countryIso
+		} else {
+			location["iso"] = nil
+		}
+	}
+
+	displayNameParts := []string{}
+	if name != nil && *name != "" {
+		displayNameParts = append(displayNameParts, *name)
+	}
+	if cityName, ok := location["cityName"].(string); ok && cityName != "" {
+		displayNameParts = append(displayNameParts, cityName)
+	}
+	if stateName, ok := location["stateName"].(string); ok && stateName != "" {
+		displayNameParts = append(displayNameParts, stateName)
+	}
+	if countryName, ok := location["countryName"].(string); ok && countryName != "" {
+		displayNameParts = append(displayNameParts, countryName)
+	}
+	if len(displayNameParts) > 0 {
+		location["displayName"] = strings.Join(displayNameParts, ", ")
+	} else {
+		location["displayName"] = ""
+	}
+
+	return location
+}
+
+func (s *SharedFunctionService) transformAndPrioritizeLocation(locations map[string]map[string]interface{}) map[string]interface{} {
+	if venue, ok := locations["venue"]; ok {
+		if state, ok := locations["state"]; ok {
+			if stateID, ok := state["id"].(string); ok && stateID != "" {
+				venue["stateId"] = stateID
+			}
+		} else if city, ok := locations["city"]; ok {
+			if stateID, ok := city["stateId"].(string); ok && stateID != "" {
+				venue["stateId"] = stateID
+			}
+		}
+
+		if city, ok := locations["city"]; ok {
+			if cityLat, ok := city["latitude"].(string); ok && cityLat != "" {
+				venue["cityLatitude"] = cityLat
+			} else {
+				venue["cityLatitude"] = nil
+			}
+			if cityLon, ok := city["longitude"].(string); ok && cityLon != "" {
+				venue["cityLongitude"] = cityLon
+			} else {
+				venue["cityLongitude"] = nil
+			}
+		} else {
+			venue["cityLatitude"] = nil
+			venue["cityLongitude"] = nil
+		}
+
+		if country, ok := locations["country"]; ok {
+			if iso, ok := country["iso"].(string); ok && iso != "" {
+				venue["countryIso"] = iso
+			}
+			if region, ok := country["region"].([]string); ok && len(region) > 0 {
+				venue["region"] = region
+			} else {
+				venue["region"] = nil
+			}
+		}
+		return venue
+	}
+
+	if city, ok := locations["city"]; ok {
+		if country, ok := locations["country"]; ok {
+			if iso, ok := country["iso"].(string); ok && iso != "" {
+				city["countryIso"] = iso
+			}
+			if region, ok := country["region"].([]string); ok && len(region) > 0 {
+				city["region"] = region
+			} else {
+				city["region"] = nil
+			}
+		}
+		return city
+	}
+
+	if state, ok := locations["state"]; ok {
+		return state
+	}
+
+	if country, ok := locations["country"]; ok {
+		return country
+	}
+
+	for _, location := range locations {
+		return location
+	}
+
+	return nil
+}
+
+func (s *SharedFunctionService) GetEventLocations(eventIds []uint32) (map[string]map[string]interface{}, error) {
+	locationDataMap, err := s.FetchEventLocationData(eventIds)
+	if err != nil {
+		return nil, err
+	}
+
+	locationsMap, err := s.FetchLocations(locationDataMap)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]map[string]interface{})
+	for eventID, location := range locationsMap {
+		eventIDStr := fmt.Sprintf("%d", eventID)
+		result[eventIDStr] = location
+	}
+
+	return result, nil
+}

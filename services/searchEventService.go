@@ -1459,18 +1459,93 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	relatedDataQuery := queryBuilder.BuildQuery()
 
 	log.Printf("Related data query: %s", relatedDataQuery)
-	relatedDataQueryTime := time.Now()
-	relatedDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), relatedDataQuery)
-	if err != nil {
-		log.Printf("Related data query error: %v", err)
+
+	parallelQueryCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	type relatedDataResult struct {
+		Rows     driver.Rows
+		Err      error
+		Duration time.Duration
+	}
+
+	type locationDataResult struct {
+		Locations map[string]map[string]interface{}
+		Err       error
+		Duration  time.Duration
+	}
+
+	relatedDataChan := make(chan relatedDataResult, 1)
+	locationDataChan := make(chan locationDataResult, 1)
+
+	go func() {
+		queryStartTime := time.Now()
+		rows, err := s.clickhouseService.ExecuteQuery(parallelQueryCtx, relatedDataQuery)
+		duration := time.Since(queryStartTime)
+
+		relatedDataChan <- relatedDataResult{
+			Rows:     rows,
+			Err:      err,
+			Duration: duration,
+		}
+	}()
+
+	go func() {
+		queryStartTime := time.Now()
+		var locations map[string]map[string]interface{}
+		var err error
+
+		if len(eventIds) > 0 {
+			locations, err = s.sharedFunctionService.GetEventLocations(eventIds)
+		} else {
+			locations = make(map[string]map[string]interface{})
+		}
+
+		duration := time.Since(queryStartTime)
+
+		locationDataChan <- locationDataResult{
+			Locations: locations,
+			Err:       err,
+			Duration:  duration,
+		}
+	}()
+
+	relatedDataRes := <-relatedDataChan
+	locationDataRes := <-locationDataChan
+
+	log.Printf("Related data query time: %v", relatedDataRes.Duration)
+	log.Printf("Event location query time: %v", locationDataRes.Duration)
+
+	if relatedDataRes.Err != nil {
+		log.Printf("Related data query error: %v", relatedDataRes.Err)
+		if relatedDataRes.Rows != nil {
+			relatedDataRes.Rows.Close()
+		}
 		return &ListResult{
 			StatusCode:   500,
-			ErrorMessage: err.Error(),
+			ErrorMessage: relatedDataRes.Err.Error(),
 		}, nil
 	}
 
-	relatedDataQueryDuration := time.Since(relatedDataQueryTime)
-	log.Printf("Related data query time: %v", relatedDataQueryDuration)
+	if locationDataRes.Err != nil {
+		log.Printf("Error fetching event locations: %v", locationDataRes.Err)
+		if relatedDataRes.Rows != nil {
+			relatedDataRes.Rows.Close()
+		}
+		return &ListResult{
+			StatusCode:   500,
+			ErrorMessage: locationDataRes.Err.Error(),
+		}, nil
+	}
+
+	relatedDataRows := relatedDataRes.Rows
+	eventLocationsMap := locationDataRes.Locations
+
+	defer func() {
+		if relatedDataRows != nil {
+			relatedDataRows.Close()
+		}
+	}()
 
 	categoriesMap := make(map[string][]map[string]string)
 	tagsMap := make(map[string][]map[string]string)
@@ -1480,11 +1555,11 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	designationSpreadMap := make(map[string][]map[string]interface{})
 	rankingsMap := make(map[string]string)
 
-	for relatedDataResult.Next() {
+	for relatedDataRows.Next() {
 		var eventID uint32
 		var dataType, value, uuidValue, slugValue, eventGroupTypeValue string
 
-		if err := relatedDataResult.Scan(&eventID, &dataType, &value, &uuidValue, &slugValue, &eventGroupTypeValue); err != nil {
+		if err := relatedDataRows.Scan(&eventID, &dataType, &value, &uuidValue, &slugValue, &eventGroupTypeValue); err != nil {
 			log.Printf("Error scanning related data row: %v", err)
 			continue
 		}
@@ -1750,8 +1825,12 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			grouper.AddField("bannerUrl", nil)
 		}
 
-		if processor.GetRequestedGroups()[ResponseGroupBasic] {
-			grouper.AddField("eventLocation", nil)
+		if processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["eventLocation"] {
+			if eventLocation, ok := eventLocationsMap[eventID]; ok && eventLocation != nil {
+				grouper.AddField("eventLocation", eventLocation)
+			} else {
+				grouper.AddField("eventLocation", nil)
+			}
 		}
 
 		if len(requestedFieldsSet) == 0 || requestedFieldsSet["jobComposite"] {
@@ -1867,9 +1946,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				parsedRankings := s.sharedFunctionService.TransformRankings(rankingsValue, filterFields)
 				if parsedRankings != nil {
 					grouper.AddField("rankings", parsedRankings)
-				} else {
 				}
-			} else {
 			}
 		}
 
