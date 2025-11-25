@@ -1937,9 +1937,15 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			grouper.AddField("reputationChangeTag", reputationChangeTagValue)
 		}
 
-		shouldIncludeRankings := len(requestedFieldsSet) == 0 || requestedFieldsSet["rankings"]
-		if !shouldIncludeRankings && len(requestedGroupsSet) > 0 {
-			shouldIncludeRankings = requestedGroupsSet[ResponseGroupInsights]
+		shouldIncludeRankings := false
+		if filterFields.View != "" {
+			viewLower := strings.ToLower(strings.TrimSpace(filterFields.View))
+			if viewLower == "list" || viewLower == "tracker" {
+				shouldIncludeRankings = len(requestedFieldsSet) == 0 || requestedFieldsSet["rankings"]
+				if !shouldIncludeRankings && len(requestedGroupsSet) > 0 {
+					shouldIncludeRankings = requestedGroupsSet[ResponseGroupInsights]
+				}
+			}
 		}
 		if shouldIncludeRankings {
 			if rankingsValue, ok := rankingsMap[eventID]; ok && rankingsValue != "" {

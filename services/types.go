@@ -238,10 +238,6 @@ var FieldsFromRelatedQueries = map[string]bool{
 	"matchedKeywords":   true,
 }
 
-var FieldsNotInDB = map[string]bool{
-	"eventLocation": true,
-}
-
 func ResolveShowValuesToFields(showValues []string) []string {
 	var allFields []string
 	fieldSet := make(map[string]bool)
@@ -266,7 +262,7 @@ func MapAPIFieldsToDBSelect(apiFields []string) []string {
 	fieldSet := make(map[string]bool)
 
 	for _, field := range apiFields {
-		if FieldsFromRelatedQueries[field] || FieldsNotInDB[field] {
+		if FieldsFromRelatedQueries[field] {
 			continue
 		}
 
