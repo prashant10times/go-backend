@@ -492,6 +492,85 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		return successResponse, nil
 	}
 
+	if len(filterFields.ParsedGroupBy) > 0 {
+		queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
+		if err != nil {
+			log.Printf("Error building ClickHouse query for groupBy: %v", err)
+			statusCode = http.StatusInternalServerError
+			msg := err.Error()
+			errorMessage = &msg
+			return nil, middleware.NewInternalServerError("Database query failed", err.Error())
+		}
+
+		cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
+			queryResult.NeedsVisitorJoin,
+			queryResult.NeedsSpeakerJoin,
+			queryResult.NeedsExhibitorJoin,
+			queryResult.NeedsSponsorJoin,
+			queryResult.NeedsCategoryJoin,
+			queryResult.NeedsTypeJoin,
+			queryResult.NeedsEventRankingJoin,
+			queryResult.needsDesignationJoin,
+			queryResult.needsAudienceSpreadJoin,
+			queryResult.NeedsRegionsJoin,
+			queryResult.NeedsLocationIdsJoin,
+			queryResult.NeedsCountryIdsJoin,
+			queryResult.NeedsStateIdsJoin,
+			queryResult.NeedsCityIdsJoin,
+			queryResult.NeedsVenueIdsJoin,
+			queryResult.VisitorWhereConditions,
+			queryResult.SpeakerWhereConditions,
+			queryResult.ExhibitorWhereConditions,
+			queryResult.SponsorWhereConditions,
+			queryResult.CategoryWhereConditions,
+			queryResult.TypeWhereConditions,
+			queryResult.EventRankingWhereConditions,
+			queryResult.JobCompositeWhereConditions,
+			queryResult.AudienceSpreadWhereConditions,
+			queryResult.RegionsWhereConditions,
+			queryResult.LocationIdsWhereConditions,
+			queryResult.CountryIdsWhereConditions,
+			queryResult.StateIdsWhereConditions,
+			queryResult.CityIdsWhereConditions,
+			queryResult.VenueIdsWhereConditions,
+			filterFields,
+		)
+
+		switch filterFields.ParsedGroupBy[0] {
+		case models.CountGroupStatus:
+			count, err := s.sharedFunctionService.GetEventCountByStatus(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+			)
+			if err != nil {
+				log.Printf("Error getting event count by status: %v", err)
+				statusCode = http.StatusInternalServerError
+				msg := err.Error()
+				errorMessage = &msg
+				return nil, middleware.NewInternalServerError("Error getting event count by status", err.Error())
+			}
+
+			responseTime := time.Since(startTime).Seconds()
+			successResponse := fiber.Map{
+				"status":     "success",
+				"statusCode": 200,
+				"meta": fiber.Map{
+					"responseTime": responseTime,
+				},
+				"data": fiber.Map{
+					"count": count,
+				},
+			}
+			return successResponse, nil
+		default:
+			statusCode = http.StatusBadRequest
+			msg := fmt.Sprintf("Unsupported groupBy option: %s", filterFields.ParsedGroupBy[0])
+			errorMessage = &msg
+			return nil, middleware.NewBadRequestError("Unsupported groupBy option", msg)
+		}
+	}
+
 	queryType, err := s.sharedFunctionService.determineQueryType(filterFields)
 	if err != nil {
 		log.Printf("Error determining query type: %v", err)

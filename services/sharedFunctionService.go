@@ -1300,10 +1300,16 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			%s`, typeWhereClause)
 
 		if previousCTE != "" {
+			var selectColumn string
+			if previousCTE == "filtered_categories" {
+				selectColumn = "event"
+			} else {
+				selectColumn = "event_id"
+			}
 			typeQuery = fmt.Sprintf(`filtered_types AS (
 				SELECT event_id
 				FROM testing_db.event_type_ch
-				WHERE event_id IN (SELECT event_id FROM %s)`, previousCTE)
+				WHERE event_id IN (SELECT %s FROM %s)`, selectColumn, previousCTE)
 			if len(typeWhereConditions) > 0 {
 				typeQuery += fmt.Sprintf(`
 				AND %s`, strings.Join(typeWhereConditions, " AND "))
@@ -4471,6 +4477,211 @@ func (s *SharedFunctionService) GetEventLocations(eventIds []uint32) (map[string
 	for eventID, location := range locationsMap {
 		eventIDStr := fmt.Sprintf("%d", eventID)
 		result[eventIDStr] = location
+	}
+
+	return result, nil
+}
+
+func (s *SharedFunctionService) GetEventCountByStatus(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	filterFields models.FilterDataDto,
+) (map[string]interface{}, error) {
+	today := time.Now().Format("2006-01-02")
+	createdAt := filterFields.CreatedAt
+	if createdAt == "" {
+		createdAt = today
+	}
+
+	getNew := filterFields.ParsedGetNew
+	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
+	isEventEntity := searchByEntity == "event"
+
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	selectClauses := []string{}
+
+	if isEventEntity {
+		if getNew == nil || *getNew {
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"arrayStringConcat(groupArray(DISTINCT CASE WHEN e.event_created >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS new_ids",
+				createdAt,
+			))
+		}
+
+		if getNew == nil || !*getNew {
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date < '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS past_ids",
+				today,
+			))
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS active_ids",
+				today,
+			))
+		}
+	} else {
+		if getNew == nil || *getNew {
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"uniqIf(e.event_id, e.event_created >= '%s') AS new",
+				createdAt,
+			))
+		}
+
+		if getNew == nil || !*getNew {
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"uniqIf(e.event_id, e.end_date < '%s') AS past",
+				today,
+			))
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"uniqIf(e.event_id, e.end_date >= '%s') AS active",
+				today,
+			))
+		}
+	}
+
+	if len(selectClauses) == 0 {
+		if isEventEntity {
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date < '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS past_ids",
+				today,
+			))
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS active_ids",
+				today,
+			))
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"arrayStringConcat(groupArray(DISTINCT CASE WHEN e.event_created >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS new_ids",
+				createdAt,
+			))
+		} else {
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"uniqIf(e.event_id, e.end_date < '%s') AS past",
+				today,
+			))
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"uniqIf(e.event_id, e.end_date >= '%s') AS active",
+				today,
+			))
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"uniqIf(e.event_id, e.event_created >= '%s') AS new",
+				createdAt,
+			))
+		}
+	}
+
+	selectStr := strings.Join(selectClauses, ", ")
+
+	query := fmt.Sprintf(`
+		WITH %spreFilterEvent AS (
+			SELECT
+				ee.*
+			FROM testing_db.allevent_ch AS ee
+			WHERE %s 
+			AND %s
+			AND edition_type = 'current_edition'
+			%s
+			%s
+			%s
+		)
+		SELECT
+			%s
+		FROM preFilterEvent e
+	`,
+		cteClausesStr,
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		func() string {
+			if queryResult.WhereClause != "" {
+				return fmt.Sprintf("AND %s", queryResult.WhereClause)
+			}
+			return ""
+		}(),
+		func() string {
+			if queryResult.SearchClause != "" {
+				return fmt.Sprintf("AND %s", queryResult.SearchClause)
+			}
+			return ""
+		}(),
+		joinConditionsStr,
+		selectStr,
+	)
+
+	log.Printf("Event count by status query: %s", query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]interface{})
+	if rows.Next() {
+		columns := rows.Columns()
+
+		hasIdColumns := false
+		for _, col := range columns {
+			if strings.HasSuffix(col, "_ids") {
+				hasIdColumns = true
+				break
+			}
+		}
+
+		if hasIdColumns {
+			values := make([]*string, len(columns))
+			for i := range columns {
+				values[i] = new(string)
+			}
+
+			scanArgs := make([]interface{}, len(columns))
+			for i := range columns {
+				scanArgs[i] = values[i]
+			}
+
+			if err := rows.Scan(scanArgs...); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				return nil, err
+			}
+
+			for i, col := range columns {
+				if values[i] != nil && *values[i] != "" {
+					result[col] = *values[i]
+				} else {
+					result[col] = ""
+				}
+			}
+		} else {
+			values := make([]*uint64, len(columns))
+			for i := range columns {
+				values[i] = new(uint64)
+			}
+
+			scanArgs := make([]interface{}, len(columns))
+			for i := range columns {
+				scanArgs[i] = values[i]
+			}
+
+			if err := rows.Scan(scanArgs...); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				return nil, err
+			}
+
+			for i, col := range columns {
+				if values[i] != nil {
+					result[col] = int(*values[i])
+				} else {
+					result[col] = 0
+				}
+			}
+		}
 	}
 
 	return result, nil

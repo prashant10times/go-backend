@@ -75,6 +75,27 @@ const (
 	AlertSearchGroupByAlertType AlertSearchGroupBy = "alertType"
 )
 
+type CountGroup string
+
+const (
+	CountGroupYear                  CountGroup = "year"
+	CountGroupMonth                 CountGroup = "month"
+	CountGroupWeek                  CountGroup = "week"
+	CountGroupDay                   CountGroup = "day"
+	CountGroupCountry               CountGroup = "country"
+	CountGroupState                 CountGroup = "state"
+	CountGroupCity                  CountGroup = "city"
+	CountGroupAlertType             CountGroup = "alertType"
+	CountGroupEventTypeGroup        CountGroup = "eventTypeGroup"
+	CountGroupStatus                CountGroup = "status"
+	CountGroupEventType             CountGroup = "eventType"
+	CountGroupCategory              CountGroup = "category"
+	CountGroupPredictedAttendance   CountGroup = "predictedAttendance"
+	CountGroupInboundEstimate       CountGroup = "inboundEstimate"
+	CountGroupInternationalEstimate CountGroup = "internationalEstimate"
+	CountGroupEventCount            CountGroup = "eventCount"
+)
+
 type AlertSearchSortBy string
 
 const (
@@ -115,7 +136,9 @@ type FilterDataDto struct {
 	CityIds    string `json:"cityIds,omitempty" form:"cityIds"`
 	VenueIds   string `json:"venueIds,omitempty" form:"venueIds"`
 
-	// SearchByEntity string `json:"searchByEntity,omitempty" form:"searchByEntity"`
+	SearchByEntity string `json:"searchByEntity,omitempty" form:"searchByEntity"`
+	GroupBy        string `json:"groupBy,omitempty" form:"groupBy"`
+	GetNew         string `json:"getNew,omitempty" form:"getNew"`
 
 	Price     string `json:"price,omitempty" form:"price"`
 	AvgRating string `json:"avgRating,omitempty" form:"avgRating"`
@@ -286,6 +309,8 @@ type FilterDataDto struct {
 	ParsedEventIds       []string     `json:"-"`
 	ParsedNotEventIds    []string     `json:"-"`
 	ParsedSourceEventIds []string     `json:"-"`
+	ParsedGroupBy        []CountGroup `json:"-"`
+	ParsedGetNew         *bool        `json:"-"`
 	ParsedDates          []DateRange  `json:"-"`
 	ParsedPastBetween    *struct {
 		Start string `json:"start"`
@@ -489,6 +514,69 @@ func (f *FilterDataDto) Validate() error {
 			}
 			return nil
 		})),
+
+		validation.Field(&f.GroupBy, validation.When(f.GroupBy != "", validation.By(func(value interface{}) error {
+			groupByStr := value.(string)
+			if groupByStr == "" {
+				return nil
+			}
+
+			groupByItems := strings.Split(groupByStr, ",")
+			f.ParsedGroupBy = make([]CountGroup, 0, len(groupByItems))
+
+			validCountGroups := map[string]CountGroup{
+				"year":                  CountGroupYear,
+				"month":                 CountGroupMonth,
+				"week":                  CountGroupWeek,
+				"day":                   CountGroupDay,
+				"country":               CountGroupCountry,
+				"state":                 CountGroupState,
+				"city":                  CountGroupCity,
+				"alertType":             CountGroupAlertType,
+				"eventTypeGroup":        CountGroupEventTypeGroup,
+				"status":                CountGroupStatus,
+				"eventType":             CountGroupEventType,
+				"category":              CountGroupCategory,
+				"predictedAttendance":   CountGroupPredictedAttendance,
+				"inboundEstimate":       CountGroupInboundEstimate,
+				"internationalEstimate": CountGroupInternationalEstimate,
+				"eventCount":            CountGroupEventCount,
+			}
+
+			var invalidOptions []string
+			for _, item := range groupByItems {
+				item = strings.TrimSpace(item)
+				if item != "" {
+					if countGroup, exists := validCountGroups[item]; exists {
+						f.ParsedGroupBy = append(f.ParsedGroupBy, countGroup)
+					} else {
+						invalidOptions = append(invalidOptions, item)
+					}
+				}
+			}
+
+			if len(invalidOptions) > 0 {
+				validOptions := []string{"year", "month", "week", "day", "country", "state", "city", "alertType", "eventTypeGroup", "status", "eventType", "category", "predictedAttendance", "inboundEstimate", "internationalEstimate", "eventCount"}
+				return validation.NewError("invalid_groupBy", "Invalid groupBy option: "+strings.Join(invalidOptions, ", ")+". Valid options are: "+strings.Join(validOptions, ", "))
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.GetNew, validation.When(f.GetNew != "", validation.By(func(value interface{}) error {
+			getNewStr := value.(string)
+			if getNewStr == "" {
+				return nil
+			}
+
+			if getNewStr != "true" && getNewStr != "false" {
+				return validation.NewError("invalid_getNew", "Invalid getNew value: "+getNewStr+". Must be 'true' or 'false'")
+			}
+
+			parsedValue := getNewStr == "true"
+			f.ParsedGetNew = &parsedValue
+			return nil
+		}))),
 
 		validation.Field(&f.Frequency, validation.When(f.Frequency != "", validation.In("Weekly", "Monthly", "Quarterly", "Bi-annual", "Annual", "Biennial", "Triennial", "Quinquennial", "One-time", "Quadrennial"))), // Frequency validation
 
