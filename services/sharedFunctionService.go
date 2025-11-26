@@ -1728,6 +1728,9 @@ func (s *SharedFunctionService) buildStatusCondition(filterFields models.FilterD
 }
 
 func (s *SharedFunctionService) buildPublishedCondition(filterFields models.FilterDataDto) string {
+	if (filterFields.GroupBy != "" && filterFields.GroupBy == "eventTypeGroup") {
+		return "published in (1, 2, 4)"
+	}
 	if len(filterFields.ParsedPublished) == 0 {
 		return "published = '1'"
 	}
