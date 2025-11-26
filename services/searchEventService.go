@@ -563,6 +563,40 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 				},
 			}
 			return successResponse, nil
+		case models.CountGroupEventTypeGroup:
+			searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
+			if searchByEntity != "" && searchByEntity != "event" && searchByEntity != "keywords" {
+				statusCode = http.StatusBadRequest
+				msg := "eventTypeGroup groupBy is only supported when searchByEntity is empty, 'event', or 'keywords'"
+				errorMessage = &msg
+				return nil, middleware.NewBadRequestError("Invalid searchByEntity for eventTypeGroup", msg)
+			}
+
+			count, err := s.sharedFunctionService.GetEventCountByEventTypeGroup(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+			)
+			if err != nil {
+				log.Printf("Error getting event count by event type group: %v", err)
+				statusCode = http.StatusInternalServerError
+				msg := err.Error()
+				errorMessage = &msg
+				return nil, middleware.NewInternalServerError("Error getting event count by event type group", err.Error())
+			}
+
+			responseTime := time.Since(startTime).Seconds()
+			successResponse := fiber.Map{
+				"status":     "success",
+				"statusCode": 200,
+				"meta": fiber.Map{
+					"responseTime": responseTime,
+				},
+				"data": fiber.Map{
+					"count": count,
+				},
+			}
+			return successResponse, nil
 		default:
 			statusCode = http.StatusBadRequest
 			msg := fmt.Sprintf("Unsupported groupBy option: %s", filterFields.ParsedGroupBy[0])

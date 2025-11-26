@@ -4686,3 +4686,388 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 
 	return result, nil
 }
+
+func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	filterFields models.FilterDataDto,
+) (interface{}, error) {
+	today := time.Now().Format("2006-01-02")
+	createdAt := filterFields.CreatedAt
+	if createdAt == "" {
+		createdAt = today
+	}
+
+	getNew := filterFields.ParsedGetNew
+	eventGroupCount := filterFields.ParsedEventGroupCount
+	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
+	isEventEntity := searchByEntity == "event"
+	eventTypeGroup := filterFields.ParsedEventTypeGroup
+
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	selectClauses := []string{}
+
+	if createdAt != "" && (getNew == nil || *getNew) {
+		if isEventEntity {
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"arrayStringConcat(groupArray(DISTINCT CASE WHEN e.event_created >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS new_event_ids",
+				createdAt,
+			))
+		} else {
+			selectClauses = append(selectClauses, fmt.Sprintf(
+				"uniqIf(e.event_id, e.event_created >= '%s') AS new",
+				createdAt,
+			))
+		}
+	}
+
+	if isEventEntity {
+		selectClauses = append(selectClauses,
+			"arrayStringConcat(groupArray(DISTINCT toString(e.event_uuid) || '#' || toString(e.event_id)), ',') AS total_event_ids",
+		)
+	}
+
+	if (getNew == nil || !*getNew) && eventTypeGroup == nil && (eventGroupCount == nil || !*eventGroupCount) {
+		if !isEventEntity {
+			selectClauses = append(selectClauses, "uniq(e.event_id) AS count")
+		}
+	}
+
+	selectStr := ""
+	if len(selectClauses) > 0 {
+		selectStr = ", " + strings.Join(selectClauses, ", ")
+	}
+
+	baseWhereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		"edition_type = 'current_edition'",
+	}
+	if queryResult.WhereClause != "" {
+		baseWhereConditions = append(baseWhereConditions, queryResult.WhereClause)
+	}
+	if queryResult.SearchClause != "" {
+		baseWhereConditions = append(baseWhereConditions, queryResult.SearchClause)
+	}
+	if joinConditionsStr != "" {
+		baseWhereConditions = append(baseWhereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+	}
+	whereClause := strings.Join(baseWhereConditions, " AND ")
+
+	// !eventTypeGroup && !eventGroupCount - Group by all groups using arrayJoin
+	if eventTypeGroup == nil && (eventGroupCount == nil || !*eventGroupCount) {
+		query := fmt.Sprintf(`
+			WITH %spreFilterEvent AS (
+				SELECT
+					ee.*
+				FROM testing_db.allevent_ch AS ee
+				WHERE %s
+			),
+			grouped_counts AS (
+				SELECT
+					group_name%s
+				FROM preFilterEvent e
+				INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+				ARRAY JOIN et.groups AS group_name
+				WHERE has(et.groups, 'business') OR has(et.groups, 'social') OR has(et.groups, 'unattended')
+				GROUP BY group_name
+			)
+			SELECT * FROM grouped_counts WHERE group_name IN ('business', 'social', 'unattended')
+		`,
+			cteClausesStr,
+			whereClause,
+			selectStr,
+		)
+
+		log.Printf("Event count by event type group query (scenario 1): %s", query)
+
+		rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+		if err != nil {
+			log.Printf("ClickHouse query error: %v", err)
+			return nil, err
+		}
+		defer rows.Close()
+
+		result := make(map[string]interface{})
+		for rows.Next() {
+			columns := rows.Columns()
+			var groupName string
+			scanArgs := []interface{}{&groupName}
+
+			if isEventEntity {
+				for i := 1; i < len(columns); i++ {
+					var val string
+					scanArgs = append(scanArgs, &val)
+				}
+			} else {
+				for i := 1; i < len(columns); i++ {
+					var val uint64
+					scanArgs = append(scanArgs, &val)
+				}
+			}
+
+			if err := rows.Scan(scanArgs...); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				return nil, err
+			}
+
+			groupData := make(map[string]interface{})
+			colIdx := 1
+			for _, col := range columns[1:] {
+				if isEventEntity {
+					if val, ok := scanArgs[colIdx].(*string); ok && val != nil && *val != "" {
+						groupData[col] = *val
+					} else {
+						groupData[col] = ""
+					}
+				} else {
+					if val, ok := scanArgs[colIdx].(*uint64); ok && val != nil {
+						groupData[col] = int(*val)
+					} else {
+						groupData[col] = 0
+					}
+				}
+				colIdx++
+			}
+			result[groupName] = groupData
+		}
+
+		allGroups := []string{"business", "social", "unattended"}
+		for _, group := range allGroups {
+			if _, exists := result[group]; !exists {
+				if isEventEntity {
+					result[group] = map[string]interface{}{}
+				} else {
+					result[group] = map[string]interface{}{"count": 0}
+				}
+			}
+		}
+
+		return result, nil
+	}
+
+	// eventGroupCount = true - Special filtering with published status
+	if eventGroupCount != nil && *eventGroupCount {
+		eventGroupCountConditions := []string{
+			"(e.published = '4' AND has(et.groups, 'unattended'))",
+			"(e.published = '1' AND has(et.groups, 'business'))",
+			"(e.published = '1' AND has(et.groups, 'social'))",
+		}
+		eventGroupCountWhere := fmt.Sprintf("(%s)", strings.Join(eventGroupCountConditions, " OR "))
+
+		groupedSelectClauses := []string{
+			"CASE WHEN has(et.groups, 'unattended') THEN 'unattended' WHEN has(et.groups, 'business') THEN 'business' WHEN has(et.groups, 'social') THEN 'social' END AS group_name",
+			"uniq(e.event_id) AS event_count",
+		}
+		if len(selectClauses) > 0 {
+			groupedSelectClauses = append(groupedSelectClauses, selectClauses...)
+		}
+		groupedSelectStr := strings.Join(groupedSelectClauses, ", ")
+
+		finalSelectClauses := []string{
+			"g.group_name",
+			"COALESCE(gr.event_count, 0) AS count",
+		}
+		if isEventEntity {
+			finalSelectClauses = append(finalSelectClauses, "COALESCE(gr.total_event_ids, '') AS total_event_ids")
+			if getNew != nil && *getNew {
+				finalSelectClauses = append(finalSelectClauses, "COALESCE(gr.new_event_ids, '') AS new_event_ids")
+			}
+		} else {
+			for _, clause := range selectClauses {
+				if !strings.Contains(clause, "total_event_ids") && !strings.Contains(clause, "new_event_ids") {
+					colName := strings.Split(clause, " AS ")[1]
+					finalSelectClauses = append(finalSelectClauses, fmt.Sprintf("COALESCE(gr.%s, 0) AS %s", colName, colName))
+				}
+			}
+		}
+		finalSelectStr := strings.Join(finalSelectClauses, ", ")
+
+		query := fmt.Sprintf(`
+			WITH %spreFilterEvent AS (
+				SELECT
+					ee.*
+				FROM testing_db.allevent_ch AS ee
+				WHERE %s
+			),
+			grouped AS (
+				SELECT
+					%s
+				FROM preFilterEvent e
+				INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+				WHERE %s
+				GROUP BY group_name
+			)
+			SELECT 
+				%s
+			FROM (
+				SELECT 'unattended' AS group_name
+				UNION ALL SELECT 'business'
+				UNION ALL SELECT 'social'
+			) g
+			LEFT JOIN grouped gr ON g.group_name = gr.group_name
+		`,
+			cteClausesStr,
+			whereClause,
+			groupedSelectStr,
+			eventGroupCountWhere,
+			finalSelectStr,
+		)
+
+		log.Printf("Event count by event type group query (scenario 2): %s", query)
+
+		rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+		if err != nil {
+			log.Printf("ClickHouse query error: %v", err)
+			return nil, err
+		}
+		defer rows.Close()
+
+		result := make(map[string]interface{})
+		for rows.Next() {
+			var groupName string
+			var count uint64
+			scanArgs := []interface{}{&groupName, &count}
+
+			if isEventEntity {
+				var totalEventIds string
+				scanArgs = append(scanArgs, &totalEventIds)
+				if getNew != nil && *getNew {
+					var newEventIds string
+					scanArgs = append(scanArgs, &newEventIds)
+				}
+			} else {
+				if createdAt != "" && (getNew == nil || *getNew) {
+					var newCount uint64
+					scanArgs = append(scanArgs, &newCount)
+				}
+			}
+
+			if err := rows.Scan(scanArgs...); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				return nil, err
+			}
+
+			groupData := make(map[string]interface{})
+			groupData["count"] = int(count)
+			argIdx := 2
+			if isEventEntity {
+				if totalEventIds, ok := scanArgs[argIdx].(*string); ok {
+					groupData["total_event_ids"] = *totalEventIds
+				} else {
+					groupData["total_event_ids"] = ""
+				}
+				argIdx++
+				if getNew != nil && *getNew {
+					if newEventIds, ok := scanArgs[argIdx].(*string); ok {
+						groupData["new_event_ids"] = *newEventIds
+					} else {
+						groupData["new_event_ids"] = ""
+					}
+				}
+			} else {
+				if createdAt != "" && (getNew == nil || *getNew) {
+					if newCount, ok := scanArgs[argIdx].(*uint64); ok {
+						groupData["new"] = int(*newCount)
+					} else {
+						groupData["new"] = 0
+					}
+				}
+			}
+			result[groupName] = groupData
+		}
+
+		return result, nil
+	}
+
+	// eventTypeGroup is provided - Filter to specific group
+	groupValue := string(*eventTypeGroup)
+	query := fmt.Sprintf(`
+		WITH %spreFilterEvent AS (
+			SELECT
+				ee.*
+			FROM testing_db.allevent_ch AS ee
+			WHERE %s
+		)
+		SELECT%s
+		FROM preFilterEvent e
+		INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+		WHERE has(et.groups, '%s')
+	`,
+		cteClausesStr,
+		whereClause,
+		selectStr,
+		groupValue,
+	)
+
+	log.Printf("Event count by event type group query (scenario 3): %s", query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]interface{})
+	if rows.Next() {
+		columns := rows.Columns()
+
+		if isEventEntity {
+			values := make([]*string, len(columns))
+			for i := range columns {
+				values[i] = new(string)
+			}
+			scanArgs := make([]interface{}, len(columns))
+			for i := range columns {
+				scanArgs[i] = values[i]
+			}
+
+			if err := rows.Scan(scanArgs...); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				return nil, err
+			}
+
+			for i, col := range columns {
+				if values[i] != nil && *values[i] != "" {
+					result[col] = *values[i]
+				} else {
+					result[col] = ""
+				}
+			}
+		} else {
+			values := make([]*uint64, len(columns))
+			for i := range columns {
+				values[i] = new(uint64)
+			}
+			scanArgs := make([]interface{}, len(columns))
+			for i := range columns {
+				scanArgs[i] = values[i]
+			}
+
+			if err := rows.Scan(scanArgs...); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				return nil, err
+			}
+
+			for i, col := range columns {
+				if values[i] != nil {
+					result[col] = int(*values[i])
+				} else {
+					result[col] = 0
+				}
+			}
+		}
+	}
+
+	return result, nil
+}

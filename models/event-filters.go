@@ -136,9 +136,10 @@ type FilterDataDto struct {
 	CityIds    string `json:"cityIds,omitempty" form:"cityIds"`
 	VenueIds   string `json:"venueIds,omitempty" form:"venueIds"`
 
-	SearchByEntity string `json:"searchByEntity,omitempty" form:"searchByEntity"`
-	GroupBy        string `json:"groupBy,omitempty" form:"groupBy"`
-	GetNew         string `json:"getNew,omitempty" form:"getNew"`
+	SearchByEntity  string `json:"searchByEntity,omitempty" form:"searchByEntity"`
+	GroupBy         string `json:"groupBy,omitempty" form:"groupBy"`
+	GetNew          string `json:"getNew,omitempty" form:"getNew"`
+	EventGroupCount string `json:"eventGroupCount,omitempty" form:"eventGroupCount"`
 
 	Price     string `json:"price,omitempty" form:"price"`
 	AvgRating string `json:"avgRating,omitempty" form:"avgRating"`
@@ -272,47 +273,48 @@ type FilterDataDto struct {
 	EconomicImpactGte     string `json:"economicImpact.gte,omitempty" form:"economicImpact.gte"`
 	EconomicImpactLte     string `json:"economicImpact.lte,omitempty" form:"economicImpact.lte"`
 
-	ParsedCategory       []string     `json:"-"`
-	ParsedLocationIds    []string     `json:"-"`
-	ParsedCity           []string     `json:"-"`
-	ParsedCountry        []string     `json:"-"`
-	ParsedProducts       []string     `json:"-"`
-	ParsedType           []string     `json:"-"`
-	ParsedEventTypes     []string     `json:"-"`
-	ParsedVenue          []string     `json:"-"`
-	ParsedCompany        []string     `json:"-"`
-	ParsedView           []string     `json:"-"`
-	ParsedToAggregate    []string     `json:"-"`
-	ParsedKeywords       *Keywords    `json:"-"`
-	ParsedIsBranded      *bool        `json:"-"`
-	ParsedMode           *string      `json:"-"`
-	ParsedStatus         []string     `json:"-"`
-	ParsedState          []string     `json:"-"`
-	ParsedCompanyState   []string     `json:"-"`
-	ParsedCompanyCity    []string     `json:"-"`
-	ParsedCompanyDomain  []string     `json:"-"`
-	ParsedCompanyCountry []string     `json:"-"`
-	ParsedSpeakerState   []string     `json:"-"`
-	ParsedExhibitorState []string     `json:"-"`
-	ParsedSponsorState   []string     `json:"-"`
-	ParsedVisitorState   []string     `json:"-"`
-	ParsedJobComposite   []string     `json:"-"`
-	ParsedEventRanking   []string     `json:"-"`
-	ParsedAudienceZone   []string     `json:"-"`
-	ParsedAudienceSpread []string     `json:"-"`
-	ParsedPublished      []string     `json:"-"`
-	ParsedEventTypeGroup *Groups      `json:"-"`
-	ParsedDesignationId  []string     `json:"-"`
-	ParsedSeniorityId    []string     `json:"-"`
-	ParsedViewBound      *ViewBound   `json:"-"`
-	ParsedViewBounds     []*ViewBound `json:"-"`
-	ParsedEventIds       []string     `json:"-"`
-	ParsedNotEventIds    []string     `json:"-"`
-	ParsedSourceEventIds []string     `json:"-"`
-	ParsedGroupBy        []CountGroup `json:"-"`
-	ParsedGetNew         *bool        `json:"-"`
-	ParsedDates          []DateRange  `json:"-"`
-	ParsedPastBetween    *struct {
+	ParsedCategory        []string     `json:"-"`
+	ParsedLocationIds     []string     `json:"-"`
+	ParsedCity            []string     `json:"-"`
+	ParsedCountry         []string     `json:"-"`
+	ParsedProducts        []string     `json:"-"`
+	ParsedType            []string     `json:"-"`
+	ParsedEventTypes      []string     `json:"-"`
+	ParsedVenue           []string     `json:"-"`
+	ParsedCompany         []string     `json:"-"`
+	ParsedView            []string     `json:"-"`
+	ParsedToAggregate     []string     `json:"-"`
+	ParsedKeywords        *Keywords    `json:"-"`
+	ParsedIsBranded       *bool        `json:"-"`
+	ParsedMode            *string      `json:"-"`
+	ParsedStatus          []string     `json:"-"`
+	ParsedState           []string     `json:"-"`
+	ParsedCompanyState    []string     `json:"-"`
+	ParsedCompanyCity     []string     `json:"-"`
+	ParsedCompanyDomain   []string     `json:"-"`
+	ParsedCompanyCountry  []string     `json:"-"`
+	ParsedSpeakerState    []string     `json:"-"`
+	ParsedExhibitorState  []string     `json:"-"`
+	ParsedSponsorState    []string     `json:"-"`
+	ParsedVisitorState    []string     `json:"-"`
+	ParsedJobComposite    []string     `json:"-"`
+	ParsedEventRanking    []string     `json:"-"`
+	ParsedAudienceZone    []string     `json:"-"`
+	ParsedAudienceSpread  []string     `json:"-"`
+	ParsedPublished       []string     `json:"-"`
+	ParsedEventTypeGroup  *Groups      `json:"-"`
+	ParsedDesignationId   []string     `json:"-"`
+	ParsedSeniorityId     []string     `json:"-"`
+	ParsedViewBound       *ViewBound   `json:"-"`
+	ParsedViewBounds      []*ViewBound `json:"-"`
+	ParsedEventIds        []string     `json:"-"`
+	ParsedNotEventIds     []string     `json:"-"`
+	ParsedSourceEventIds  []string     `json:"-"`
+	ParsedGroupBy         []CountGroup `json:"-"`
+	ParsedGetNew          *bool        `json:"-"`
+	ParsedEventGroupCount *bool        `json:"-"`
+	ParsedDates           []DateRange  `json:"-"`
+	ParsedPastBetween     *struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
@@ -575,6 +577,22 @@ func (f *FilterDataDto) Validate() error {
 
 			parsedValue := getNewStr == "true"
 			f.ParsedGetNew = &parsedValue
+			return nil
+		}))),
+
+		validation.Field(&f.EventGroupCount, validation.When(f.EventGroupCount != "", validation.By(func(value interface{}) error {
+			eventGroupCountStr := value.(string)
+			eventGroupCountStr = strings.ToLower(strings.TrimSpace(eventGroupCountStr))
+			switch eventGroupCountStr {
+			case "true":
+				parsedValue := true
+				f.ParsedEventGroupCount = &parsedValue
+			case "false":
+				parsedValue := false
+				f.ParsedEventGroupCount = &parsedValue
+			default:
+				return validation.NewError("invalid_event_group_count", "Invalid eventGroupCount value. Must be 'true' or 'false'")
+			}
 			return nil
 		}))),
 
