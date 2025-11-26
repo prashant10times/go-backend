@@ -23,8 +23,9 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	healthHandler := handlers.NewHealthHandler(10)
 	authHandler := handlers.NewAuthHandler(dbService.DB)
 	sharedFunctionService := services.NewSharedFunctionService(dbService.DB, clickhouseService, cfg)
+	transformDataService := services.NewTransformDataService()
 	loginHandler := handlers.NewLoginHandler(dbService.DB)
-	searchEventService := services.NewSearchEventService(dbService.DB, sharedFunctionService, clickhouseService, cfg)
+	searchEventService := services.NewSearchEventService(dbService.DB, sharedFunctionService, transformDataService, clickhouseService, cfg)
 	searchEventsHandler := handlers.NewSearchEventsHandler(100, searchEventService)
 
 	api := app.Group("/v1")

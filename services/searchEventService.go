@@ -29,14 +29,16 @@ import (
 type SearchEventService struct {
 	db                    *gorm.DB
 	sharedFunctionService *SharedFunctionService
+	transformDataService  *TransformDataService
 	clickhouseService     *ClickHouseService
 	cfg                   *config.Config
 }
 
-func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionService, clickhouseService *ClickHouseService, cfg *config.Config) *SearchEventService {
+func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionService, transformDataService *TransformDataService, clickhouseService *ClickHouseService, cfg *config.Config) *SearchEventService {
 	return &SearchEventService{
 		db:                    db,
 		sharedFunctionService: sharedFunctionService,
+		transformDataService:  transformDataService,
 		clickhouseService:     clickhouseService,
 		cfg:                   cfg,
 	}
@@ -367,7 +369,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	requiredFields = append(requiredFields, basicKeys...)
 	requiredFields = append(requiredFields, selectedAdvancedKeys...)
 
-	sortClause, err := s.sharedFunctionService.parseSortFields(pagination.Sort, filterFields)
+	sortClause, err := s.transformDataService.ParseSortFields(pagination.Sort, filterFields)
 	if err != nil {
 		log.Printf("Error parsing sort fields: %v", err)
 		statusCode = http.StatusBadRequest
@@ -653,7 +655,8 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			return nil, fmt.Errorf("unexpected data type: %T", eventData)
 		}
 
-		response, err = s.sharedFunctionService.BuildClickhouseListViewResponse(eventDataSlice, pagination, result.Count, c)
+		response, err = s.transformDataService.BuildClickhouseListViewResponse(eventDataSlice, pagination, result.Count, c)
+
 		if err != nil {
 			log.Printf("Error building response: %v", err)
 			return nil, err
@@ -1433,7 +1436,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				}
 			case "economicImpact":
 				if economicValue, ok := val.(*float64); ok && economicValue != nil {
-					formattedValue := s.sharedFunctionService.formatCurrency(*economicValue)
+					formattedValue := s.transformDataService.formatCurrency(*economicValue)
 					rowData[col] = formattedValue
 				} else {
 					rowData[col] = "$0"
@@ -2062,7 +2065,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 		if shouldIncludeRankings {
 			if rankingsValue, ok := rankingsMap[eventID]; ok && rankingsValue != "" {
-				parsedRankings := s.sharedFunctionService.TransformRankings(rankingsValue, filterFields)
+				parsedRankings := s.transformDataService.TransformRankings(rankingsValue, filterFields)
 				if parsedRankings != nil {
 					grouper.AddField("rankings", parsedRankings)
 				}
@@ -2435,7 +2438,7 @@ func (s *SearchEventService) getAggregationDataClickHouse(filterFields models.Fi
 	aggregationFields := s.extractAggregationFields(filterFields.ToAggregate)
 	log.Printf("Aggregation fields: %v", aggregationFields)
 
-	transformedData, err := s.sharedFunctionService.transformAggregationDataToNested(nestedData, aggregationFields)
+	transformedData, err := s.transformDataService.transformAggregationDataToNested(nestedData, aggregationFields)
 	if err != nil {
 		log.Printf("Error transforming aggregation data: %v", err)
 		return &AggregationResult{StatusCode: 500, Error: err}, err
@@ -2505,7 +2508,7 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 		for i, item := range v {
 
 			if field1Name, hasField1Name := item["field1Name"]; hasField1Name {
-				field1Count := s.sharedFunctionService.parseIntFromInterface(item["field1Count"])
+				field1Count := s.transformDataService.parseIntFromInterface(item["field1Count"])
 				field2Data := item["field2Data"]
 				var actualFieldName string
 				for key, value := range item {
@@ -2552,7 +2555,7 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 						continue
 					}
 					if strings.HasSuffix(key, "Count") {
-						fieldCount = s.sharedFunctionService.parseIntFromInterface(value)
+						fieldCount = s.transformDataService.parseIntFromInterface(value)
 					} else if !strings.HasSuffix(key, "Data") {
 						fieldName = fmt.Sprintf("%v", value)
 					}
@@ -2576,7 +2579,7 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 			if tupleArray, ok := item.([]interface{}); ok {
 				if len(tupleArray) >= 3 {
 					field1Name := fmt.Sprintf("%v", tupleArray[0])
-					field1Count := s.sharedFunctionService.parseIntFromInterface(tupleArray[1])
+					field1Count := s.transformDataService.parseIntFromInterface(tupleArray[1])
 					field2Data := tupleArray[2]
 					field2DataStr := fmt.Sprintf("%v", field2Data)
 					parsedField2Data := s.parseNestedDataFromString(field2DataStr)
@@ -2588,7 +2591,7 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 					})
 				} else if len(tupleArray) >= 2 {
 					field1Name := fmt.Sprintf("%v", tupleArray[0])
-					field1Count := s.sharedFunctionService.parseIntFromInterface(tupleArray[1])
+					field1Count := s.transformDataService.parseIntFromInterface(tupleArray[1])
 
 					result = append(result, map[string]interface{}{
 						"field1Name":  field1Name,
@@ -2599,11 +2602,11 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 					result = append(result, tupleArray)
 				}
 			} else {
-				unwrapped := s.sharedFunctionService.unwrapNestedArrays(item)
+				unwrapped := s.transformDataService.unwrapNestedArrays(item)
 				if tupleArray, ok := unwrapped.([]interface{}); ok {
 					if len(tupleArray) >= 3 {
 						field1Name := fmt.Sprintf("%v", tupleArray[0])
-						field1Count := s.sharedFunctionService.parseIntFromInterface(tupleArray[1])
+						field1Count := s.transformDataService.parseIntFromInterface(tupleArray[1])
 						field2Data := tupleArray[2]
 						var parsedField2Data []interface{}
 						if field2DataStr, ok := field2Data.(string); ok && strings.Contains(field2DataStr, "|||") {
@@ -2619,7 +2622,7 @@ func (s *SearchEventService) parseClickHouseGroupArrayInterface(data interface{}
 						})
 					} else if len(tupleArray) >= 2 {
 						field1Name := fmt.Sprintf("%v", tupleArray[0])
-						field1Count := s.sharedFunctionService.parseIntFromInterface(tupleArray[1])
+						field1Count := s.transformDataService.parseIntFromInterface(tupleArray[1])
 
 						result = append(result, map[string]interface{}{
 							"field1Name":  field1Name,
