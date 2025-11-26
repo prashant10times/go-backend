@@ -169,6 +169,14 @@ func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[s
 	return response, nil
 }
 
+func (s *TransformDataService) BuildClickhouseMapViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx) (interface{}, error) {
+	response := fiber.Map{
+		"count":  totalCount,
+		"events": eventData,
+	}
+	return response, nil
+}
+
 func (s *TransformDataService) getParsedArrayValue(filterFields models.FilterDataDto, fieldName string) []string {
 	v := reflect.ValueOf(filterFields)
 	t := reflect.TypeOf(filterFields)

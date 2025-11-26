@@ -1,7 +1,10 @@
 package middleware
 
 import (
+	"errors"
 	"log"
+	"net"
+	"strings"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
@@ -75,6 +78,58 @@ func NewServiceUnavailableError(message string, details ...string) *CustomError 
 	return NewCustomError(ServiceUnavailableError, message, fiber.StatusServiceUnavailable, details...)
 }
 
+func isDatabaseConnectionError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	errStr := err.Error()
+	errLower := strings.ToLower(errStr)
+
+	if errors.Is(err, net.ErrClosed) || strings.Contains(errLower, "eof") {
+		return true
+	}
+
+	if strings.Contains(errLower, "connection refused") ||
+		strings.Contains(errLower, "connection reset") ||
+		strings.Contains(errLower, "broken pipe") ||
+		strings.Contains(errLower, "no connection") {
+		return true
+	}
+
+	if strings.Contains(errLower, "timeout") ||
+		strings.Contains(errLower, "deadline exceeded") {
+		return true
+	}
+
+	if strings.Contains(errLower, "no route to host") ||
+		strings.Contains(errLower, "network is unreachable") {
+		return true
+	}
+
+	if strings.Contains(errLower, "no such host") ||
+		strings.Contains(errLower, "name resolution") {
+		return true
+	}
+
+	if strings.Contains(errLower, "clickhouse") && (strings.Contains(errLower, "connection") ||
+		strings.Contains(errLower, "server") ||
+		strings.Contains(errLower, "unavailable")) {
+		return true
+	}
+
+	return false
+}
+
+func formatDatabaseError(err error) (string, string) {
+	if isDatabaseConnectionError(err) {
+		return "Database server connection error: The database server is currently unavailable or unreachable. Please try again later.",
+			"DB_CONNECTION_ERROR: " + err.Error()
+	}
+	return "Database query error: An error occurred while executing the database query.",
+		err.Error()
+}
+
 type ErrorResponse struct {
 	StatusCode int                    `json:"statusCode"`
 	Message    string                 `json:"message"`
@@ -94,6 +149,14 @@ func GlobalErrorHandler(c *fiber.Ctx, err error) error {
 		message = customErr.Message
 		if customErr.Details != "" {
 			details = customErr.Details
+			if isDatabaseConnectionError(errors.New(customErr.Details)) {
+				statusCode = fiber.StatusServiceUnavailable
+				errorType = string(ServiceUnavailableError)
+				userMessage, detailedError := formatDatabaseError(errors.New(customErr.Details))
+				message = userMessage
+				details = detailedError
+				log.Printf("Database connection error detected in CustomError details: %v", customErr.Details)
+			}
 		}
 	} else if fiberErr, ok := err.(*fiber.Error); ok {
 		statusCode = fiberErr.Code
@@ -114,6 +177,15 @@ func GlobalErrorHandler(c *fiber.Ctx, err error) error {
 			errorType = string(ServiceUnavailableError)
 		default:
 			errorType = string(InternalServerError)
+		}
+	} else {
+		if isDatabaseConnectionError(err) {
+			statusCode = fiber.StatusServiceUnavailable
+			errorType = string(ServiceUnavailableError)
+			userMessage, detailedError := formatDatabaseError(err)
+			message = userMessage
+			details = detailedError
+			log.Printf("Database connection error detected: %v", err)
 		}
 	}
 

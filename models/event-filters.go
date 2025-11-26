@@ -511,7 +511,7 @@ func (f *FilterDataDto) Validate() error {
 				f.ParsedView = []string{string(view)}
 				f.View = viewLower
 			} else {
-				validOptions := []string{"list", "map", "detail", "calendar", "tracker", "promote", "count"}
+				validOptions := []string{"list", "agg", "map", "detail", "calendar", "tracker", "promote", "count"}
 				return validation.NewError("invalid_view", "Invalid view value: "+viewStr+". Valid options are: "+strings.Join(validOptions, ", "))
 			}
 			return nil

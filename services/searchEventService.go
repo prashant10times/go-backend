@@ -624,10 +624,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		result, err := s.getListData(pagination, sortClause, filterFields, showValues)
 		if err != nil {
 			log.Printf("Error getting list data: %v", err)
-			statusCode = http.StatusInternalServerError
-			msg := err.Error()
-			errorMessage = &msg
-			return nil, middleware.NewInternalServerError("Database query failed", err.Error())
+			return nil, err
 		}
 
 		if result.StatusCode != 200 {
@@ -680,6 +677,45 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		}
 
 		response = result.Response
+
+	case "MAP":
+		result, err := s.getMapData(sortClause, filterFields)
+		if err != nil {
+			log.Printf("Error getting map data: %v", err)
+			return nil, err
+		}
+
+		if result.StatusCode != 200 {
+			statusCode = http.StatusInternalServerError
+			msg := result.ErrorMessage
+			errorMessage = &msg
+			return nil, middleware.NewInternalServerError("Database query failed", result.ErrorMessage)
+		}
+
+		eventData = result.Data
+
+		var eventDataSlice []map[string]interface{}
+		if dataSlice, ok := eventData.([]map[string]interface{}); ok {
+			eventDataSlice = dataSlice
+		} else if dataSlice, ok := eventData.([]interface{}); ok {
+			eventDataSlice = make([]map[string]interface{}, len(dataSlice))
+			for i, item := range dataSlice {
+				if mapItem, ok := item.(map[string]interface{}); ok {
+					eventDataSlice[i] = mapItem
+				} else {
+					eventDataSlice[i] = make(map[string]interface{})
+				}
+			}
+		} else {
+			return nil, fmt.Errorf("unexpected data type: %T", eventData)
+		}
+
+		response, err = s.transformDataService.BuildClickhouseMapViewResponse(eventDataSlice, pagination, result.Count, c)
+
+		if err != nil {
+			log.Printf("Error building map response: %v", err)
+			return nil, err
+		}
 
 	case "COUNT":
 		count, err := s.getCountOnly(filterFields)
@@ -761,6 +797,52 @@ type AggregationResult struct {
 	Error      error
 }
 
+type FieldSelectionContext struct {
+	Processor          *ShowValuesProcessor
+	FieldsSelector     *BaseFieldsSelector
+	BaseFields         []string
+	BaseFieldMap       map[string]bool
+	DBColumnToAliasMap map[string]string
+	DBToAliasMap       map[string]string
+}
+
+type EventFilterFields struct {
+	SelectFields  []string
+	GroupByFields []string
+	OrderBy       string
+}
+
+type QueryComponents struct {
+	CTEClausesStr         string
+	EventFilterSelectStr  string
+	EventFilterGroupByStr string
+	EventFilterOrderBy    string
+	FieldsString          string
+	FinalGroupByClause    string
+	InnerOrderBy          string
+	FinalOrderByClause    string
+	JoinConditionsStr     string
+	HasEndDateFilters     bool
+}
+
+type QueryResults struct {
+	EventDataRows driver.Rows
+	TotalCount    int
+	EventDataErr  error
+	CountErr      error
+}
+
+type RelatedData struct {
+	CategoriesMap        map[string][]map[string]string
+	TagsMap              map[string][]map[string]string
+	TypesMap             map[string][]map[string]string
+	JobCompositeMap      map[string][]map[string]string
+	CountrySpreadMap     map[string][]map[string]interface{}
+	DesignationSpreadMap map[string][]map[string]interface{}
+	RankingsMap          map[string]string
+	EventLocationsMap    map[string]map[string]interface{}
+}
+
 func (s *SearchEventService) getListDataCount(
 	queryResult *ClickHouseQueryResult,
 	cteAndJoinResult *CTEAndJoinResult,
@@ -800,6 +882,238 @@ func (s *SearchEventService) getListDataCount(
 	}
 
 	return int(totalCount), nil
+}
+
+func (s *SearchEventService) initializeFieldSelection(showValues string, filterFields models.FilterDataDto) (*FieldSelectionContext, error) {
+	processor := NewShowValuesProcessor(showValues)
+	fieldsSelector := NewBaseFieldsSelector(processor, filterFields)
+	baseFields := fieldsSelector.GetBaseFields()
+	baseFieldMap := fieldsSelector.BuildBaseFieldMap(baseFields)
+	dbColumnToAliasMap := fieldsSelector.BuildDBColumnToAliasMap(baseFields)
+
+	dbToAliasMap := map[string]string{
+		"event_exhibitor":       "exhibitors",
+		"event_speaker":         "speakers",
+		"event_sponsor":         "sponsors",
+		"event_created":         "created",
+		"exhibitors_mean":       "estimatedExhibitors",
+		"impactScore":           "impactScore",
+		"event_economic_value":  "economicImpact",
+		"event_score":           "score",
+		"inboundEstimate":       "inboundAttendance",
+		"internationalEstimate": "internationalAttendance",
+		"event_updated":         "updated",
+		"start_date":            "start",
+		"end_date":              "end",
+		"event_followers":       "followers",
+		"event_avgRating":       "avgRating",
+		"event_name":            "name",
+		"event_abbr_name":       "shortName",
+		"edition_city_name":     "city",
+		"edition_country":       "country",
+		"event_description":     "description",
+		"event_logo":            "logo",
+		"event_format":          "format",
+		"yoyGrowth":             "yoyGrowth",
+	}
+
+	return &FieldSelectionContext{
+		Processor:          processor,
+		FieldsSelector:     fieldsSelector,
+		BaseFields:         baseFields,
+		BaseFieldMap:       baseFieldMap,
+		DBColumnToAliasMap: dbColumnToAliasMap,
+		DBToAliasMap:       dbToAliasMap,
+	}, nil
+}
+
+func (s *SearchEventService) buildConditionalFields(ctx *FieldSelectionContext, sortClause []SortClause, filterFields models.FilterDataDto) []string {
+	var conditionalFields []string
+	conditionalFieldMap := make(map[string]bool)
+
+	if len(sortClause) > 0 {
+		for _, sort := range sortClause {
+			if sort.Field != "" {
+				alias := ctx.DBColumnToAliasMap[sort.Field]
+				if alias == "" {
+					alias = ctx.DBToAliasMap[sort.Field]
+				}
+				if alias == "" {
+					alias = sort.Field
+				}
+
+				fieldAlreadyIncluded := ctx.BaseFieldMap[sort.Field] || ctx.BaseFieldMap[alias]
+
+				if !fieldAlreadyIncluded && !conditionalFieldMap[sort.Field] && !conditionalFieldMap[alias] {
+					if sort.Field == "duration" {
+						conditionalFields = append(conditionalFields, "(ee.end_date - ee.start_date) as duration")
+						conditionalFieldMap["duration"] = true
+					} else {
+						dbColumn := sort.Field
+						sortFieldToDBColumn := map[string]string{
+							"start":               "start_date",
+							"end":                 "end_date",
+							"created":             "event_created",
+							"following":           "event_followers",
+							"exhibitors":          "event_exhibitor",
+							"speakers":            "event_speaker",
+							"sponsors":            "event_sponsor",
+							"avgRating":           "event_avgRating",
+							"title":               "event_name",
+							"estimatedExhibitors": "exhibitors_mean",
+							"score":               "event_score",
+							"updated":             "event_updated",
+						}
+						if mappedColumn, exists := sortFieldToDBColumn[sort.Field]; exists {
+							dbColumn = mappedColumn
+						}
+
+						conditionalFields = append(conditionalFields, fmt.Sprintf("ee.%s as %s", dbColumn, alias))
+						conditionalFieldMap[sort.Field] = true
+						conditionalFieldMap[alias] = true
+					}
+				}
+			}
+		}
+	}
+
+	if len(filterFields.ParsedAudienceZone) > 0 {
+		conditionalFields = append(conditionalFields, "ee.audienceZone as audienceZone")
+	}
+
+	if filterFields.ParsedKeywords != nil && len(filterFields.ParsedKeywords.Include) > 0 {
+		conditionalFields = append(conditionalFields, "arrayStringConcat(ee.keywords, ' ') as keywords")
+	}
+
+	return conditionalFields
+}
+
+func (s *SearchEventService) buildOrderByClauses(sortClause []SortClause, queryResult *ClickHouseQueryResult) (orderByClause string, eventFilterOrderBy string, err error) {
+	orderByClause, err = s.sharedFunctionService.buildOrderByClause(sortClause, queryResult.NeedsAnyJoin)
+	if err != nil {
+		log.Printf("Error building order by clause: %v", err)
+		return "", "", err
+	}
+
+	eventFilterOrderBy, err = s.sharedFunctionService.buildOrderByClause(sortClause, false)
+	if err != nil {
+		log.Printf("Error building event filter order by clause: %v", err)
+		return "", "", err
+	}
+
+	if eventFilterOrderBy == "" {
+		eventFilterOrderBy = "ORDER BY event_score ASC"
+	} else {
+		eventFilterOrderBy = strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
+		eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "ee.", "")
+		for _, sort := range sortClause {
+			switch sort.Field {
+			case "duration":
+				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "(end_date - start_date)", "duration")
+			case "event_updated":
+				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "event_updated", "updated")
+			}
+			eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
+		}
+	}
+
+	return orderByClause, eventFilterOrderBy, nil
+}
+
+func (s *SearchEventService) buildEventFilterFields(
+	sortClause []SortClause,
+	queryResult *ClickHouseQueryResult,
+	dbToAliasMap map[string]string,
+	conditionalFields []string,
+) (*EventFilterFields, []string) {
+	eventFilterSelectFields := []string{"event_id", "edition_id"}
+	eventFilterGroupByFields := []string{"event_id", "edition_id"}
+
+	if len(sortClause) > 0 {
+		for _, sort := range sortClause {
+			if sort.Field != "" && sort.Field != "event_id" && sort.Field != "edition_id" {
+				alreadyAdded := false
+				for _, existing := range eventFilterSelectFields {
+					if existing == sort.Field || (sort.Field == "duration" && strings.Contains(existing, "end_date - start_date")) {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					if sort.Field == "duration" {
+						eventFilterSelectFields = append(eventFilterSelectFields, "(end_date - start_date) as duration")
+						eventFilterGroupByFields = append(eventFilterGroupByFields, "duration")
+					} else {
+						alias := dbToAliasMap[sort.Field]
+						if alias == "" {
+							alias = sort.Field
+						}
+						if alias != sort.Field {
+							eventFilterSelectFields = append(eventFilterSelectFields, fmt.Sprintf("%s as %s", sort.Field, alias))
+							eventFilterGroupByFields = append(eventFilterGroupByFields, alias)
+						} else {
+							eventFilterSelectFields = append(eventFilterSelectFields, sort.Field)
+							eventFilterGroupByFields = append(eventFilterGroupByFields, sort.Field)
+						}
+					}
+				}
+			}
+		}
+	}
+
+	eventFilterOrderBy := ""
+	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
+		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
+			latAdded := false
+			lonAdded := false
+			for _, field := range eventFilterSelectFields {
+				if strings.Contains(field, "edition_city_lat as lat") {
+					latAdded = true
+				}
+				if strings.Contains(field, "edition_city_long as lon") {
+					lonAdded = true
+				}
+			}
+			if !latAdded {
+				eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_lat as lat")
+				eventFilterGroupByFields = append(eventFilterGroupByFields, "lat")
+			}
+			if !lonAdded {
+				eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_long as lon")
+				eventFilterGroupByFields = append(eventFilterGroupByFields, "lon")
+			}
+			conditionalFields = append(conditionalFields, "ee.edition_city_lat as lat")
+			conditionalFields = append(conditionalFields, "ee.edition_city_long as lon")
+		}
+		if strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon") {
+			venueLatAdded := false
+			venueLonAdded := false
+			for _, field := range eventFilterSelectFields {
+				if strings.Contains(field, "venue_lat as venueLat") {
+					venueLatAdded = true
+				}
+				if strings.Contains(field, "venue_long as venueLon") {
+					venueLonAdded = true
+				}
+			}
+			if !venueLatAdded {
+				eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_lat as venueLat")
+				eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLat")
+			}
+			if !venueLonAdded {
+				eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_long as venueLon")
+				eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLon")
+			}
+			conditionalFields = append(conditionalFields, "ee.venue_lat as venueLat")
+			conditionalFields = append(conditionalFields, "ee.venue_long as venueLon")
+		}
+	}
+
+	return &EventFilterFields{
+		SelectFields:  eventFilterSelectFields,
+		GroupByFields: eventFilterGroupByFields,
+		OrderBy:       eventFilterOrderBy,
+	}, conditionalFields
 }
 
 func (s *SearchEventService) getCountOnly(filterFields models.FilterDataDto) (int, error) {
@@ -885,97 +1199,19 @@ func (s *SearchEventService) getCountOnly(filterFields models.FilterDataDto) (in
 }
 
 func (s *SearchEventService) getListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto, showValues string) (*ListResult, error) {
-	processor := NewShowValuesProcessor(showValues)
-	requestedFieldsSet := processor.GetRequestedFieldsSet()
-	requestedGroupsSet := processor.GetRequestedGroups()
-
-	fieldsSelector := NewBaseFieldsSelector(processor, filterFields)
-	baseFields := fieldsSelector.GetBaseFields()
-	baseFieldMap := fieldsSelector.BuildBaseFieldMap(baseFields)
-	dbColumnToAliasMap := fieldsSelector.BuildDBColumnToAliasMap(baseFields)
-
-	dbToAliasMap := map[string]string{
-		"event_exhibitor":       "exhibitors",
-		"event_speaker":         "speakers",
-		"event_sponsor":         "sponsors",
-		"event_created":         "created",
-		"exhibitors_mean":       "estimatedExhibitors",
-		"impactScore":           "impactScore",
-		"event_economic_value":  "economicImpact",
-		"event_score":           "score",
-		"inboundEstimate":       "inboundAttendance",
-		"internationalEstimate": "internationalAttendance",
-		"event_updated":         "updated",
-		"start_date":            "start",
-		"end_date":              "end",
-		"event_followers":       "followers",
-		"event_avgRating":       "avgRating",
-		"event_name":            "name",
-		"event_abbr_name":       "shortName",
-		"edition_city_name":     "city",
-		"edition_country":       "country",
-		"event_description":     "description",
-		"event_logo":            "logo",
-		"event_format":          "format",
-		"yoyGrowth":             "yoyGrowth",
+	fieldCtx, err := s.initializeFieldSelection(showValues, filterFields)
+	if err != nil {
+		return &ListResult{
+			StatusCode:   500,
+			ErrorMessage: err.Error(),
+		}, nil
 	}
 
-	var conditionalFields []string
-	conditionalFieldMap := make(map[string]bool)
-	if len(sortClause) > 0 {
-		for _, sort := range sortClause {
-			if sort.Field != "" {
-				alias := dbColumnToAliasMap[sort.Field]
-				if alias == "" {
-					alias = dbToAliasMap[sort.Field]
-				}
-				if alias == "" {
-					alias = sort.Field
-				}
+	requestedFieldsSet := fieldCtx.Processor.GetRequestedFieldsSet()
+	requestedGroupsSet := fieldCtx.Processor.GetRequestedGroups()
 
-				fieldAlreadyIncluded := baseFieldMap[sort.Field] || baseFieldMap[alias]
-
-				if !fieldAlreadyIncluded && !conditionalFieldMap[sort.Field] && !conditionalFieldMap[alias] {
-					if sort.Field == "duration" {
-						conditionalFields = append(conditionalFields, "(ee.end_date - ee.start_date) as duration")
-						conditionalFieldMap["duration"] = true
-					} else {
-						dbColumn := sort.Field
-						sortFieldToDBColumn := map[string]string{
-							"start":               "start_date",
-							"end":                 "end_date",
-							"created":             "event_created",
-							"following":           "event_followers",
-							"exhibitors":          "event_exhibitor",
-							"speakers":            "event_speaker",
-							"sponsors":            "event_sponsor",
-							"avgRating":           "event_avgRating",
-							"title":               "event_name",
-							"estimatedExhibitors": "exhibitors_mean",
-							"score":               "event_score",
-							"updated":             "event_updated",
-						}
-						if mappedColumn, exists := sortFieldToDBColumn[sort.Field]; exists {
-							dbColumn = mappedColumn
-						}
-
-						conditionalFields = append(conditionalFields, fmt.Sprintf("ee.%s as %s", dbColumn, alias))
-						conditionalFieldMap[sort.Field] = true
-						conditionalFieldMap[alias] = true
-					}
-				}
-			}
-		}
-	}
-	if len(filterFields.ParsedAudienceZone) > 0 {
-		conditionalFields = append(conditionalFields, "ee.audienceZone as audienceZone")
-	}
-
-	if filterFields.ParsedKeywords != nil && len(filterFields.ParsedKeywords.Include) > 0 {
-		conditionalFields = append(conditionalFields, "arrayStringConcat(ee.keywords, ' ') as keywords")
-	}
-
-	requiredFieldsStatic := append(baseFields, conditionalFields...)
+	conditionalFields := s.buildConditionalFields(fieldCtx, sortClause, filterFields)
+	requiredFieldsStatic := append(fieldCtx.BaseFields, conditionalFields...)
 
 	queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
 	if err != nil {
@@ -989,133 +1225,28 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	log.Printf("Where clause: %s", queryResult.WhereClause)
 	log.Printf("Search clause: %s", queryResult.SearchClause)
 
-	orderByClause, err := s.sharedFunctionService.buildOrderByClause(sortClause, queryResult.NeedsAnyJoin)
+	orderByClause, eventFilterOrderBy, err := s.buildOrderByClauses(sortClause, queryResult)
 	if err != nil {
-		log.Printf("Error building order by clause: %v", err)
 		return &ListResult{
 			StatusCode:   500,
 			ErrorMessage: err.Error(),
 		}, nil
 	}
 
-	eventFilterOrderBy, err := s.sharedFunctionService.buildOrderByClause(sortClause, false)
-	if err != nil {
-		log.Printf("Error building event filter order by clause: %v", err)
-		return &ListResult{
-			StatusCode:   500,
-			ErrorMessage: err.Error(),
-		}, nil
-	}
-	if eventFilterOrderBy == "" {
-		eventFilterOrderBy = "ORDER BY event_score ASC"
-	} else {
-		eventFilterOrderBy = strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
-		eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "ee.", "")
-		for _, sort := range sortClause {
-			switch sort.Field {
-			case "duration":
-				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "(end_date - start_date)", "duration")
-			case "event_updated":
-				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "event_updated", "updated")
-			}
-			eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
-		}
-	}
+	eventFilterFields, conditionalFields := s.buildEventFilterFields(sortClause, queryResult, fieldCtx.DBToAliasMap, conditionalFields)
+	requiredFieldsStatic = append(fieldCtx.BaseFields, conditionalFields...)
 
-	eventFilterSelectFields := []string{"event_id", "edition_id"}
-	eventFilterGroupByFields := []string{"event_id", "edition_id"}
-	if len(sortClause) > 0 {
-		for _, sort := range sortClause {
-			if sort.Field != "" && sort.Field != "event_id" && sort.Field != "edition_id" {
-				alreadyAdded := false
-				for _, existing := range eventFilterSelectFields {
-					if existing == sort.Field || (sort.Field == "duration" && strings.Contains(existing, "end_date - start_date")) {
-						alreadyAdded = true
-						break
-					}
-				}
-				if !alreadyAdded {
-					if sort.Field == "duration" {
-						eventFilterSelectFields = append(eventFilterSelectFields, "(end_date - start_date) as duration")
-						eventFilterGroupByFields = append(eventFilterGroupByFields, "duration")
-					} else {
-						alias := dbToAliasMap[sort.Field]
-						if alias == "" {
-							alias = sort.Field
-						}
-						if alias != sort.Field {
-							eventFilterSelectFields = append(eventFilterSelectFields, fmt.Sprintf("%s as %s", sort.Field, alias))
-							eventFilterGroupByFields = append(eventFilterGroupByFields, alias)
-						} else {
-							eventFilterSelectFields = append(eventFilterSelectFields, sort.Field)
-							eventFilterGroupByFields = append(eventFilterGroupByFields, sort.Field)
-						}
-					}
-				}
-			}
-		}
+	eventFilterSelectStr := strings.Join(eventFilterFields.SelectFields, ", ")
+	eventFilterGroupByStr := strings.Join(eventFilterFields.GroupByFields, ", ")
+
+	if queryResult.DistanceOrderClause != "" {
+		eventFilterOrderBy = queryResult.DistanceOrderClause
 	}
 
 	finalOrderClause := queryResult.DistanceOrderClause
 	if finalOrderClause == "" {
 		finalOrderClause = orderByClause
 	}
-
-	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
-		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
-			latAdded := false
-			lonAdded := false
-			for _, field := range eventFilterSelectFields {
-				if strings.Contains(field, "edition_city_lat as lat") {
-					latAdded = true
-				}
-				if strings.Contains(field, "edition_city_long as lon") {
-					lonAdded = true
-				}
-			}
-			if !latAdded {
-				eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_lat as lat")
-				eventFilterGroupByFields = append(eventFilterGroupByFields, "lat")
-			}
-			if !lonAdded {
-				eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_long as lon")
-				eventFilterGroupByFields = append(eventFilterGroupByFields, "lon")
-			}
-			conditionalFields = append(conditionalFields, "ee.edition_city_lat as lat")
-			conditionalFields = append(conditionalFields, "ee.edition_city_long as lon")
-		}
-		if strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon") {
-			venueLatAdded := false
-			venueLonAdded := false
-			for _, field := range eventFilterSelectFields {
-				if strings.Contains(field, "venue_lat as venueLat") {
-					venueLatAdded = true
-				}
-				if strings.Contains(field, "venue_long as venueLon") {
-					venueLonAdded = true
-				}
-			}
-			if !venueLatAdded {
-				eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_lat as venueLat")
-				eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLat")
-			}
-			if !venueLonAdded {
-				eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_long as venueLon")
-				eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLon")
-			}
-			conditionalFields = append(conditionalFields, "ee.venue_lat as venueLat")
-			conditionalFields = append(conditionalFields, "ee.venue_long as venueLon")
-		}
-	}
-
-	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
-	eventFilterGroupByStr := strings.Join(eventFilterGroupByFields, ", ")
-
-	if queryResult.DistanceOrderClause != "" {
-		eventFilterOrderBy = queryResult.DistanceOrderClause
-	}
-
-	requiredFieldsStatic = append(baseFields, conditionalFields...)
 
 	cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
 		queryResult.NeedsVisitorJoin,
@@ -1160,7 +1291,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 	innerOrderBy := func() string {
 		if finalOrderClause != "" {
-			fixedOrderBy := fieldsSelector.FixOrderByForFields(finalOrderClause, requiredFieldsStatic)
+			fixedOrderBy := fieldCtx.FieldsSelector.FixOrderByForFields(finalOrderClause, requiredFieldsStatic)
 			if fixedOrderBy != "" {
 				return fixedOrderBy
 			}
@@ -1171,7 +1302,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 	finalOrderByClause := func() string {
 		if finalOrderClause != "" {
-			fixedOrderBy := fieldsSelector.FixOrderByForFields(finalOrderClause, requiredFieldsStatic)
+			fixedOrderBy := fieldCtx.FieldsSelector.FixOrderByForFields(finalOrderClause, requiredFieldsStatic)
 			if fixedOrderBy != "" {
 				return fixedOrderBy
 			}
@@ -1288,10 +1419,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	dataRes := <-dataChan
 	if dataRes.Err != nil {
 		log.Printf("ClickHouse query error: %v", dataRes.Err)
-		return &ListResult{
-			StatusCode:   500,
-			ErrorMessage: dataRes.Err.Error(),
-		}, nil
+		return nil, dataRes.Err
 	}
 	eventDataResult := dataRes.Rows
 
@@ -1571,7 +1699,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
 
-	queryBuilder := NewRelatedDataQueryBuilder(processor, filterFields, queryResult, eventIdsStrJoined)
+	queryBuilder := NewRelatedDataQueryBuilder(fieldCtx.Processor, filterFields, queryResult, eventIdsStrJoined)
 	relatedDataQuery := queryBuilder.BuildQuery()
 
 	log.Printf("Related data query: %s", relatedDataQuery)
@@ -1813,13 +1941,13 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	for _, event := range eventData {
 		eventID := fmt.Sprintf("%d", event["event_id"])
 
-		grouper := NewFieldGrouper(processor)
+		grouper := NewFieldGrouper(fieldCtx.Processor)
 		grouper.ProcessEventFields(event)
 
 		var combinedEvent map[string]interface{}
 		var groupedFields map[ResponseGroups]map[string]interface{}
 
-		if processor.IsGroupedStructure() {
+		if fieldCtx.Processor.IsGroupedStructure() {
 			groupedFields = grouper.GetGroupedFields()
 			combinedEvent = make(map[string]interface{})
 		} else {
@@ -1933,15 +2061,15 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		grouper.AddField("tags", tags)
 		grouper.AddField("eventTypes", types)
 
-		if processor.GetRequestedGroups()[ResponseGroupBasic] {
+		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] {
 			grouper.AddField("designations", []interface{}{})
 		}
 
-		if processor.GetRequestedGroups()[ResponseGroupBasic] {
+		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] {
 			grouper.AddField("bannerUrl", nil)
 		}
 
-		if processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["eventLocation"] {
+		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["eventLocation"] {
 			if eventLocation, ok := eventLocationsMap[eventID]; ok && eventLocation != nil {
 				grouper.AddField("eventLocation", eventLocation)
 			} else {
@@ -2072,7 +2200,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			}
 		}
 
-		if processor.IsGroupedStructure() {
+		if fieldCtx.Processor.IsGroupedStructure() {
 
 			if len(requestedFieldsSet) == 0 || requestedFieldsSet["impactScore"] || requestedFieldsSet["inboundScore"] || requestedFieldsSet["internationalScore"] {
 				scoresData := make(map[string]interface{})
@@ -2118,7 +2246,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		combinedData = append(combinedData, combinedEvent)
 	}
 
-	if processor.GetShowValues() != "" && filterFields.View != "" {
+	if fieldCtx.Processor.GetShowValues() != "" && filterFields.View != "" {
 		viewLower := strings.ToLower(strings.TrimSpace(filterFields.View))
 		if viewLower == "promote" {
 			transformedData := s.getPromoteEventListingResponse(combinedData)
@@ -2133,6 +2261,340 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	return &ListResult{
 		StatusCode: 200,
 		Data:       combinedData,
+		Count:      totalCount,
+	}, nil
+}
+
+func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields models.FilterDataDto) (*ListResult, error) {
+	queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
+	if err != nil {
+		log.Printf("Error building ClickHouse query: %v", err)
+		return &ListResult{
+			StatusCode:   500,
+			ErrorMessage: err.Error(),
+		}, nil
+	}
+
+	log.Printf("Map view - Where clause: %s", queryResult.WhereClause)
+	log.Printf("Map view - Search clause: %s", queryResult.SearchClause)
+
+	_, eventFilterOrderBy, err := s.buildOrderByClauses(sortClause, queryResult)
+	if err != nil {
+		return &ListResult{
+			StatusCode:   500,
+			ErrorMessage: err.Error(),
+		}, nil
+	}
+
+	eventFilterSelectFields := []string{"event_id", "edition_id"}
+	eventFilterGroupByFields := []string{"event_id", "edition_id"}
+
+	if len(sortClause) > 0 {
+		for _, sort := range sortClause {
+			if sort.Field != "" && sort.Field != "event_id" && sort.Field != "edition_id" {
+				alreadyAdded := false
+				for _, existing := range eventFilterSelectFields {
+					if existing == sort.Field {
+						alreadyAdded = true
+						break
+					}
+				}
+				if !alreadyAdded {
+					if sort.Field == "duration" {
+						eventFilterSelectFields = append(eventFilterSelectFields, "(end_date - start_date) as duration")
+						eventFilterGroupByFields = append(eventFilterGroupByFields, "duration")
+					} else {
+						eventFilterSelectFields = append(eventFilterSelectFields, sort.Field)
+						eventFilterGroupByFields = append(eventFilterGroupByFields, sort.Field)
+					}
+				}
+			}
+		}
+	}
+
+	if queryResult.DistanceOrderClause != "" {
+		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_lat as lat", "ee.edition_city_long as lon")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "lat", "lon")
+		}
+		if strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon") {
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_lat as venueLat", "ee.venue_long as venueLon")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLat", "venueLon")
+		}
+		eventFilterOrderBy = queryResult.DistanceOrderClause
+	}
+
+	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
+	eventFilterGroupByStr := strings.Join(eventFilterGroupByFields, ", ")
+
+	if eventFilterOrderBy == "" {
+		eventFilterOrderBy = "ORDER BY event_score ASC"
+	} else {
+		eventFilterOrderBy = strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
+		eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "ee.", "")
+		eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
+	}
+
+	cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
+		queryResult.NeedsVisitorJoin,
+		queryResult.NeedsSpeakerJoin,
+		queryResult.NeedsExhibitorJoin,
+		queryResult.NeedsSponsorJoin,
+		queryResult.NeedsCategoryJoin,
+		queryResult.NeedsTypeJoin,
+		queryResult.NeedsEventRankingJoin,
+		queryResult.needsDesignationJoin,
+		queryResult.needsAudienceSpreadJoin,
+		queryResult.NeedsRegionsJoin,
+		queryResult.NeedsLocationIdsJoin,
+		queryResult.NeedsCountryIdsJoin,
+		queryResult.NeedsStateIdsJoin,
+		queryResult.NeedsCityIdsJoin,
+		queryResult.NeedsVenueIdsJoin,
+		queryResult.VisitorWhereConditions,
+		queryResult.SpeakerWhereConditions,
+		queryResult.ExhibitorWhereConditions,
+		queryResult.SponsorWhereConditions,
+		queryResult.CategoryWhereConditions,
+		queryResult.TypeWhereConditions,
+		queryResult.EventRankingWhereConditions,
+		queryResult.JobCompositeWhereConditions,
+		queryResult.AudienceSpreadWhereConditions,
+		queryResult.RegionsWhereConditions,
+		queryResult.LocationIdsWhereConditions,
+		queryResult.CountryIdsWhereConditions,
+		queryResult.StateIdsWhereConditions,
+		queryResult.CityIdsWhereConditions,
+		queryResult.VenueIdsWhereConditions,
+		filterFields,
+	)
+
+	hasEndDateFilters := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
+		filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != "" ||
+		filterFields.CreatedAt != "" || len(filterFields.ParsedEventIds) > 0 || len(filterFields.ParsedNotEventIds) > 0 || len(filterFields.ParsedSourceEventIds) > 0 || len(filterFields.ParsedDates) > 0 || filterFields.ParsedPastBetween != nil || filterFields.ParsedActiveBetween != nil
+
+	mapFields := []string{
+		"ee.event_uuid as id",
+		"ee.impactScore as impactScore",
+		"ee.PrimaryEventType as PrimaryEventType",
+		"ee.venue_lat as venueLat",
+		"ee.venue_long as venueLon",
+		"ee.edition_city_lat as cityLat",
+		"ee.edition_city_long as cityLon",
+	}
+	mapFieldsStr := strings.Join(mapFields, ", ")
+	mapGroupByClause := strings.Join([]string{"id", "impactScore", "PrimaryEventType", "venueLat", "venueLon", "cityLat", "cityLon"}, ", ")
+
+	today := time.Now().Format("2006-01-02")
+
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	whereConditions := []string{
+		s.sharedFunctionService.buildPublishedCondition(filterFields),
+		s.sharedFunctionService.buildStatusCondition(filterFields),
+		"edition_type = 'current_edition'",
+	}
+	if !hasEndDateFilters {
+		whereConditions = append(whereConditions, fmt.Sprintf("end_date >= '%s'", today))
+	}
+	if queryResult.WhereClause != "" {
+		whereConditions = append(whereConditions, queryResult.WhereClause)
+	}
+	if queryResult.SearchClause != "" {
+		whereConditions = append(whereConditions, queryResult.SearchClause)
+	}
+	if joinConditionsStr != "" {
+		whereConditions = append(whereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+	}
+	whereClause := strings.Join(whereConditions, "\n                        AND ")
+
+	mapDataQuery := fmt.Sprintf(`
+		WITH %sevent_filter AS (
+			SELECT %s
+			FROM testing_db.allevent_ch AS ee
+			WHERE %s
+			GROUP BY %s
+			%s
+		),
+		event_data AS (
+			SELECT %s
+			FROM testing_db.allevent_ch AS ee
+			WHERE ee.edition_id IN (SELECT edition_id FROM event_filter)
+			GROUP BY %s
+		)
+		SELECT *
+		FROM event_data
+	`,
+		cteClausesStr,
+		eventFilterSelectStr,
+		whereClause,
+		eventFilterGroupByStr,
+		eventFilterOrderBy,
+		mapFieldsStr,
+		mapGroupByClause)
+
+	log.Printf("Map data query: %s", mapDataQuery)
+
+	type dataResult struct {
+		Rows driver.Rows
+		Err  error
+	}
+
+	type countResult struct {
+		Count int
+		Err   error
+	}
+
+	dataChan := make(chan dataResult, 1)
+	countChan := make(chan countResult, 1)
+
+	go func() {
+		eventDataQueryTime := time.Now()
+		eventDataResult, err := s.clickhouseService.ExecuteQuery(context.Background(), mapDataQuery)
+		eventDataQueryDuration := time.Since(eventDataQueryTime)
+		log.Printf("Map data query time: %v", eventDataQueryDuration)
+		dataChan <- dataResult{Rows: eventDataResult, Err: err}
+	}()
+
+	go func() {
+		count, err := s.getListDataCount(
+			queryResult,
+			&cteAndJoinResult,
+			eventFilterSelectStr,
+			eventFilterGroupByStr,
+			hasEndDateFilters,
+			filterFields,
+		)
+		countChan <- countResult{Count: count, Err: err}
+	}()
+
+	dataRes := <-dataChan
+	if dataRes.Err != nil {
+		log.Printf("ClickHouse map query error: %v", dataRes.Err)
+		return nil, dataRes.Err
+	}
+	eventDataResult := dataRes.Rows
+
+	countRes := <-countChan
+	if countRes.Err != nil {
+		log.Printf("ClickHouse count query error: %v", countRes.Err)
+		log.Printf("Warning: Count query failed, continuing without count")
+	}
+	totalCount := countRes.Count
+
+	var mapData []map[string]interface{}
+
+	for eventDataResult.Next() {
+		columns := eventDataResult.Columns()
+
+		values := make([]interface{}, len(columns))
+		for i, col := range columns {
+			switch col {
+			case "id":
+				values[i] = new(string)
+			case "impactScore":
+				values[i] = new(uint32)
+			case "PrimaryEventType":
+				values[i] = new(string)
+			case "venueLat", "venueLon", "cityLat", "cityLon":
+				values[i] = new(float64)
+			default:
+				values[i] = new(string)
+			}
+		}
+
+		if err := eventDataResult.Scan(values...); err != nil {
+			log.Printf("Error scanning map row: %v", err)
+			continue
+		}
+
+		rowData := make(map[string]interface{})
+		var venueLat, venueLon, cityLat, cityLon *float64
+
+		for i, col := range columns {
+			val := values[i]
+
+			switch col {
+			case "id":
+				if id, ok := val.(*string); ok && id != nil {
+					rowData["id"] = *id
+				}
+			case "impactScore":
+				if score, ok := val.(*uint32); ok && score != nil {
+					rowData["eventImpactScore"] = *score
+				} else {
+					rowData["eventImpactScore"] = uint32(0)
+				}
+			case "PrimaryEventType":
+				if uuid, ok := val.(*string); ok && uuid != nil {
+					// Convert UUID to slug using EventTypeById map
+					if slug, exists := EventTypeById[*uuid]; exists {
+						rowData["eventType"] = slug
+					} else {
+						rowData["eventType"] = nil
+					}
+				} else {
+					rowData["eventType"] = nil
+				}
+			case "venueLat":
+				if lat, ok := val.(*float64); ok && lat != nil {
+					venueLat = lat
+				}
+			case "venueLon":
+				if lon, ok := val.(*float64); ok && lon != nil {
+					venueLon = lon
+				}
+			case "cityLat":
+				if lat, ok := val.(*float64); ok && lat != nil {
+					cityLat = lat
+				}
+			case "cityLon":
+				if lon, ok := val.(*float64); ok && lon != nil {
+					cityLon = lon
+				}
+			}
+		}
+
+		// Coordinate fallback: venue coordinates → city coordinates
+		var latitude, longitude *float64
+		if venueLat != nil && venueLon != nil && *venueLat != 0 && *venueLon != 0 {
+			latitude = venueLat
+			longitude = venueLon
+		} else if cityLat != nil && cityLon != nil && *cityLat != 0 && *cityLon != 0 {
+			latitude = cityLat
+			longitude = cityLon
+		}
+
+		if latitude != nil && longitude != nil {
+			rowData["latitude"] = *latitude
+			rowData["longitude"] = *longitude
+		} else {
+			rowData["latitude"] = nil
+			rowData["longitude"] = nil
+		}
+
+		mapData = append(mapData, rowData)
+	}
+
+	if len(mapData) == 0 {
+		return &ListResult{
+			StatusCode: 200,
+			Data:       []interface{}{},
+			Count:      totalCount,
+		}, nil
+	}
+
+	return &ListResult{
+		StatusCode: 200,
+		Data:       mapData,
 		Count:      totalCount,
 	}, nil
 }

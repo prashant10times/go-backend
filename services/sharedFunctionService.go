@@ -20,10 +20,10 @@ import (
 )
 
 type SharedFunctionService struct {
-	db                *gorm.DB
-	clickhouseService *ClickHouseService
+	db                   *gorm.DB
+	clickhouseService    *ClickHouseService
 	transformDataService *TransformDataService
-	cfg               *config.Config
+	cfg                  *config.Config
 }
 type OrderedJSONMap struct {
 	Keys   []string
@@ -304,12 +304,18 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 	}
 
 	isAggregationView := strings.Contains(filterFields.View, "agg")
+	isMapView := strings.Contains(filterFields.View, "map")
 
-	log.Printf("isAggregationView: %v, View: '%s'", isAggregationView, filterFields.View)
+	log.Printf("isAggregationView: %v, isMapView: %v, View: '%s'", isAggregationView, isMapView, filterFields.View)
 
 	if isAggregationView {
 		log.Printf("Query type determined: AGGREGATION")
 		return "AGGREGATION", nil
+	}
+
+	if isMapView {
+		log.Printf("Query type determined: MAP")
+		return "MAP", nil
 	}
 
 	log.Printf("Query type determined: LIST")
@@ -1534,7 +1540,6 @@ func (s *SharedFunctionService) addEstimatedExhibitorsFilter(whereConditions *[]
 	condition := fmt.Sprintf("ee.exhibitors_mean IS NOT NULL AND ee.exhibitors_mean >= %d AND ee.exhibitors_mean <= %d", gte, lte)
 	*whereConditions = append(*whereConditions, condition)
 }
-
 
 func (s *SharedFunctionService) addInFilter(filterKey string, dbField string, whereConditions *[]string, filterFields models.FilterDataDto) {
 	values := s.transformDataService.getParsedArrayValue(filterFields, filterKey)
