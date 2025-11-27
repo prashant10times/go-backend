@@ -3866,14 +3866,28 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 
 func (s *SharedFunctionService) BuildGroupByResponse(count interface{}, startTime time.Time) fiber.Map {
 	responseTime := time.Since(startTime).Seconds()
+	if countMap, ok := count.(map[string]interface{}); ok {
+		for key, value := range countMap {
+			if value == nil {
+				countMap[key] = 0
+			}
+		}
+		return fiber.Map{
+			"status":     "success",
+			"statusCode": 200,
+			"meta": fiber.Map{
+				"responseTime": responseTime,
+			},
+			"data": countMap,
+		}
+	}
+
 	return fiber.Map{
 		"status":     "success",
 		"statusCode": 200,
 		"meta": fiber.Map{
 			"responseTime": responseTime,
 		},
-		"data": fiber.Map{
-			"count": count,
-		},
+		"data": count,
 	}
 }
