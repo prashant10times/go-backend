@@ -619,6 +619,25 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			"count": count,
 		}
 
+	case "CALENDAR":
+		result, err := s.getCalendarEvents(filterFields)
+		if err != nil {
+			log.Printf("Error getting calendar events: %v", err)
+			statusCode = http.StatusInternalServerError
+			msg := err.Error()
+			errorMessage = &msg
+			return nil, middleware.NewInternalServerError("Calendar query failed", err.Error())
+		}
+
+		if result.StatusCode != 200 {
+			statusCode = result.StatusCode
+			msg := result.ErrorMessage
+			errorMessage = &msg
+			return nil, middleware.NewInternalServerError("Calendar query failed", result.ErrorMessage)
+		}
+
+		response = result.Data
+
 	default:
 		statusCode = http.StatusBadRequest
 		msg := fmt.Sprintf("Invalid query type: %s", queryType)
@@ -1084,6 +1103,372 @@ func (s *SearchEventService) getCountOnly(filterFields models.FilterDataDto) (in
 	}
 
 	return count, nil
+}
+
+func (s *SearchEventService) getCalendarEvents(filterFields models.FilterDataDto) (*ListResult, error) {
+	if filterFields.ParsedCalendarType == nil {
+		return &ListResult{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: "calendar_type is required for calendar view",
+		}, nil
+	}
+
+	calendarType := *filterFields.ParsedCalendarType
+
+	switch calendarType {
+	case "week":
+		var startDate, endDate string
+		if len(filterFields.ParsedTrackerDates) == 2 {
+			startDate = filterFields.ParsedTrackerDates[0]
+			endDate = filterFields.ParsedTrackerDates[1]
+		} else {
+			if filterFields.ActiveGte == "" || filterFields.ActiveLte == "" {
+				return &ListResult{
+					StatusCode:   http.StatusBadRequest,
+					ErrorMessage: "startDate and endDate are required (use trackerDates or active.gte/active.lte)",
+				}, nil
+			}
+			startDate = filterFields.ActiveGte
+			endDate = filterFields.ActiveLte
+		}
+
+		result, err := s.getEventsByWeek(filterFields, startDate, endDate)
+		if err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: err.Error(),
+			}, nil
+		}
+
+		return &ListResult{
+			StatusCode: 200,
+			Data:       result,
+		}, nil
+
+	case "month":
+		groupByFilterFields := filterFields
+		groupByFilterFields.GroupBy = "month"
+		groupByFilterFields.ParsedGroupBy = []models.CountGroup{models.CountGroupMonth}
+
+		result, err := s.handleGroupByRequest(groupByFilterFields, time.Now(), new(int), new(*string))
+		if err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: err.Error(),
+			}, nil
+		}
+
+		return &ListResult{
+			StatusCode: 200,
+			Data:       result,
+		}, nil
+
+	case "year":
+		groupByFilterFields := filterFields
+		groupByFilterFields.GroupBy = "year"
+		groupByFilterFields.ParsedGroupBy = []models.CountGroup{models.CountGroupYear}
+
+		result, err := s.handleGroupByRequest(groupByFilterFields, time.Now(), new(int), new(*string))
+		if err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: err.Error(),
+			}, nil
+		}
+
+		return &ListResult{
+			StatusCode: 200,
+			Data:       result,
+		}, nil
+
+	default:
+		return &ListResult{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: fmt.Sprintf("Invalid calendar_type: %s. Valid options are: week, month, year", calendarType),
+		}, nil
+	}
+}
+
+func (s *SearchEventService) getEventsByWeek(filterFields models.FilterDataDto, startDate string, endDate string) (fiber.Map, error) {
+	queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
+	if err != nil {
+		return nil, fmt.Errorf("error building ClickHouse query: %w", err)
+	}
+
+	cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
+		queryResult.NeedsVisitorJoin,
+		queryResult.NeedsSpeakerJoin,
+		queryResult.NeedsExhibitorJoin,
+		queryResult.NeedsSponsorJoin,
+		queryResult.NeedsCategoryJoin,
+		queryResult.NeedsTypeJoin,
+		queryResult.NeedsEventRankingJoin,
+		queryResult.needsDesignationJoin,
+		queryResult.needsAudienceSpreadJoin,
+		queryResult.NeedsRegionsJoin,
+		queryResult.NeedsLocationIdsJoin,
+		queryResult.NeedsCountryIdsJoin,
+		queryResult.NeedsStateIdsJoin,
+		queryResult.NeedsCityIdsJoin,
+		queryResult.NeedsVenueIdsJoin,
+		queryResult.VisitorWhereConditions,
+		queryResult.SpeakerWhereConditions,
+		queryResult.ExhibitorWhereConditions,
+		queryResult.SponsorWhereConditions,
+		queryResult.CategoryWhereConditions,
+		queryResult.TypeWhereConditions,
+		queryResult.EventRankingWhereConditions,
+		queryResult.JobCompositeWhereConditions,
+		queryResult.AudienceSpreadWhereConditions,
+		queryResult.RegionsWhereConditions,
+		queryResult.LocationIdsWhereConditions,
+		queryResult.CountryIdsWhereConditions,
+		queryResult.StateIdsWhereConditions,
+		queryResult.CityIdsWhereConditions,
+		queryResult.VenueIdsWhereConditions,
+		filterFields,
+	)
+
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	baseWhereConditions := []string{
+		s.sharedFunctionService.buildPublishedCondition(filterFields),
+		s.sharedFunctionService.buildStatusCondition(filterFields),
+		"edition_type = 'current_edition'",
+		fmt.Sprintf("start_date <= '%s'", endDate),
+		fmt.Sprintf("end_date >= '%s'", startDate),
+	}
+
+	if queryResult.WhereClause != "" {
+		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, whereClauseFixed)
+	}
+	if queryResult.SearchClause != "" {
+		searchClauseFixed := strings.ReplaceAll(queryResult.SearchClause, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, searchClauseFixed)
+	}
+	if joinConditionsStr != "" {
+		joinConditionsFixed := strings.ReplaceAll(strings.TrimPrefix(joinConditionsStr, "AND "), "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, joinConditionsFixed)
+	}
+	whereClause := strings.Join(baseWhereConditions, " AND ")
+
+	startDateParsed, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid startDate format: %w", err)
+	}
+	endDateParsed, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid endDate format: %w", err)
+	}
+	daysDiff := int(endDateParsed.Sub(startDateParsed).Hours()/24) + 1
+
+	// query := fmt.Sprintf(`
+	//  WITH %sdate_series AS (
+	//      SELECT toDate(addDays(toDate('%s'), number)) AS date
+	//      FROM numbers(%d)
+	//  ),
+	//  preFilterEvent AS (
+	//      SELECT *
+	//      FROM testing_db.allevent_ch AS e
+	//      WHERE %s
+	//  ),
+	//  events AS (
+	//      SELECT
+	//          e.event_uuid AS id,
+	//          e.event_name AS name,
+	//          ds.date AS startDateTime,
+	//          ds.date AS endDateTime,
+	//          toUInt32(dateDiff('day', toDate(e.start_date), toDate(e.end_date))) AS duration,
+	//          CASE
+	//              WHEN e.editions_audiance_type = 11000 THEN 'B2B'
+	//              WHEN e.editions_audiance_type = 10100 THEN 'B2C'
+	//              ELSE ''
+	//          END AS audienceType,
+	//          e.impactScore AS impactScore,
+	//          e.event_score AS score,
+	//          e.PrimaryEventType AS primaryEventType,
+	//          row_number() OVER (
+	//              PARTITION BY ds.date
+	//              ORDER BY e.event_score DESC, COALESCE(e.editions_audiance_type, 0) ASC, e.start_date DESC, duration DESC
+	//          ) AS rn
+	//      FROM preFilterEvent e
+	//      CROSS JOIN date_series ds
+	//      WHERE e.start_date <= ds.date
+	//          AND e.end_date >= ds.date
+	//      GROUP BY
+	//          ds.date,
+	//          e.event_uuid,
+	//          e.event_name,
+	//          e.start_date,
+	//          e.end_date,
+	//          e.editions_audiance_type,
+	//          e.impactScore,
+	//          e.event_score,
+	//          e.PrimaryEventType,
+	//          duration
+	//  )
+	//  SELECT DISTINCT
+	//      id,
+	//      name,
+	//      toString(startDateTime) AS startDateTime,
+	//      toString(endDateTime) AS endDateTime,
+	//      audienceType,
+	//      primaryEventType,
+	//      impactScore,
+	//      duration,
+	//      score
+	//  FROM events
+	//  WHERE rn <= 5
+	//  ORDER BY
+	//      startDateTime ASC,
+	//      score DESC,
+	//      audienceType ASC,
+	//      duration DESC
+	// `,
+	//  cteClausesStr,
+	//  startDate,
+	//  daysDiff,
+	//  whereClause,
+	// )
+
+	query := fmt.Sprintf(`
+		WITH %sdate_series AS (
+			SELECT toDate(addDays(toDate('%s'), number)) AS date
+			FROM numbers(%d)
+		),
+		preFilterEvent AS (
+			SELECT 
+				e.event_uuid,
+				e.event_name,
+				e.start_date,
+				e.end_date,
+				e.editions_audiance_type,
+				e.impactScore,
+				e.event_score,
+				e.PrimaryEventType,
+				toUInt32(dateDiff('day', toDate(e.start_date), toDate(e.end_date))) AS duration
+			FROM testing_db.allevent_ch AS e
+			WHERE %s
+				AND e.start_date <= '%s'
+				AND e.end_date >= '%s'
+		),
+		events AS (
+			SELECT 
+				e.event_uuid AS id,
+				e.event_name AS name,
+				ds.date AS startDateTime,
+				ds.date AS endDateTime,
+				e.duration,
+				multiIf(
+					e.editions_audiance_type = 11000, 'B2B',
+					e.editions_audiance_type = 10100, 'B2C',
+					''
+				) AS audienceType,
+				e.impactScore AS impactScore,
+				e.event_score AS score,
+				e.PrimaryEventType AS primaryEventType,
+				row_number() OVER (
+					PARTITION BY ds.date 
+					ORDER BY 
+						e.event_score DESC,
+						COALESCE(e.editions_audiance_type, 0) ASC,
+						e.start_date DESC,
+						e.duration DESC
+				) AS rn
+			FROM preFilterEvent e
+			INNER JOIN date_series ds ON (
+				e.start_date <= ds.date AND e.end_date >= ds.date
+			)
+		)
+		SELECT 
+			id,
+			name,
+			toString(startDateTime) AS startDateTime,
+			toString(endDateTime) AS endDateTime,
+			audienceType,
+			primaryEventType,
+			impactScore,
+			duration,
+			score
+		FROM events
+		WHERE rn <= 5
+		ORDER BY 
+			startDateTime ASC,
+			score DESC,
+			audienceType ASC,
+			duration DESC
+	`,
+		cteClausesStr,
+		startDate,
+		daysDiff,
+		whereClause,
+		endDate,
+		startDate,
+	)
+
+	log.Printf("Events by week query: %s", query)
+
+	queryStartTime := time.Now()
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	queryDuration := time.Since(queryStartTime)
+	log.Printf("Calendar week query execution time: %v", queryDuration)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, fmt.Errorf("ClickHouse query error: %w", err)
+	}
+	defer rows.Close()
+
+	var events []map[string]interface{}
+	for rows.Next() {
+		var id, name, startDateTime, endDateTime, audienceType string
+		var primaryEventType *string
+		var impactScore uint32
+		var score int32
+		var duration uint32
+
+		if err := rows.Scan(&id, &name, &startDateTime, &endDateTime, &audienceType, &primaryEventType, &impactScore, &duration, &score); err != nil {
+			log.Printf("Error scanning row: %v", err)
+			continue
+		}
+
+		event := map[string]interface{}{
+			"id":            id,
+			"name":          name,
+			"startDateTime": startDateTime,
+			"endDateTime":   endDateTime,
+			"audienceType":  audienceType,
+			"impactScore":   impactScore,
+			"duration":      duration,
+			"score":         score,
+		}
+
+		if primaryEventType != nil {
+			if slug, exists := EventTypeById[*primaryEventType]; exists {
+				event["primaryEventType"] = slug
+			} else {
+				event["primaryEventType"] = nil
+			}
+		} else {
+			event["primaryEventType"] = nil
+		}
+
+		events = append(events, event)
+	}
+
+	transformedEvents := s.transformDataService.TransformEventsByWeek(events)
+
+	return fiber.Map{
+		"events": transformedEvents,
+	}, nil
 }
 
 func (s *SearchEventService) getListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto, showValues string) (*ListResult, error) {
@@ -3443,6 +3828,30 @@ func (s *SearchEventService) getGroupByHandler(groupByType models.CountGroup) (g
 				cteAndJoinResult,
 				filterFields,
 				"city",
+			)
+		},
+		models.CountGroupMonth: func(queryResult *ClickHouseQueryResult, cteAndJoinResult *CTEAndJoinResult, filterFields models.FilterDataDto) (interface{}, error) {
+			return s.sharedFunctionService.GetEventCountByDate(
+				queryResult,
+				cteAndJoinResult,
+				filterFields,
+				"month",
+			)
+		},
+		models.CountGroupYear: func(queryResult *ClickHouseQueryResult, cteAndJoinResult *CTEAndJoinResult, filterFields models.FilterDataDto) (interface{}, error) {
+			return s.sharedFunctionService.GetEventCountByDate(
+				queryResult,
+				cteAndJoinResult,
+				filterFields,
+				"year",
+			)
+		},
+		models.CountGroupDay: func(queryResult *ClickHouseQueryResult, cteAndJoinResult *CTEAndJoinResult, filterFields models.FilterDataDto) (interface{}, error) {
+			return s.sharedFunctionService.GetEventCountByDate(
+				queryResult,
+				cteAndJoinResult,
+				filterFields,
+				"day",
 			)
 		},
 	}

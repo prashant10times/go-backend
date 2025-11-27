@@ -1373,3 +1373,25 @@ func (s *TransformDataService) GetRankRange(rank int) string {
 	}
 	return "1000+"
 }
+
+func (s *TransformDataService) TransformEventsByWeek(data []map[string]interface{}) []map[string]interface{} {
+	result := make([]map[string]interface{}, 0, len(data))
+	for _, item := range data {
+		transformed := map[string]interface{}{
+			"id":            item["id"],
+			"name":          item["name"],
+			"startDateTime": item["startDateTime"],
+			"endDateTime":   item["endDateTime"],
+			"impactScore":   item["impactScore"],
+		}
+
+		if eventType, ok := item["primaryEventType"]; ok {
+			transformed["eventType"] = eventType
+		} else {
+			transformed["eventType"] = nil
+		}
+
+		result = append(result, transformed)
+	}
+	return result
+}

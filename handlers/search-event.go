@@ -93,7 +93,7 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 	request.ImpactScoreLte = c.Query("impactScore.lte")
 	request.EconomicImpactGte = c.Query("economicImpact.gte")
 	request.EconomicImpactLte = c.Query("economicImpact.lte")
-	request.ShowValues = c.Query("showValues")
+	request.CalendarType = c.Query("calendar_type")
 
 	userID, ok := c.Locals("userId").(string)
 	if !ok || userID == "" {

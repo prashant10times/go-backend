@@ -237,6 +237,8 @@ type FilterDataDto struct {
 	CompanyState   string `json:"companyState,omitempty" form:"companyState"`
 
 	View                string `json:"view,omitempty" form:"view"`
+	CalendarType        string `json:"calendar_type,omitempty" form:"calendar_type"`
+	TrackerDates        string `json:"trackerDates,omitempty" form:"trackerDates"`
 	ShowCount           bool   `json:"showCount,omitempty" form:"showCount"`
 	Frequency           string `json:"frequency,omitempty" form:"frequency"`
 	Visibility          string `json:"visibility,omitempty" form:"visibility"`
@@ -322,11 +324,13 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedRegions    []string `json:"-"`
-	ParsedCountryIds []string `json:"-"`
-	ParsedStateIds   []string `json:"-"`
-	ParsedCityIds    []string `json:"-"`
-	ParsedVenueIds   []string `json:"-"`
+	ParsedTrackerDates []string `json:"-"`
+	ParsedCalendarType *string  `json:"-"`
+	ParsedRegions      []string `json:"-"`
+	ParsedCountryIds   []string `json:"-"`
+	ParsedStateIds     []string `json:"-"`
+	ParsedCityIds      []string `json:"-"`
+	ParsedVenueIds     []string `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -516,6 +520,60 @@ func (f *FilterDataDto) Validate() error {
 			}
 			return nil
 		})),
+
+		validation.Field(&f.CalendarType, validation.When(f.CalendarType != "", validation.By(func(value interface{}) error {
+			calendarTypeStr := value.(string)
+			calendarTypeLower := strings.ToLower(strings.TrimSpace(calendarTypeStr))
+
+			validCalendarTypes := map[string]bool{
+				"week":  true,
+				"month": true,
+				"year":  true,
+			}
+
+			if validCalendarTypes[calendarTypeLower] {
+				f.ParsedCalendarType = &calendarTypeLower
+				f.CalendarType = calendarTypeLower
+			} else {
+				validOptions := []string{"week", "month", "year"}
+				return validation.NewError("invalid_calendar_type", "Invalid calendar_type value: "+calendarTypeStr+". Valid options are: "+strings.Join(validOptions, ", "))
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.TrackerDates, validation.When(f.TrackerDates != "", validation.By(func(value interface{}) error {
+			trackerDatesStr := value.(string)
+			if trackerDatesStr == "" {
+				return nil
+			}
+
+			dates := strings.Split(trackerDatesStr, ",")
+			if len(dates) != 2 {
+				return validation.NewError("invalid_tracker_dates", "trackerDates must contain exactly 2 dates separated by comma (start,end)")
+			}
+
+			f.ParsedTrackerDates = make([]string, 0, 2)
+			for i, dateStr := range dates {
+				dateStr = strings.TrimSpace(dateStr)
+				if dateStr == "" {
+					return validation.NewError("invalid_tracker_date", fmt.Sprintf("Tracker date at index %d cannot be empty", i))
+				}
+
+				// Validate date format (YYYY-MM-DD)
+				parsedDate, err := time.Parse("2006-01-02", dateStr)
+				if err != nil {
+					parsedDate, err = time.Parse(time.RFC3339, dateStr)
+					if err != nil {
+						return validation.NewError("invalid_tracker_date_format", fmt.Sprintf("Tracker date at index %d must be in YYYY-MM-DD format: %s", i, dateStr))
+					}
+				}
+
+				normalizedDate := parsedDate.Format("2006-01-02")
+				f.ParsedTrackerDates = append(f.ParsedTrackerDates, normalizedDate)
+			}
+
+			return nil
+		}))),
 
 		validation.Field(&f.GroupBy, validation.When(f.GroupBy != "", validation.By(func(value interface{}) error {
 			groupByStr := value.(string)

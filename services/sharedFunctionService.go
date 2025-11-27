@@ -304,6 +304,11 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 		return "COUNT", nil
 	}
 
+	if strings.Contains(filterFields.View, "calendar") {
+		log.Printf("Query type determined: CALENDAR")
+		return "CALENDAR", nil
+	}
+
 	isAggregationView := strings.Contains(filterFields.View, "agg")
 	isMapView := strings.Contains(filterFields.View, "map")
 
@@ -3859,6 +3864,124 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		}
 
 		result = append(result, item)
+	}
+
+	return result, nil
+}
+
+func (s *SharedFunctionService) GetEventCountByDate(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	filterFields models.FilterDataDto,
+	groupBy string,
+) (interface{}, error) {
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	baseWhereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		"edition_type = 'current_edition'",
+	}
+	if queryResult.WhereClause != "" {
+		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, whereClauseFixed)
+	}
+	if queryResult.SearchClause != "" {
+		searchClauseFixed := strings.ReplaceAll(queryResult.SearchClause, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, searchClauseFixed)
+	}
+	if joinConditionsStr != "" {
+		baseWhereConditions = append(baseWhereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+	}
+	whereClause := strings.Join(baseWhereConditions, " AND ")
+
+	var dateGroupByExpr string
+	switch groupBy {
+	case "day":
+		dateGroupByExpr = "formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(e.start_date), x), range(0, dateDiff('day', toDate(e.start_date), toDate(e.end_date)) + 1))), '%Y-%m-%d')"
+	case "month":
+		dateGroupByExpr = "formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(e.start_date), x), range(0, dateDiff('day', toDate(e.start_date), toDate(e.end_date)) + 1))), '%Y-%m')"
+	case "year":
+		dateGroupByExpr = "formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(e.start_date), x), range(0, dateDiff('day', toDate(e.start_date), toDate(e.end_date)) + 1))), '%Y')"
+	default:
+		return nil, fmt.Errorf("unsupported date groupBy: %s", groupBy)
+	}
+
+	query := fmt.Sprintf(`
+		WITH %spreFilterEvent AS (
+			SELECT
+				e.*
+			FROM testing_db.allevent_ch AS e
+			WHERE %s
+		)
+		SELECT
+			%s AS date_key,
+			uniq(e.event_id) AS count
+		FROM preFilterEvent e
+		WHERE %s
+		GROUP BY date_key
+		ORDER BY date_key ASC
+	`,
+		cteClausesStr,
+		whereClause,
+		dateGroupByExpr,
+		whereClause,
+	)
+
+	log.Printf("Event count by %s query: %s", groupBy, query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]interface{})
+	var dayCount []map[string]interface{}
+	var monthCount []map[string]interface{}
+	var yearCount []map[string]interface{}
+
+	for rows.Next() {
+		var dateKey string
+		var count uint64
+
+		if err := rows.Scan(&dateKey, &count); err != nil {
+			log.Printf("Error scanning row: %v", err)
+			continue
+		}
+
+		item := map[string]interface{}{
+			"date":  dateKey,
+			"count": int(count),
+		}
+
+		dayCount = append(dayCount, item)
+
+		if groupBy == "month" || groupBy == "year" {
+			switch groupBy {
+			case "month":
+				monthCount = append(monthCount, item)
+			case "year":
+				yearCount = append(yearCount, item)
+			}
+		}
+	}
+
+	result["dayCount"] = dayCount
+	if groupBy == "month" || groupBy == "year" {
+		result["monthCount"] = monthCount
+	}
+	if groupBy == "year" {
+		result["yearCount"] = yearCount
 	}
 
 	return result, nil
