@@ -2,9 +2,6 @@ package services
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -495,116 +492,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	}
 
 	if len(filterFields.ParsedGroupBy) > 0 {
-		queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
-		if err != nil {
-			log.Printf("Error building ClickHouse query for groupBy: %v", err)
-			statusCode = http.StatusInternalServerError
-			msg := err.Error()
-			errorMessage = &msg
-			return nil, middleware.NewInternalServerError("Database query failed", err.Error())
-		}
-
-		cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
-			queryResult.NeedsVisitorJoin,
-			queryResult.NeedsSpeakerJoin,
-			queryResult.NeedsExhibitorJoin,
-			queryResult.NeedsSponsorJoin,
-			queryResult.NeedsCategoryJoin,
-			queryResult.NeedsTypeJoin,
-			queryResult.NeedsEventRankingJoin,
-			queryResult.needsDesignationJoin,
-			queryResult.needsAudienceSpreadJoin,
-			queryResult.NeedsRegionsJoin,
-			queryResult.NeedsLocationIdsJoin,
-			queryResult.NeedsCountryIdsJoin,
-			queryResult.NeedsStateIdsJoin,
-			queryResult.NeedsCityIdsJoin,
-			queryResult.NeedsVenueIdsJoin,
-			queryResult.VisitorWhereConditions,
-			queryResult.SpeakerWhereConditions,
-			queryResult.ExhibitorWhereConditions,
-			queryResult.SponsorWhereConditions,
-			queryResult.CategoryWhereConditions,
-			queryResult.TypeWhereConditions,
-			queryResult.EventRankingWhereConditions,
-			queryResult.JobCompositeWhereConditions,
-			queryResult.AudienceSpreadWhereConditions,
-			queryResult.RegionsWhereConditions,
-			queryResult.LocationIdsWhereConditions,
-			queryResult.CountryIdsWhereConditions,
-			queryResult.StateIdsWhereConditions,
-			queryResult.CityIdsWhereConditions,
-			queryResult.VenueIdsWhereConditions,
-			filterFields,
-		)
-
-		switch filterFields.ParsedGroupBy[0] {
-		case models.CountGroupStatus:
-			count, err := s.sharedFunctionService.GetEventCountByStatus(
-				queryResult,
-				&cteAndJoinResult,
-				filterFields,
-			)
-			if err != nil {
-				log.Printf("Error getting event count by status: %v", err)
-				statusCode = http.StatusInternalServerError
-				msg := err.Error()
-				errorMessage = &msg
-				return nil, middleware.NewInternalServerError("Error getting event count by status", err.Error())
-			}
-
-			responseTime := time.Since(startTime).Seconds()
-			successResponse := fiber.Map{
-				"status":     "success",
-				"statusCode": 200,
-				"meta": fiber.Map{
-					"responseTime": responseTime,
-				},
-				"data": fiber.Map{
-					"count": count,
-				},
-			}
-			return successResponse, nil
-		case models.CountGroupEventTypeGroup:
-			searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
-			if searchByEntity != "" && searchByEntity != "event" && searchByEntity != "keywords" {
-				statusCode = http.StatusBadRequest
-				msg := "eventTypeGroup groupBy is only supported when searchByEntity is empty, 'event', or 'keywords'"
-				errorMessage = &msg
-				return nil, middleware.NewBadRequestError("Invalid searchByEntity for eventTypeGroup", msg)
-			}
-
-			count, err := s.sharedFunctionService.GetEventCountByEventTypeGroup(
-				queryResult,
-				&cteAndJoinResult,
-				filterFields,
-			)
-			if err != nil {
-				log.Printf("Error getting event count by event type group: %v", err)
-				statusCode = http.StatusInternalServerError
-				msg := err.Error()
-				errorMessage = &msg
-				return nil, middleware.NewInternalServerError("Error getting event count by event type group", err.Error())
-			}
-
-			responseTime := time.Since(startTime).Seconds()
-			successResponse := fiber.Map{
-				"status":     "success",
-				"statusCode": 200,
-				"meta": fiber.Map{
-					"responseTime": responseTime,
-				},
-				"data": fiber.Map{
-					"count": count,
-				},
-			}
-			return successResponse, nil
-		default:
-			statusCode = http.StatusBadRequest
-			msg := fmt.Sprintf("Unsupported groupBy option: %s", filterFields.ParsedGroupBy[0])
-			errorMessage = &msg
-			return nil, middleware.NewBadRequestError("Unsupported groupBy option", msg)
-		}
+		return s.handleGroupByRequest(filterFields, startTime, &statusCode, &errorMessage)
 	}
 
 	queryType, err := s.sharedFunctionService.determineQueryType(filterFields)
@@ -2017,7 +1905,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			}
 			if companyIdStr != "" {
 				textToEncrypt := companyIdStr + s.cfg.TEN_TIMES_ID_ENCRYPT_KEY
-				encrypted, err := s.encrypt(textToEncrypt)
+				encrypted, err := s.Encrypt(textToEncrypt)
 				if err != nil {
 					log.Printf("Error encrypting prospectId: %v", err)
 
@@ -3426,62 +3314,143 @@ func (s *SearchEventService) parseClickHouseStringArray(str string) []interface{
 	return result
 }
 
-// encrypt encrypts text using AES-256-CBC algorithm
-// This matches the TypeScript implementation: encrypt(text, key) using AES-256-CBC
-func (s *SearchEventService) encrypt(text string) (string, error) {
-	if s.cfg.EventQueryEncrypt == "" {
-		return "", fmt.Errorf("EVENT_QUERY_ENCRYPT not configured")
-	}
-	if s.cfg.EventChiprIV == "" {
-		return "", fmt.Errorf("EVENT_CHIPR_IV not configured")
-	}
+type groupByHandler func(queryResult *ClickHouseQueryResult, cteAndJoinResult *CTEAndJoinResult, filterFields models.FilterDataDto) (interface{}, error)
 
-	// Parse IV from hex string
-	iv, err := hex.DecodeString(s.cfg.EventChiprIV)
+func (s *SearchEventService) handleGroupByRequest(
+	filterFields models.FilterDataDto,
+	startTime time.Time,
+	statusCode *int,
+	errorMessage **string,
+) (interface{}, error) {
+
+	queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
 	if err != nil {
-		return "", fmt.Errorf("failed to decode IV: %w", err)
+		log.Printf("Error building ClickHouse query for groupBy: %v", err)
+		*statusCode = http.StatusInternalServerError
+		msg := err.Error()
+		*errorMessage = &msg
+		return nil, middleware.NewInternalServerError("Database query failed", err.Error())
 	}
 
-	key := []byte(s.cfg.EventQueryEncrypt)
-	if len(key) != 32 {
-		keyBytes := make([]byte, 32)
-		copy(keyBytes, key)
-		if len(key) < 32 {
-			// Pad with zeros if key is shorter
-			for i := len(key); i < 32; i++ {
-				keyBytes[i] = 0
-			}
+	cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
+		queryResult.NeedsVisitorJoin,
+		queryResult.NeedsSpeakerJoin,
+		queryResult.NeedsExhibitorJoin,
+		queryResult.NeedsSponsorJoin,
+		queryResult.NeedsCategoryJoin,
+		queryResult.NeedsTypeJoin,
+		queryResult.NeedsEventRankingJoin,
+		queryResult.needsDesignationJoin,
+		queryResult.needsAudienceSpreadJoin,
+		queryResult.NeedsRegionsJoin,
+		queryResult.NeedsLocationIdsJoin,
+		queryResult.NeedsCountryIdsJoin,
+		queryResult.NeedsStateIdsJoin,
+		queryResult.NeedsCityIdsJoin,
+		queryResult.NeedsVenueIdsJoin,
+		queryResult.VisitorWhereConditions,
+		queryResult.SpeakerWhereConditions,
+		queryResult.ExhibitorWhereConditions,
+		queryResult.SponsorWhereConditions,
+		queryResult.CategoryWhereConditions,
+		queryResult.TypeWhereConditions,
+		queryResult.EventRankingWhereConditions,
+		queryResult.JobCompositeWhereConditions,
+		queryResult.AudienceSpreadWhereConditions,
+		queryResult.RegionsWhereConditions,
+		queryResult.LocationIdsWhereConditions,
+		queryResult.CountryIdsWhereConditions,
+		queryResult.StateIdsWhereConditions,
+		queryResult.CityIdsWhereConditions,
+		queryResult.VenueIdsWhereConditions,
+		filterFields,
+	)
+
+	groupByType := filterFields.ParsedGroupBy[0]
+
+	if groupByType == models.CountGroupEventTypeGroup {
+		if err := s.validateEventTypeGroupSearchByEntity(filterFields); err != nil {
+			*statusCode = http.StatusBadRequest
+			msg := err.Error()
+			*errorMessage = &msg
+			return nil, middleware.NewBadRequestError("Invalid searchByEntity for eventTypeGroup", msg)
 		}
-		key = keyBytes
 	}
 
-	// Create cipher block
-	block, err := aes.NewCipher(key)
+	handler, err := s.getGroupByHandler(groupByType)
 	if err != nil {
-		return "", fmt.Errorf("failed to create cipher: %w", err)
+		*statusCode = http.StatusBadRequest
+		msg := err.Error()
+		*errorMessage = &msg
+		return nil, middleware.NewBadRequestError("Unsupported groupBy option", msg)
 	}
 
-	// Ensure IV is 16 bytes (AES block size)
-	if len(iv) != 16 {
-		return "", fmt.Errorf("IV must be 16 bytes, got %d", len(iv))
+	count, err := handler(queryResult, &cteAndJoinResult, filterFields)
+	if err != nil {
+		log.Printf("Error executing groupBy handler for %s: %v", groupByType, err)
+		*statusCode = http.StatusInternalServerError
+		msg := err.Error()
+		*errorMessage = &msg
+		return nil, middleware.NewInternalServerError(fmt.Sprintf("Error getting event count by %s", groupByType), err.Error())
 	}
 
-	// Create cipher mode
-	mode := cipher.NewCBCEncrypter(block, iv)
+	return s.sharedFunctionService.BuildGroupByResponse(count, startTime), nil
+}
 
-	// Pad plaintext to block size (PKCS7 padding)
-	plaintext := []byte(text)
-	padding := 16 - len(plaintext)%16
-	padtext := make([]byte, padding)
-	for i := range padtext {
-		padtext[i] = byte(padding)
+func (s *SearchEventService) validateEventTypeGroupSearchByEntity(filterFields models.FilterDataDto) error {
+	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
+	if searchByEntity != "" && searchByEntity != "event" && searchByEntity != "keywords" {
+		return fmt.Errorf("eventTypeGroup groupBy is only supported when searchByEntity is empty, 'event', or 'keywords'")
 	}
-	plaintext = append(plaintext, padtext...)
+	return nil
+}
 
-	// Encrypt
-	ciphertext := make([]byte, len(plaintext))
-	mode.CryptBlocks(ciphertext, plaintext)
+func (s *SearchEventService) getGroupByHandler(groupByType models.CountGroup) (groupByHandler, error) {
+	handlers := map[models.CountGroup]groupByHandler{
+		models.CountGroupStatus: func(queryResult *ClickHouseQueryResult, cteAndJoinResult *CTEAndJoinResult, filterFields models.FilterDataDto) (interface{}, error) {
+			return s.sharedFunctionService.GetEventCountByStatus(
+				queryResult,
+				cteAndJoinResult,
+				filterFields,
+			)
+		},
+		models.CountGroupEventTypeGroup: func(queryResult *ClickHouseQueryResult, cteAndJoinResult *CTEAndJoinResult, filterFields models.FilterDataDto) (interface{}, error) {
+			return s.sharedFunctionService.GetEventCountByEventTypeGroup(
+				queryResult,
+				cteAndJoinResult,
+				filterFields,
+			)
+		},
+		models.CountGroupCountry: func(queryResult *ClickHouseQueryResult, cteAndJoinResult *CTEAndJoinResult, filterFields models.FilterDataDto) (interface{}, error) {
+			return s.sharedFunctionService.GetEventCountByLocation(
+				queryResult,
+				cteAndJoinResult,
+				filterFields,
+				"country",
+			)
+		},
+		models.CountGroupState: func(queryResult *ClickHouseQueryResult, cteAndJoinResult *CTEAndJoinResult, filterFields models.FilterDataDto) (interface{}, error) {
+			return s.sharedFunctionService.GetEventCountByLocation(
+				queryResult,
+				cteAndJoinResult,
+				filterFields,
+				"state",
+			)
+		},
+		models.CountGroupCity: func(queryResult *ClickHouseQueryResult, cteAndJoinResult *CTEAndJoinResult, filterFields models.FilterDataDto) (interface{}, error) {
+			return s.sharedFunctionService.GetEventCountByLocation(
+				queryResult,
+				cteAndJoinResult,
+				filterFields,
+				"city",
+			)
+		},
+	}
 
-	// Return hex encoded result
-	return hex.EncodeToString(ciphertext), nil
+	handler, exists := handlers[groupByType]
+	if !exists {
+		return nil, fmt.Errorf("Unsupported groupBy option: %s", groupByType)
+	}
+
+	return handler, nil
 }

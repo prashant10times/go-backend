@@ -1,6 +1,12 @@
 package services
 
-import "strings"
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"encoding/hex"
+	"fmt"
+	"strings"
+)
 
 type ResponseGroups string
 
@@ -392,4 +398,54 @@ var EventTypeGroups = map[string]EventTypeGroup{
 		Group:    "unattended",
 		Priority: 1,
 	},
+}
+
+func (s *SearchEventService) Encrypt(text string) (string, error) {
+	if s.cfg.EventQueryEncrypt == "" {
+		return "", fmt.Errorf("EVENT_QUERY_ENCRYPT not configured")
+	}
+	if s.cfg.EventChiprIV == "" {
+		return "", fmt.Errorf("EVENT_CHIPR_IV not configured")
+	}
+
+	iv, err := hex.DecodeString(s.cfg.EventChiprIV)
+	if err != nil {
+		return "", fmt.Errorf("failed to decode IV: %w", err)
+	}
+
+	key := []byte(s.cfg.EventQueryEncrypt)
+	if len(key) != 32 {
+		keyBytes := make([]byte, 32)
+		copy(keyBytes, key)
+		if len(key) < 32 {
+			for i := len(key); i < 32; i++ {
+				keyBytes[i] = 0
+			}
+		}
+		key = keyBytes
+	}
+
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		return "", fmt.Errorf("failed to create cipher: %w", err)
+	}
+
+	if len(iv) != 16 {
+		return "", fmt.Errorf("IV must be 16 bytes, got %d", len(iv))
+	}
+
+	mode := cipher.NewCBCEncrypter(block, iv)
+
+	plaintext := []byte(text)
+	padding := 16 - len(plaintext)%16
+	padtext := make([]byte, padding)
+	for i := range padtext {
+		padtext[i] = byte(padding)
+	}
+	plaintext = append(plaintext, padtext...)
+
+	ciphertext := make([]byte, len(plaintext))
+	mode.CryptBlocks(ciphertext, plaintext)
+
+	return hex.EncodeToString(ciphertext), nil
 }

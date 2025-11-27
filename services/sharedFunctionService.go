@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
 	"gorm.io/gorm"
@@ -3727,4 +3728,152 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	}
 
 	return result, nil
+}
+
+func (s *SharedFunctionService) GetEventCountByLocation(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	filterFields models.FilterDataDto,
+	groupBy string,
+) (interface{}, error) {
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	baseWhereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		"edition_type = 'current_edition'",
+	}
+	if queryResult.WhereClause != "" {
+		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, whereClauseFixed)
+	}
+	if queryResult.SearchClause != "" {
+		searchClauseFixed := strings.ReplaceAll(queryResult.SearchClause, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, searchClauseFixed)
+	}
+	if joinConditionsStr != "" {
+		baseWhereConditions = append(baseWhereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+	}
+	whereClause := strings.Join(baseWhereConditions, " AND ")
+
+	var locationJoinCondition string
+	var locationWhereCondition string
+
+	switch groupBy {
+	case "city":
+		locationJoinCondition = `LEFT JOIN testing_db.location_ch l ON e.venue_id = l.id AND l.location_type IN ('CITY', 'VENUE', 'COUNTRY')
+        LEFT JOIN testing_db.location_ch loc ON (e.venue_city = loc.id AND loc.location_type = 'CITY')`
+		locationWhereCondition = "e.venue_city IS NOT NULL AND e.venue_city != 0 AND loc.id_uuid IS NOT NULL AND loc.id IS NOT NULL"
+	case "state":
+		locationJoinCondition = `LEFT JOIN testing_db.location_ch l ON e.venue_id = l.id AND l.location_type IN ('CITY', 'VENUE', 'COUNTRY')
+        LEFT JOIN testing_db.location_ch loc ON e.edition_city_state_id = loc.id AND loc.location_type = 'STATE'`
+		locationWhereCondition = "e.edition_city_state_id IS NOT NULL AND e.edition_city_state_id != 0 AND loc.id_uuid IS NOT NULL AND loc.id IS NOT NULL"
+	case "country":
+		locationJoinCondition = `LEFT JOIN testing_db.location_ch l ON e.venue_id = l.id AND l.location_type IN ('CITY', 'VENUE', 'COUNTRY')
+        LEFT JOIN testing_db.location_ch loc ON e.edition_country = loc.iso AND loc.location_type = 'COUNTRY'`
+		locationWhereCondition = "e.edition_country IS NOT NULL AND loc.id_uuid IS NOT NULL AND loc.id IS NOT NULL"
+	default:
+		return nil, fmt.Errorf("unsupported location groupBy: %s", groupBy)
+	}
+
+	query := fmt.Sprintf(`
+		WITH %spreFilterEvent AS (
+			SELECT
+				e.*
+			FROM testing_db.allevent_ch AS e
+			WHERE %s
+		)
+		SELECT
+			COUNT(DISTINCT e.event_id) AS count,
+			toUUIDOrNull(toString(loc.id_uuid)) AS id,
+			loc.name AS name,
+			loc.latitude AS latitude,
+			loc.longitude AS longitude
+		FROM preFilterEvent e
+		%s
+		WHERE %s
+		GROUP BY loc.id_uuid, loc.name, loc.latitude, loc.longitude
+		ORDER BY count DESC
+		`,
+		cteClausesStr,
+		whereClause,
+		locationJoinCondition,
+		locationWhereCondition,
+	)
+
+	log.Printf("Event count by location query (%s): %s", groupBy, query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var result []map[string]interface{}
+	for rows.Next() {
+		var count uint64
+		var idUUID uuid.UUID
+		var name *string
+		var latitude, longitude *float64
+
+		if err := rows.Scan(&count, &idUUID, &name, &latitude, &longitude); err != nil {
+			log.Printf("Error scanning result: %v", err)
+			continue
+		}
+
+		item := map[string]interface{}{
+			"count": int(count),
+		}
+
+		if idUUID != uuid.Nil {
+			item["id"] = idUUID.String()
+		} else {
+			item["id"] = nil
+		}
+
+		if name != nil {
+			item["name"] = *name
+		} else {
+			item["name"] = nil
+		}
+
+		if latitude != nil {
+			item["latitude"] = *latitude
+		} else {
+			item["latitude"] = nil
+		}
+
+		if longitude != nil {
+			item["longitude"] = *longitude
+		} else {
+			item["longitude"] = nil
+		}
+
+		result = append(result, item)
+	}
+
+	return result, nil
+}
+
+func (s *SharedFunctionService) BuildGroupByResponse(count interface{}, startTime time.Time) fiber.Map {
+	responseTime := time.Since(startTime).Seconds()
+	return fiber.Map{
+		"status":     "success",
+		"statusCode": 200,
+		"meta": fiber.Map{
+			"responseTime": responseTime,
+		},
+		"data": fiber.Map{
+			"count": count,
+		},
+	}
 }
