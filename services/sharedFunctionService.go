@@ -3987,6 +3987,289 @@ func (s *SharedFunctionService) GetEventCountByDate(
 	return result, nil
 }
 
+func (s *SharedFunctionService) GetEventCountByDay(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	filterFields models.FilterDataDto,
+	startDate string,
+	endDate string,
+) (interface{}, error) {
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	startDateParsed, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid startDate format: %w", err)
+	}
+	endDateParsed, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid endDate format: %w", err)
+	}
+	daysDiff := int(endDateParsed.Sub(startDateParsed).Hours()/24) + 1
+
+	preFilterWhereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		"edition_type = 'current_edition'",
+		fmt.Sprintf("start_date <= '%s'", endDate),
+		fmt.Sprintf("end_date >= '%s'", startDate),
+	}
+	if queryResult.WhereClause != "" {
+		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
+		preFilterWhereConditions = append(preFilterWhereConditions, whereClauseFixed)
+	}
+	preFilterWhereClause := strings.Join(preFilterWhereConditions, " AND ")
+
+	filterWhereConditions := []string{}
+	if queryResult.SearchClause != "" {
+		searchClauseFixed := strings.ReplaceAll(queryResult.SearchClause, "ee.", "e.")
+		filterWhereConditions = append(filterWhereConditions, searchClauseFixed)
+	}
+	if joinConditionsStr != "" {
+		filterWhereConditions = append(filterWhereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+	}
+	filterWhereClause := ""
+	if len(filterWhereConditions) > 0 {
+		filterWhereClause = strings.Join(filterWhereConditions, " AND ")
+	}
+
+	query := fmt.Sprintf(`
+		WITH %sdate_series AS (
+			SELECT toDate(addDays(toDate('%s'), number)) AS date
+			FROM numbers(%d)
+		),
+		preFilterEvent AS (
+			SELECT
+				e.*
+			FROM testing_db.allevent_ch AS e
+			WHERE %s
+		),
+		grouped_counts AS (
+			SELECT
+				ds.date,
+				group_name,
+				uniq(e.event_id) AS eventsCount,
+				sum(e.impactScore) AS eventImpactScore
+			FROM preFilterEvent e
+			INNER JOIN date_series ds ON true
+			INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+			ARRAY JOIN et.groups AS group_name
+			WHERE %s
+				AND e.start_date <= ds.date
+				AND e.end_date >= ds.date
+				AND group_name IN ('business', 'social', 'unattended')
+			GROUP BY
+				ds.date,
+				group_name
+			ORDER BY
+				ds.date
+		)
+		SELECT * FROM grouped_counts
+	`,
+		cteClausesStr,
+		startDate,
+		daysDiff,
+		preFilterWhereClause,
+		func() string {
+			if filterWhereClause != "" {
+				cleaned := strings.ReplaceAll(filterWhereClause, "e.event_id = et.event_id", "")
+				cleaned = strings.TrimSpace(cleaned)
+				cleaned = strings.TrimPrefix(cleaned, "AND")
+				cleaned = strings.TrimSpace(cleaned)
+				if cleaned != "" {
+					return cleaned
+				}
+			}
+			return "1=1"
+		}(),
+	)
+
+	log.Printf("Event count by day query: %s", query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rowsData []map[string]interface{}
+	for rows.Next() {
+		var date time.Time
+		var groupName string
+		var eventsCount uint64
+		var eventImpactScore uint64
+
+		if err := rows.Scan(&date, &groupName, &eventsCount, &eventImpactScore); err != nil {
+			log.Printf("Error scanning row: %v", err)
+			continue
+		}
+
+		rowsData = append(rowsData, map[string]interface{}{
+			"date":             date.Format("2006-01-02"),
+			"group_name":       groupName,
+			"eventsCount":      int(eventsCount),
+			"eventImpactScore": float64(eventImpactScore),
+		})
+	}
+
+	return rowsData, nil
+}
+
+func (s *SharedFunctionService) GetEventCountByLongDurations(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	filterFields models.FilterDataDto,
+	duration string,
+	startDate string,
+	endDate string,
+) (interface{}, error) {
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	preFilterWhereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		"edition_type = 'current_edition'",
+		fmt.Sprintf("start_date <= '%s'", endDate),
+		fmt.Sprintf("end_date >= '%s'", startDate),
+	}
+	if queryResult.WhereClause != "" {
+		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
+		preFilterWhereConditions = append(preFilterWhereConditions, whereClauseFixed)
+	}
+	preFilterWhereClause := strings.Join(preFilterWhereConditions, " AND ")
+
+	filterWhereConditions := []string{}
+	if queryResult.SearchClause != "" {
+		searchClauseFixed := strings.ReplaceAll(queryResult.SearchClause, "ee.", "e.")
+		filterWhereConditions = append(filterWhereConditions, searchClauseFixed)
+	}
+	if joinConditionsStr != "" {
+		filterWhereConditions = append(filterWhereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+	}
+	filterWhereClause := ""
+	if len(filterWhereConditions) > 0 {
+		filterWhereClause = strings.Join(filterWhereConditions, " AND ")
+	}
+
+	var intervalUnit string
+	var dateFormat string
+	switch duration {
+	case "month":
+		intervalUnit = "MONTH"
+		dateFormat = "formatDateTime(fd.start_date, '%Y-%m')"
+	case "year":
+		intervalUnit = "YEAR"
+		dateFormat = "toString(toYear(fd.start_date))"
+	case "week":
+		intervalUnit = "WEEK"
+		dateFormat = "concat(toString(fd.start_date), '_', toString(fd.end_date))"
+	default:
+		return nil, fmt.Errorf("unsupported duration: %s. Valid options are: month, year, week", duration)
+	}
+
+	query := fmt.Sprintf(`
+		WITH %sdate_series AS (
+			SELECT toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL number %s AS duration_start
+			FROM numbers(toUInt32(dateDiff('%s', toStartOfInterval(toDate('%s'), INTERVAL 1 %s), toStartOfInterval(toDate('%s'), INTERVAL 1 %s)) + 1))
+		),
+		final_dates AS (
+			SELECT
+				toDate('%s') AS start_date,
+				least(
+					toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL 1 %s - INTERVAL 1 DAY,
+					toDate('%s')
+				) AS end_date
+			UNION ALL
+			SELECT
+				duration_start AS start_date,
+				least(
+					duration_start + INTERVAL 1 %s - INTERVAL 1 DAY,
+					toDate('%s')
+				) AS end_date
+			FROM date_series
+			WHERE duration_start > toDate('%s')
+		),
+		preFilterEvent AS (
+			SELECT
+				e.*
+			FROM testing_db.allevent_ch AS e
+			WHERE %s
+		)
+		SELECT
+			%s AS start_date,
+			uniq(e.event_id) AS count
+		FROM preFilterEvent e
+		INNER JOIN final_dates fd ON true
+		WHERE %s
+			AND e.start_date <= fd.end_date
+			AND e.end_date >= fd.start_date
+		GROUP BY fd.start_date, fd.end_date
+		ORDER BY fd.start_date
+	`,
+		cteClausesStr,
+		startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
+		startDate, startDate, intervalUnit, intervalUnit, endDate,
+		intervalUnit, endDate, startDate,
+		preFilterWhereClause,
+		dateFormat,
+		func() string {
+			if filterWhereClause != "" {
+				cleaned := strings.ReplaceAll(filterWhereClause, "e.event_id = et.event_id", "")
+				cleaned = strings.TrimSpace(cleaned)
+				cleaned = strings.TrimPrefix(cleaned, "AND")
+				cleaned = strings.TrimSpace(cleaned)
+				if cleaned != "" {
+					return cleaned
+				}
+			}
+			return "1=1"
+		}(),
+	)
+
+	log.Printf("Event count by long durations (%s) query: %s", duration, query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var rowsData []map[string]interface{}
+	for rows.Next() {
+		var startDateStr string
+		var count uint64
+
+		if err := rows.Scan(&startDateStr, &count); err != nil {
+			log.Printf("Error scanning row: %v", err)
+			continue
+		}
+
+		rowsData = append(rowsData, map[string]interface{}{
+			"start_date": startDateStr,
+			"count":      int(count),
+		})
+	}
+
+	return rowsData, nil
+}
+
 func (s *SharedFunctionService) BuildGroupByResponse(count interface{}, startTime time.Time) fiber.Map {
 	responseTime := time.Since(startTime).Seconds()
 	if countMap, ok := count.(map[string]interface{}); ok {

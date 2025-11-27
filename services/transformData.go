@@ -1395,3 +1395,103 @@ func (s *TransformDataService) TransformEventsByWeek(data []map[string]interface
 	}
 	return result
 }
+
+func (t *TransformDataService) TransformEventCountByDay(data []map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	for _, item := range data {
+		date, ok := item["date"].(string)
+		if !ok {
+			continue
+		}
+		groupName, _ := item["group_name"].(string)
+		eventsCount, _ := item["eventsCount"].(int)
+		eventImpactScore, _ := item["eventImpactScore"].(float64)
+
+		dateKey := date
+		if dateCount, exists := result[dateKey]; exists {
+			dateCountMap := dateCount.(map[string]interface{})
+			dateCountMap[groupName] = eventsCount
+			total := dateCountMap["total"].(int) + eventsCount
+			dateCountMap["total"] = total
+			totalImpactScore := dateCountMap["totalImpactScore"].(float64) + eventImpactScore
+			dateCountMap["totalImpactScore"] = totalImpactScore
+			if total > 0 {
+				avgScore := totalImpactScore / float64(total)
+				dateCountMap["averageImpactScore"] = float64(int(avgScore*100)) / 100.0
+			}
+		} else {
+			dateCountMap := map[string]interface{}{
+				"total":              0,
+				"business":           0,
+				"social":             0,
+				"unattended":         0,
+				"totalImpactScore":   0.0,
+				"averageImpactScore": 0.0,
+			}
+			dateCountMap[groupName] = eventsCount
+			total := eventsCount
+			dateCountMap["total"] = total
+			totalImpactScore := eventImpactScore
+			dateCountMap["totalImpactScore"] = totalImpactScore
+			if total > 0 {
+				avgScore := totalImpactScore / float64(total)
+				dateCountMap["averageImpactScore"] = float64(int(avgScore*100)) / 100.0
+			}
+			result[dateKey] = dateCountMap
+		}
+	}
+
+	for date, dateCount := range result {
+		dateCountMap := dateCount.(map[string]interface{})
+		delete(dateCountMap, "totalImpactScore")
+		result[date] = dateCountMap
+	}
+
+	return result
+}
+
+func (t *TransformDataService) TransformEventCountByLongDurations(
+	data []map[string]interface{},
+	duration string,
+) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	for _, item := range data {
+		startDate, ok := item["start_date"].(string)
+		if !ok {
+			continue
+		}
+		count, _ := item["count"].(int)
+
+		var dateKey string
+		switch duration {
+		case "month":
+			parts := strings.Split(startDate, "-")
+			if len(parts) >= 2 {
+				dateKey = parts[0] + "-" + parts[1]
+			} else if len(startDate) >= 6 {
+				dateKey = startDate[:4] + "-" + startDate[4:6]
+			} else {
+				dateKey = startDate
+			}
+		case "year":
+			parts := strings.Split(startDate, "-")
+			if len(parts) > 0 {
+				dateKey = parts[0]
+			} else if len(startDate) >= 4 {
+				dateKey = startDate[:4]
+			} else {
+				dateKey = startDate
+			}
+		case "week":
+			dateKey = startDate
+		default:
+			dateKey = startDate
+		}
+
+		result[dateKey] = count
+	}
+
+	return result
+}
