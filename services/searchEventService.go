@@ -1321,21 +1321,175 @@ func (s *SearchEventService) getCalendarEvents(filterFields models.FilterDataDto
 		}, nil
 
 	case "year":
-		groupByFilterFields := filterFields
-		groupByFilterFields.GroupBy = "year"
-		groupByFilterFields.ParsedGroupBy = []models.CountGroup{models.CountGroupYear}
+		var startDate, endDate string
+		if len(filterFields.ParsedTrackerDates) == 2 {
+			startDate = filterFields.ParsedTrackerDates[0]
+			endDate = filterFields.ParsedTrackerDates[1]
+		} else {
+			if filterFields.ActiveGte == "" || filterFields.ActiveLte == "" {
+				return &ListResult{
+					StatusCode:   http.StatusBadRequest,
+					ErrorMessage: "startDate and endDate are required (use trackerDates or active.gte/active.lte)",
+				}, nil
+			}
+			startDate = filterFields.ActiveGte
+			endDate = filterFields.ActiveLte
+		}
 
-		result, err := s.handleGroupByRequest(groupByFilterFields, time.Now(), new(int), new(*string))
+		queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
 		if err != nil {
 			return &ListResult{
 				StatusCode:   http.StatusInternalServerError,
-				ErrorMessage: err.Error(),
+				ErrorMessage: fmt.Sprintf("error building ClickHouse query: %v", err),
 			}, nil
 		}
 
+		cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
+			queryResult.NeedsVisitorJoin, queryResult.NeedsSpeakerJoin, queryResult.NeedsExhibitorJoin,
+			queryResult.NeedsSponsorJoin, queryResult.NeedsCategoryJoin, queryResult.NeedsTypeJoin,
+			queryResult.NeedsEventRankingJoin, queryResult.needsDesignationJoin, queryResult.needsAudienceSpreadJoin,
+			queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
+			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
+			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
+			queryResult.SponsorWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
+			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
+			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
+			filterFields,
+		)
+
+		if !queryResult.NeedsTypeJoin {
+			cteAndJoinResult.JoinConditions = append(cteAndJoinResult.JoinConditions, "e.event_id = et.event_id")
+		}
+
+		type dayCountResult struct {
+			data interface{}
+			err  error
+		}
+		type monthCountResult struct {
+			data interface{}
+			err  error
+		}
+		type yearCountResult struct {
+			data interface{}
+			err  error
+		}
+		type totalCountResult struct {
+			count int
+			err   error
+		}
+
+		dayCountChan := make(chan dayCountResult, 1)
+		monthCountChan := make(chan monthCountResult, 1)
+		yearCountChan := make(chan yearCountResult, 1)
+		totalCountChan := make(chan totalCountResult, 1)
+
+		go func() {
+			dayCountData, err := s.sharedFunctionService.GetEventCountByDay(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+				startDate,
+				endDate,
+			)
+			dayCountChan <- dayCountResult{data: dayCountData, err: err}
+		}()
+
+		go func() {
+			monthCountData, err := s.sharedFunctionService.GetEventCountByLongDurations(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+				"month",
+				startDate,
+				endDate,
+			)
+			monthCountChan <- monthCountResult{data: monthCountData, err: err}
+		}()
+
+		go func() {
+			yearCountData, err := s.sharedFunctionService.GetEventCountByLongDurations(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+				"year",
+				startDate,
+				endDate,
+			)
+			yearCountChan <- yearCountResult{data: yearCountData, err: err}
+		}()
+
+		go func() {
+			count, err := s.getCountOnly(filterFields)
+			totalCountChan <- totalCountResult{count: count, err: err}
+		}()
+
+		dayResult := <-dayCountChan
+		monthResult := <-monthCountChan
+		yearResult := <-yearCountChan
+		countRes := <-totalCountChan
+
+		if dayResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting day count: %v", dayResult.err),
+			}, nil
+		}
+
+		if monthResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting month count: %v", monthResult.err),
+			}, nil
+		}
+
+		if yearResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting year count: %v", yearResult.err),
+			}, nil
+		}
+
+		if countRes.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting total count: %v", countRes.err),
+			}, nil
+		}
+
+		dayCountData := dayResult.data
+		monthCountData := monthResult.data
+		yearCountData := yearResult.data
+
+		dayCountMap, ok := dayCountData.([]map[string]interface{})
+		if !ok {
+			dayCountMap = []map[string]interface{}{}
+		}
+
+		transformedDayCount := s.transformDataService.TransformEventCountByDay(dayCountMap)
+
+		monthCountRows, ok := monthCountData.([]map[string]interface{})
+		if !ok {
+			monthCountRows = []map[string]interface{}{}
+		}
+
+		transformedMonthCount := s.transformDataService.TransformEventCountByLongDurations(monthCountRows, "month")
+
+		yearCountRows, ok := yearCountData.([]map[string]interface{})
+		if !ok {
+			yearCountRows = []map[string]interface{}{}
+		}
+
+		transformedYearCount := s.transformDataService.TransformEventCountByLongDurations(yearCountRows, "year")
+
 		return &ListResult{
 			StatusCode: 200,
-			Data:       result,
+			Data: fiber.Map{
+				"count":        countRes.count,
+				"events":       transformedDayCount,
+				"countByMonth": transformedMonthCount,
+				"countByYear":  transformedYearCount,
+			},
 		}, nil
 
 	default:
