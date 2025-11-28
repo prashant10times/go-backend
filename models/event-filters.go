@@ -526,6 +526,7 @@ func (f *FilterDataDto) Validate() error {
 			calendarTypeLower := strings.ToLower(strings.TrimSpace(calendarTypeStr))
 
 			validCalendarTypes := map[string]bool{
+				"day":   true,
 				"week":  true,
 				"month": true,
 				"year":  true,
@@ -535,7 +536,7 @@ func (f *FilterDataDto) Validate() error {
 				f.ParsedCalendarType = &calendarTypeLower
 				f.CalendarType = calendarTypeLower
 			} else {
-				validOptions := []string{"week", "month", "year"}
+				validOptions := []string{"day", "week", "month", "year"}
 				return validation.NewError("invalid_calendar_type", "Invalid calendar_type value: "+calendarTypeStr+". Valid options are: "+strings.Join(validOptions, ", "))
 			}
 			return nil
