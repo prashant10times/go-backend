@@ -4033,7 +4033,8 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		filterWhereConditions = append(filterWhereConditions, searchClauseFixed)
 	}
 	if joinConditionsStr != "" {
-		filterWhereConditions = append(filterWhereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+		joinConditionsFixed := strings.ReplaceAll(joinConditionsStr, "ee.", "e.")
+		filterWhereConditions = append(filterWhereConditions, strings.TrimPrefix(joinConditionsFixed, "AND "))
 	}
 	filterWhereClause := ""
 	if len(filterWhereConditions) > 0 {
@@ -4062,9 +4063,6 @@ func (s *SharedFunctionService) GetEventCountByDay(
 			INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
 			ARRAY JOIN et.groups AS group_name
 			WHERE %s
-				AND e.start_date <= ds.date
-				AND e.end_date >= ds.date
-				AND group_name IN ('business', 'social', 'unattended')
 			GROUP BY
 				ds.date,
 				group_name
@@ -4078,16 +4076,22 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		daysDiff,
 		preFilterWhereClause,
 		func() string {
+			conditions := []string{}
 			if filterWhereClause != "" {
-				cleaned := strings.ReplaceAll(filterWhereClause, "e.event_id = et.event_id", "")
+				cleaned := strings.ReplaceAll(filterWhereClause, "ee.", "e.")
+				cleaned = strings.ReplaceAll(cleaned, "e.event_id = et.event_id", "")
 				cleaned = strings.TrimSpace(cleaned)
 				cleaned = strings.TrimPrefix(cleaned, "AND")
+				cleaned = strings.TrimSuffix(cleaned, "AND")
 				cleaned = strings.TrimSpace(cleaned)
 				if cleaned != "" {
-					return cleaned
+					conditions = append(conditions, cleaned)
 				}
 			}
-			return "1=1"
+			conditions = append(conditions, "e.start_date <= ds.date")
+			conditions = append(conditions, "e.end_date >= ds.date")
+			conditions = append(conditions, "group_name IN ('business', 'social', 'unattended')")
+			return strings.Join(conditions, " AND ")
 		}(),
 	)
 
@@ -4160,7 +4164,8 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		filterWhereConditions = append(filterWhereConditions, searchClauseFixed)
 	}
 	if joinConditionsStr != "" {
-		filterWhereConditions = append(filterWhereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+		joinConditionsFixed := strings.ReplaceAll(joinConditionsStr, "ee.", "e.")
+		filterWhereConditions = append(filterWhereConditions, strings.TrimPrefix(joinConditionsFixed, "AND "))
 	}
 	filterWhereClause := ""
 	if len(filterWhereConditions) > 0 {
@@ -4217,8 +4222,6 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		FROM preFilterEvent e
 		INNER JOIN final_dates fd ON true
 		WHERE %s
-			AND e.start_date <= fd.end_date
-			AND e.end_date >= fd.start_date
 		GROUP BY fd.start_date, fd.end_date
 		ORDER BY fd.start_date
 	`,
@@ -4229,16 +4232,21 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		preFilterWhereClause,
 		dateFormat,
 		func() string {
+			conditions := []string{}
 			if filterWhereClause != "" {
-				cleaned := strings.ReplaceAll(filterWhereClause, "e.event_id = et.event_id", "")
+				cleaned := strings.ReplaceAll(filterWhereClause, "ee.", "e.")
+				cleaned = strings.ReplaceAll(cleaned, "e.event_id = et.event_id", "")
 				cleaned = strings.TrimSpace(cleaned)
 				cleaned = strings.TrimPrefix(cleaned, "AND")
+				cleaned = strings.TrimSuffix(cleaned, "AND")
 				cleaned = strings.TrimSpace(cleaned)
 				if cleaned != "" {
-					return cleaned
+					conditions = append(conditions, cleaned)
 				}
 			}
-			return "1=1"
+			conditions = append(conditions, "e.start_date <= fd.end_date")
+			conditions = append(conditions, "e.end_date >= fd.start_date")
+			return strings.Join(conditions, " AND ")
 		}(),
 	)
 
