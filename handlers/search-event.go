@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"encoding/json"
 	"log"
 	"search-event-go/middleware"
 	"search-event-go/models"
@@ -41,59 +42,64 @@ func NewSearchEventsHandler(workerCount int, searchEventService *services.Search
 	}
 }
 
-func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
-	workerID := <-h.workerPool
-	defer func() {
-		h.workerPool <- workerID
-	}()
-
-	var request models.SearchEventsRequest
-
-	log.Printf("Raw query string: %s", c.Request().URI().QueryString())
-
-	if err := c.QueryParser(&request); err != nil {
-		return middleware.NewValidationError("Invalid query parameters", err.Error())
+func (h *SearchEventsHandler) extractDotNotationFields(c *fiber.Ctx, request *models.SearchEventsRequest, bodyMap map[string]interface{}) {
+	getValue := func(key string) string {
+		// for GET requests
+		if val := c.Query(key); val != "" {
+			return val
+		}
+		// for POST requests
+		if bodyMap != nil {
+			if val, ok := bodyMap[key].(string); ok {
+				return val
+			}
+		}
+		return ""
 	}
 
-	request.StartGte = c.Query("start.gte")
-	request.EndLte = c.Query("end.lte")
-	request.StartLte = c.Query("start.lte")
-	request.EndGte = c.Query("end.gte")
-	request.StartGt = c.Query("start.gt")
-	request.EndGt = c.Query("end.gt")
-	request.StartLt = c.Query("start.lt")
-	request.EndLt = c.Query("end.lt")
-	request.ActiveGte = c.Query("active.gte")
-	request.ActiveLte = c.Query("active.lte")
-	request.ActiveGt = c.Query("active.gt")
-	request.ActiveLt = c.Query("active.lt")
-	request.SpeakerGte = c.Query("speaker.gte")
-	request.SpeakerLte = c.Query("speaker.lte")
-	request.SpeakerGt = c.Query("speaker.gt")
-	request.SpeakerLt = c.Query("speaker.lt")
-	request.ExhibitorsGte = c.Query("exhibitors.gte")
-	request.ExhibitorsLte = c.Query("exhibitors.lte")
-	request.ExhibitorsGt = c.Query("exhibitors.gt")
-	request.ExhibitorsLt = c.Query("exhibitors.lt")
-	request.EditionsGte = c.Query("editions.gte")
-	request.EditionsLte = c.Query("editions.lte")
-	request.EditionsGt = c.Query("editions.gt")
-	request.EditionsLt = c.Query("editions.lt")
-	request.FollowingGte = c.Query("following.gte")
-	request.FollowingLte = c.Query("following.lte")
-	request.FollowingGt = c.Query("following.gt")
-	request.FollowingLt = c.Query("following.lt")
-	request.InboundScoreGte = c.Query("inboundScore.gte")
-	request.InboundScoreLte = c.Query("inboundScore.lte")
-	request.InternationalScoreGte = c.Query("internationalScore.gte")
-	request.InternationalScoreLte = c.Query("internationalScore.lte")
-	request.TrustScoreGte = c.Query("trustScore.gte")
-	request.TrustScoreLte = c.Query("trustScore.lte")
-	request.ImpactScoreGte = c.Query("impactScore.gte")
-	request.ImpactScoreLte = c.Query("impactScore.lte")
-	request.EconomicImpactGte = c.Query("economicImpact.gte")
-	request.EconomicImpactLte = c.Query("economicImpact.lte")
-	request.CalendarType = c.Query("calendar_type")
+	request.StartGte = getValue("start.gte")
+	request.EndLte = getValue("end.lte")
+	request.StartLte = getValue("start.lte")
+	request.EndGte = getValue("end.gte")
+	request.StartGt = getValue("start.gt")
+	request.EndGt = getValue("end.gt")
+	request.StartLt = getValue("start.lt")
+	request.EndLt = getValue("end.lt")
+	request.ActiveGte = getValue("active.gte")
+	request.ActiveLte = getValue("active.lte")
+	request.ActiveGt = getValue("active.gt")
+	request.ActiveLt = getValue("active.lt")
+	request.SpeakerGte = getValue("speaker.gte")
+	request.SpeakerLte = getValue("speaker.lte")
+	request.SpeakerGt = getValue("speaker.gt")
+	request.SpeakerLt = getValue("speaker.lt")
+	request.ExhibitorsGte = getValue("exhibitors.gte")
+	request.ExhibitorsLte = getValue("exhibitors.lte")
+	request.ExhibitorsGt = getValue("exhibitors.gt")
+	request.ExhibitorsLt = getValue("exhibitors.lt")
+	request.EditionsGte = getValue("editions.gte")
+	request.EditionsLte = getValue("editions.lte")
+	request.EditionsGt = getValue("editions.gt")
+	request.EditionsLt = getValue("editions.lt")
+	request.FollowingGte = getValue("following.gte")
+	request.FollowingLte = getValue("following.lte")
+	request.FollowingGt = getValue("following.gt")
+	request.FollowingLt = getValue("following.lt")
+	request.InboundScoreGte = getValue("inboundScore.gte")
+	request.InboundScoreLte = getValue("inboundScore.lte")
+	request.InternationalScoreGte = getValue("internationalScore.gte")
+	request.InternationalScoreLte = getValue("internationalScore.lte")
+	request.TrustScoreGte = getValue("trustScore.gte")
+	request.TrustScoreLte = getValue("trustScore.lte")
+	request.ImpactScoreGte = getValue("impactScore.gte")
+	request.ImpactScoreLte = getValue("impactScore.lte")
+	request.EconomicImpactGte = getValue("economicImpact.gte")
+	request.EconomicImpactLte = getValue("economicImpact.lte")
+	request.CalendarType = getValue("calendar_type")
+}
+
+func (h *SearchEventsHandler) processSearchRequest(c *fiber.Ctx, request *models.SearchEventsRequest, bodyMap map[string]interface{}) error {
+	h.extractDotNotationFields(c, request, bodyMap)
 
 	userID, ok := c.Locals("userId").(string)
 	if !ok || userID == "" {
@@ -102,7 +108,7 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 
 	request.APIID = Apis["SEARCH_EVENTS"].ID
 
-	if err := (&request).Validate(); err != nil {
+	if err := request.Validate(); err != nil {
 		log.Printf("Validation error: %v", err)
 		return middleware.NewValidationError("Request validation failed", err.Error())
 	}
@@ -121,4 +127,44 @@ func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
 	}
 
 	return c.JSON(result)
+}
+
+func (h *SearchEventsHandler) SearchEvents(c *fiber.Ctx) error {
+	workerID := <-h.workerPool
+	defer func() {
+		h.workerPool <- workerID
+	}()
+
+	var request models.SearchEventsRequest
+
+	log.Printf("Raw query string: %s", c.Request().URI().QueryString())
+
+	if err := c.QueryParser(&request); err != nil {
+		return middleware.NewValidationError("Invalid query parameters", err.Error())
+	}
+
+	return h.processSearchRequest(c, &request, nil)
+}
+
+func (h *SearchEventsHandler) SearchEventsPost(c *fiber.Ctx) error {
+	workerID := <-h.workerPool
+	defer func() {
+		h.workerPool <- workerID
+	}()
+
+	var request models.SearchEventsRequest
+	var bodyMap map[string]interface{}
+
+	bodyBytes := c.Body()
+	log.Printf("Raw request body: %s", string(bodyBytes))
+
+	if err := json.Unmarshal(bodyBytes, &bodyMap); err != nil {
+		return middleware.NewValidationError("Invalid request body", err.Error())
+	}
+
+	if err := json.Unmarshal(bodyBytes, &request); err != nil {
+		return middleware.NewValidationError("Invalid request body", err.Error())
+	}
+
+	return h.processSearchRequest(c, &request, bodyMap)
 }
