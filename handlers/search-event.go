@@ -115,6 +115,11 @@ func (h *SearchEventsHandler) processSearchRequest(c *fiber.Ctx, request *models
 
 	result, err := h.searchEventService.GetEventDataV2(userID, request.APIID, request.FilterDataDto, request.PaginationDto, request.ResponseDataDto, request.ShowValues, c)
 	if err != nil {
+		// If error is already a CustomError, preserve it to maintain original message and details
+		if customErr, ok := err.(*middleware.CustomError); ok {
+			return customErr
+		}
+
 		if strings.Contains(err.Error(), "unauthorized filters") {
 			return middleware.NewForbiddenError("Unauthorized filters", err.Error())
 		} else if strings.Contains(err.Error(), "unauthorized advanced parameters") {
