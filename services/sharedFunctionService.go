@@ -1622,7 +1622,7 @@ func (s *SharedFunctionService) buildStatusCondition(filterFields models.FilterD
 		statuses[i] = fmt.Sprintf("'%s'", status)
 	}
 
-	return fmt.Sprintf("status = %s", strings.Join(statuses, ","))
+	return fmt.Sprintf("status IN (%s)", strings.Join(statuses, ","))
 }
 
 func (s *SharedFunctionService) buildPublishedCondition(filterFields models.FilterDataDto) string {
