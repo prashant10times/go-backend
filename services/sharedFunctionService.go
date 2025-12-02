@@ -3765,7 +3765,8 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		baseWhereConditions = append(baseWhereConditions, searchClauseFixed)
 	}
 	if joinConditionsStr != "" {
-		baseWhereConditions = append(baseWhereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+		joinConditionsFixed := strings.ReplaceAll(joinConditionsStr, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, strings.TrimPrefix(joinConditionsFixed, "AND "))
 	}
 	whereClause := strings.Join(baseWhereConditions, " AND ")
 
@@ -3899,7 +3900,8 @@ func (s *SharedFunctionService) GetEventCountByDate(
 		baseWhereConditions = append(baseWhereConditions, searchClauseFixed)
 	}
 	if joinConditionsStr != "" {
-		baseWhereConditions = append(baseWhereConditions, strings.TrimPrefix(joinConditionsStr, "AND "))
+		joinConditionsFixed := strings.ReplaceAll(joinConditionsStr, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, strings.TrimPrefix(joinConditionsFixed, "AND "))
 	}
 	whereClause := strings.Join(baseWhereConditions, " AND ")
 
