@@ -31,6 +31,65 @@ type SearchEventService struct {
 	cfg                   *config.Config
 }
 
+type ListResult struct {
+	Data         interface{}
+	Count        int
+	StatusCode   int
+	ErrorMessage string
+}
+
+type AggregationResult struct {
+	StatusCode int
+	Response   interface{}
+	Error      error
+}
+
+type FieldSelectionContext struct {
+	Processor          *ShowValuesProcessor
+	FieldsSelector     *BaseFieldsSelector
+	BaseFields         []string
+	BaseFieldMap       map[string]bool
+	DBColumnToAliasMap map[string]string
+	DBToAliasMap       map[string]string
+}
+
+type EventFilterFields struct {
+	SelectFields  []string
+	GroupByFields []string
+	OrderBy       string
+}
+
+type QueryComponents struct {
+	CTEClausesStr         string
+	EventFilterSelectStr  string
+	EventFilterGroupByStr string
+	EventFilterOrderBy    string
+	FieldsString          string
+	FinalGroupByClause    string
+	InnerOrderBy          string
+	FinalOrderByClause    string
+	JoinConditionsStr     string
+	HasEndDateFilters     bool
+}
+
+type QueryResults struct {
+	EventDataRows driver.Rows
+	TotalCount    int
+	EventDataErr  error
+	CountErr      error
+}
+
+type RelatedData struct {
+	CategoriesMap        map[string][]map[string]string
+	TagsMap              map[string][]map[string]string
+	TypesMap             map[string][]map[string]string
+	JobCompositeMap      map[string][]map[string]string
+	CountrySpreadMap     map[string][]map[string]interface{}
+	DesignationSpreadMap map[string][]map[string]interface{}
+	RankingsMap          map[string]string
+	EventLocationsMap    map[string]map[string]interface{}
+}
+
 func NewSearchEventService(db *gorm.DB, sharedFunctionService *SharedFunctionService, transformDataService *TransformDataService, clickhouseService *ClickHouseService, cfg *config.Config) *SearchEventService {
 	return &SearchEventService{
 		db:                    db,
@@ -387,8 +446,8 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 
 	log.Printf("Validated parameters: %v", validatedParameters)
 
-	typeArray := strings.Split(filterFields.Type, ",")
-	if filterFields.Type != "" && len(typeArray) == 1 && typeArray[0] == s.cfg.AlertId {
+	eventTypeArray := strings.Split(filterFields.EventTypes, ",")
+	if filterFields.EventTypes != "" && len(eventTypeArray) == 1 && eventTypeArray[0] == s.cfg.AlertId {
 		baseParams := models.AlertSearchParams{
 			EventIds:    validatedParameters.ParsedEventIds,
 			StartDate:   &validatedParameters.ActiveGte,
@@ -405,20 +464,21 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			}
 		}
 
-		type alertResult struct {
+		type alertCountResult struct {
 			Data  interface{}
 			Error error
 		}
 
-		countChan := make(chan alertResult, 1)
-		alertsChan := make(chan alertResult, 1)
+		type alertEventsResult struct {
+			Data  interface{}
+			Error error
+		}
+
+		countChan := make(chan alertCountResult, 1)
+		alertsChan := make(chan alertEventsResult, 1)
 
 		countParams := baseParams
 		countParams.Required = "count"
-		go func() {
-			countData, err := s.getAlerts(countParams)
-			countChan <- alertResult{Data: countData, Error: err}
-		}()
 
 		eventsParams := baseParams
 		eventsParams.Required = "events"
@@ -428,8 +488,13 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		eventsParams.Offset = &offset
 
 		go func() {
-			alertsData, err := s.getAlerts(eventsParams)
-			alertsChan <- alertResult{Data: alertsData, Error: err}
+			countData, err := s.executeAlertQuery(countParams)
+			countChan <- alertCountResult{Data: countData, Error: err}
+		}()
+
+		go func() {
+			alertsData, err := s.executeAlertQuery(eventsParams)
+			alertsChan <- alertEventsResult{Data: alertsData, Error: err}
 		}()
 
 		countResult := <-countChan
@@ -467,6 +532,11 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			if e, exists := alertsMap["events"]; exists {
 				if eventsSlice, ok := e.([]interface{}); ok {
 					events = eventsSlice
+				} else if eventsMapSlice, ok := e.([]map[string]interface{}); ok {
+					events = make([]interface{}, len(eventsMapSlice))
+					for i, event := range eventsMapSlice {
+						events[i] = event
+					}
 				}
 			}
 		}
@@ -660,94 +730,40 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	return successResponse, nil
 }
 
-// getAlerts calls the alerts API with the given parameters
-func (s *SearchEventService) getAlerts(params models.AlertSearchParams) (interface{}, error) {
-	// TODO: Implement the actual HTTP request to the alerts API
-	// This is a placeholder - replace with actual implementation
-	// Example structure:
-	//
-	// reqBody := map[string]interface{}{
-	//     "eventIds": alertParams.EventIds,
-	//     "startDate": alertParams.StartDate,
-	//     "endDate": alertParams.EndDate,
-	//     "required": required,
-	// }
-	// if required == "events" {
-	//     reqBody["sortBy"] = sortBy
-	//     reqBody["limit"] = limit
-	//     reqBody["offset"] = offset
-	// }
-	//
-	// Make HTTP request and return response
-
-	// Placeholder return
-	if params.Required == "count" {
-		return map[string]interface{}{
-			"count": 0,
-		}, nil
+func (s *SearchEventService) executeAlertQuery(params models.AlertSearchParams) (interface{}, error) {
+	query, err := s.sharedFunctionService.BuildAlertQuery(params)
+	if err != nil {
+		log.Printf("Error building alert query: %v", err)
+		return nil, err
 	}
-	return map[string]interface{}{
-		"events": []interface{}{},
-	}, nil
-}
 
-type ListResult struct {
-	Data         interface{}
-	Count        int
-	StatusCode   int
-	ErrorMessage string
-}
+	if query == "" {
+		if params.Required == "count" {
+			if len(params.GroupBy) > 0 {
+				return map[string]interface{}{}, nil
+			}
+			return map[string]interface{}{"count": 0}, nil
+		}
+		return map[string]interface{}{"events": []interface{}{}}, nil
+	}
 
-type AggregationResult struct {
-	StatusCode int
-	Response   interface{}
-	Error      error
-}
+	log.Printf("Executing alert query: %s", query)
 
-type FieldSelectionContext struct {
-	Processor          *ShowValuesProcessor
-	FieldsSelector     *BaseFieldsSelector
-	BaseFields         []string
-	BaseFieldMap       map[string]bool
-	DBColumnToAliasMap map[string]string
-	DBToAliasMap       map[string]string
-}
+	ctx := context.Background()
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		log.Printf("Error executing alert query: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
 
-type EventFilterFields struct {
-	SelectFields  []string
-	GroupByFields []string
-	OrderBy       string
-}
-
-type QueryComponents struct {
-	CTEClausesStr         string
-	EventFilterSelectStr  string
-	EventFilterGroupByStr string
-	EventFilterOrderBy    string
-	FieldsString          string
-	FinalGroupByClause    string
-	InnerOrderBy          string
-	FinalOrderByClause    string
-	JoinConditionsStr     string
-	HasEndDateFilters     bool
-}
-
-type QueryResults struct {
-	EventDataRows driver.Rows
-	TotalCount    int
-	EventDataErr  error
-	CountErr      error
-}
-
-type RelatedData struct {
-	CategoriesMap        map[string][]map[string]string
-	TagsMap              map[string][]map[string]string
-	TypesMap             map[string][]map[string]string
-	JobCompositeMap      map[string][]map[string]string
-	CountrySpreadMap     map[string][]map[string]interface{}
-	DesignationSpreadMap map[string][]map[string]interface{}
-	RankingsMap          map[string]string
-	EventLocationsMap    map[string]map[string]interface{}
+	if params.Required == "count" {
+		count := s.transformDataService.TransformAlertsCount(params, rows)
+		return map[string]interface{}{"count": count}, nil
+	} else {
+		events := s.transformDataService.TransformAlerts(rows)
+		return map[string]interface{}{"events": events}, nil
+	}
 }
 
 func (s *SearchEventService) getListDataCount(

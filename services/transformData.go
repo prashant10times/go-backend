@@ -11,6 +11,8 @@ import (
 
 	"github.com/elliotchance/orderedmap"
 	"github.com/gofiber/fiber/v2"
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
+	"time"
 )
 
 type TransformDataService struct{}
@@ -1494,4 +1496,283 @@ func (t *TransformDataService) TransformEventCountByLongDurations(
 	}
 
 	return result
+}
+
+func (s *TransformDataService) TransformAlertsCount(params models.AlertSearchParams, rows driver.Rows) interface{} {
+	columns := rows.Columns()
+	var alerts []map[string]interface{}
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		for i := range columns {
+			switch columns[i] {
+			case "count":
+				values[i] = new(uint64)
+			case "day":
+				values[i] = new(time.Time)
+			default:
+				values[i] = new(string)
+			}
+		}
+
+		if err := rows.Scan(values...); err != nil {
+			log.Printf("Error scanning alert count row: %v", err)
+			continue
+		}
+
+		rowData := make(map[string]interface{})
+		for i, col := range columns {
+			switch col {
+			case "count":
+				if countPtr, ok := values[i].(*uint64); ok && countPtr != nil {
+					rowData["count"] = *countPtr
+				}
+			case "day":
+				if dayPtr, ok := values[i].(*time.Time); ok && dayPtr != nil {
+					rowData["day"] = *dayPtr
+				}
+			case "type":
+				if typePtr, ok := values[i].(*string); ok && typePtr != nil {
+					rowData["type"] = *typePtr
+				}
+			default:
+				if strPtr, ok := values[i].(*string); ok && strPtr != nil {
+					rowData[col] = *strPtr
+				}
+			}
+		}
+		alerts = append(alerts, rowData)
+	}
+
+	if len(params.GroupBy) == 0 {
+		if len(alerts) > 0 {
+			if count, ok := alerts[0]["count"]; ok {
+				if countUint, ok := count.(uint64); ok {
+					return int(countUint)
+				} else if countInt, ok := count.(int); ok {
+					return countInt
+				} else if countFloat, ok := count.(float64); ok {
+					return int(countFloat)
+				}
+			}
+		}
+		return 0
+	}
+
+	hasAlertType := false
+	hasDay := false
+	for _, group := range params.GroupBy {
+		if group == models.AlertSearchGroupByAlertType {
+			hasAlertType = true
+		}
+		if group == models.AlertSearchGroupByDay {
+			hasDay = true
+		}
+	}
+
+	result := make(map[string]interface{})
+
+	if hasAlertType && !hasDay {
+		for _, alert := range alerts {
+			alertType, ok := alert["type"].(string)
+			if !ok {
+				continue
+			}
+			var count int
+			if countVal, exists := alert["count"]; exists {
+				if countUint, ok := countVal.(uint64); ok {
+					count = int(countUint)
+				} else if countInt, ok := countVal.(int); ok {
+					count = countInt
+				} else if countFloat, ok := countVal.(float64); ok {
+					count = int(countFloat)
+				}
+			}
+			result[alertType] = count
+		}
+	} else if hasDay && !hasAlertType {
+		for _, alert := range alerts {
+			dayVal, ok := alert["day"]
+			if !ok {
+				continue
+			}
+			var dayStr string
+			if dayTime, ok := dayVal.(time.Time); ok {
+				dayStr = dayTime.Format("2006-01-02")
+			} else if dayStrVal, ok := dayVal.(string); ok {
+				dayStr = dayStrVal
+			} else {
+				continue
+			}
+			var count int
+			if countVal, exists := alert["count"]; exists {
+				if countUint, ok := countVal.(uint64); ok {
+					count = int(countUint)
+				} else if countInt, ok := countVal.(int); ok {
+					count = countInt
+				} else if countFloat, ok := countVal.(float64); ok {
+					count = int(countFloat)
+				}
+			}
+			result[dayStr] = count
+		}
+	} else if hasDay && hasAlertType {
+		dayFirst := len(params.GroupBy) > 0 && params.GroupBy[0] == models.AlertSearchGroupByDay
+
+		if dayFirst {
+			for _, alert := range alerts {
+				dayVal, ok := alert["day"]
+				if !ok {
+					continue
+				}
+				var dayStr string
+				if dayTime, ok := dayVal.(time.Time); ok {
+					dayStr = dayTime.Format("2006-01-02")
+				} else if dayStrVal, ok := dayVal.(string); ok {
+					dayStr = dayStrVal
+				} else {
+					continue
+				}
+
+				alertType, ok := alert["type"].(string)
+				if !ok {
+					continue
+				}
+
+				var count int
+				if countVal, exists := alert["count"]; exists {
+					if countUint, ok := countVal.(uint64); ok {
+						count = int(countUint)
+					} else if countInt, ok := countVal.(int); ok {
+						count = countInt
+					} else if countFloat, ok := countVal.(float64); ok {
+						count = int(countFloat)
+					}
+				}
+
+				if dayMap, exists := result[dayStr].(map[string]interface{}); exists {
+					dayMap[alertType] = count
+				} else {
+					result[dayStr] = map[string]interface{}{
+						alertType: count,
+					}
+				}
+			}
+		} else {
+			for _, alert := range alerts {
+				alertType, ok := alert["type"].(string)
+				if !ok {
+					continue
+				}
+
+				dayVal, ok := alert["day"]
+				if !ok {
+					continue
+				}
+				var dayStr string
+				if dayTime, ok := dayVal.(time.Time); ok {
+					dayStr = dayTime.Format("2006-01-02")
+				} else if dayStrVal, ok := dayVal.(string); ok {
+					dayStr = dayStrVal
+				} else {
+					continue
+				}
+
+				var count int
+				if countVal, exists := alert["count"]; exists {
+					if countUint, ok := countVal.(uint64); ok {
+						count = int(countUint)
+					} else if countInt, ok := countVal.(int); ok {
+						count = countInt
+					} else if countFloat, ok := countVal.(float64); ok {
+						count = int(countFloat)
+					}
+				}
+
+				if typeMap, exists := result[alertType].(map[string]interface{}); exists {
+					typeMap[dayStr] = count
+				} else {
+					result[alertType] = map[string]interface{}{
+						dayStr: count,
+					}
+				}
+			}
+		}
+	}
+
+	return result
+}
+
+func (s *TransformDataService) TransformAlerts(rows driver.Rows) []interface{} {
+	columns := rows.Columns()
+	var events []interface{}
+
+	for rows.Next() {
+		values := make([]interface{}, len(columns))
+		for i, col := range columns {
+			switch col {
+			case "id", "name", "description", "type", "level":
+				values[i] = new(string)
+			case "startDate", "endDate", "lastModified":
+				values[i] = new(time.Time)
+			case "originLatitude", "originLongitude":
+				values[i] = new(float64)
+			case "day":
+				values[i] = new(time.Time)
+			default:
+				values[i] = new(string)
+			}
+		}
+
+		if err := rows.Scan(values...); err != nil {
+			log.Printf("Error scanning alert row: %v", err)
+			continue
+		}
+
+		rowData := make(map[string]interface{})
+		for i, col := range columns {
+			switch col {
+			case "id", "name", "description", "type", "level":
+				if strPtr, ok := values[i].(*string); ok && strPtr != nil {
+					rowData[col] = *strPtr
+				}
+			case "startDate", "endDate", "lastModified":
+				if timePtr, ok := values[i].(*time.Time); ok && timePtr != nil {
+					rowData[col] = *timePtr
+				}
+			case "originLatitude", "originLongitude":
+				if floatPtr, ok := values[i].(*float64); ok && floatPtr != nil {
+					rowData[col] = *floatPtr
+				}
+			case "day":
+				if timePtr, ok := values[i].(*time.Time); ok && timePtr != nil {
+					rowData[col] = *timePtr
+				}
+			default:
+				if strPtr, ok := values[i].(*string); ok && strPtr != nil {
+					rowData[col] = *strPtr
+				}
+			}
+		}
+
+		event := map[string]interface{}{
+			"basic": map[string]interface{}{
+				"id":           rowData["id"],
+				"name":         rowData["name"],
+				"description":  rowData["description"],
+				"type":         rowData["type"],
+				"level":        rowData["level"],
+				"startDate":    rowData["startDate"],
+				"endDate":      rowData["endDate"],
+				"lastModified": rowData["lastModified"],
+				"eventLocation": map[string]interface{}{
+					"originLatitude":  rowData["originLatitude"],
+					"originLongitude": rowData["originLongitude"],
+				},
+			},
+		}
+		events = append(events, event)
+	}
+
+	return events
 }

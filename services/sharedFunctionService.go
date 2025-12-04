@@ -4307,3 +4307,538 @@ func (s *SharedFunctionService) BuildGroupByResponse(count interface{}, startTim
 		"data": count,
 	}
 }
+
+func (s *SharedFunctionService) BuildAlertQuery(params models.AlertSearchParams) (string, error) {
+	searchBy := ""
+	if len(params.LocationIds) > 0 {
+		searchBy = "locationIds"
+	} else if params.Coordinates != nil {
+		searchBy = "coordinates"
+	} else if len(params.EventIds) > 0 {
+		searchBy = "eventIds"
+	} else {
+		searchBy = "default"
+	}
+
+	hasDay := false
+	for _, v := range params.GroupBy {
+		if v == models.AlertSearchGroupByDay {
+			hasDay = true
+			break
+		}
+	}
+
+	if hasDay && (params.StartDate == nil || params.EndDate == nil) {
+		return "", fmt.Errorf("startDate and endDate are required when grouping by day")
+	}
+
+	dateRangeConditions := []string{}
+	if params.StartDate != nil && params.EndDate != nil {
+		if hasDay {
+			dateRangeConditions = append(dateRangeConditions, "a.startDate <= ds.day")
+			dateRangeConditions = append(dateRangeConditions, "a.endDate >= ds.day")
+		} else {
+			dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.startDate <= '%s'", *params.EndDate))
+			dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.endDate >= '%s'", *params.StartDate))
+		}
+	} else if params.EndDate != nil {
+		dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.startDate <= '%s'", *params.EndDate))
+	} else if params.StartDate != nil {
+		dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.endDate >= '%s'", *params.StartDate))
+	}
+
+	sortBy := s.BuildAlertSortClause(params.SortBy)
+	if sortBy == "" {
+		sortBy = "a.startDate DESC"
+	}
+
+	groupByClause := ""
+	if len(params.GroupBy) > 0 {
+		groupByFields := []string{}
+		for _, group := range params.GroupBy {
+			switch group {
+			case models.AlertSearchGroupByDay:
+				groupByFields = append(groupByFields, "ds.day")
+			case models.AlertSearchGroupByAlertType:
+				groupByFields = append(groupByFields, "a.type")
+			}
+		}
+		if len(groupByFields) > 0 {
+			groupByClause = fmt.Sprintf("GROUP BY %s", strings.Join(groupByFields, ", "))
+		}
+	}
+
+	var query string
+	var err error
+
+	switch searchBy {
+	case "locationIds":
+		query, err = s.BuildLocationIdsAlertQuery(params, dateRangeConditions, sortBy, groupByClause, hasDay)
+	case "coordinates":
+		query, err = s.BuildCoordinatesAlertQuery(params, dateRangeConditions, sortBy, groupByClause, hasDay)
+	case "eventIds":
+		query, err = s.BuildEventIdsAlertQuery(params, dateRangeConditions, sortBy, groupByClause, hasDay)
+	default:
+		query, err = s.BuildDefaultAlertQuery(params, dateRangeConditions, sortBy, groupByClause, hasDay)
+	}
+
+	if err != nil {
+		log.Printf("Error building alert query: %v", err)
+		return "", err
+	}
+
+	return query, nil
+}
+
+func (s *SharedFunctionService) BuildAlertSortClause(sortBy []models.AlertSearchSortBy) string {
+	if len(sortBy) == 0 {
+		return ""
+	}
+
+	sortParts := []string{}
+	for _, sort := range sortBy {
+		switch sort {
+		case models.AlertSearchSortBySeverity:
+			sortParts = append(sortParts, "a.level ASC")
+		case models.AlertSearchSortBySeverityDesc:
+			sortParts = append(sortParts, "a.level DESC")
+		case models.AlertSearchSortByStart:
+			sortParts = append(sortParts, "a.startDate ASC")
+		case models.AlertSearchSortByStartDesc:
+			sortParts = append(sortParts, "a.startDate DESC")
+		}
+	}
+
+	if len(sortParts) > 0 {
+		return strings.Join(sortParts, ", ")
+	}
+	return ""
+}
+
+func (s *SharedFunctionService) BuildDefaultAlertQuery(params models.AlertSearchParams, dateRangeConditions []string, sortBy, groupByClause string, hasDay bool) (string, error) {
+	dateRangeStr := ""
+	if len(dateRangeConditions) > 0 {
+		dateRangeStr = "WHERE " + strings.Join(dateRangeConditions, " AND ")
+	}
+
+	dateSeriesCTE := ""
+	dateSeriesJoin := ""
+	if hasDay && params.StartDate != nil && params.EndDate != nil {
+		startDate := *params.StartDate
+		endDate := *params.EndDate
+		startTime, err := time.Parse("2006-01-02", startDate)
+		if err != nil {
+			return "", fmt.Errorf("invalid startDate format: %w", err)
+		}
+		endTime, err := time.Parse("2006-01-02", endDate)
+		if err != nil {
+			return "", fmt.Errorf("invalid endDate format: %w", err)
+		}
+		daysDiff := int(endTime.Sub(startTime).Hours() / 24)
+
+		dateSeriesCTE = fmt.Sprintf(`
+		date_series AS (
+			SELECT toDate(addDays(toDate('%s'), number)) AS day
+			FROM numbers(%d)
+		),`, startDate, daysDiff+1)
+
+		dateSeriesJoin = "INNER JOIN date_series ds ON (a.startDate <= ds.day AND a.endDate >= ds.day)"
+	}
+
+	withClause := ""
+	if dateSeriesCTE != "" {
+		withClause = "WITH " + strings.TrimSpace(dateSeriesCTE)
+	}
+
+	if params.Required == "count" {
+		selectClause := "count(distinct a.id) as count"
+		if hasDay {
+			selectClause = "ds.day, count(distinct a.id) as count"
+		}
+		query := fmt.Sprintf(`
+		%s
+		SELECT %s
+		FROM testing_db.alerts_ch AS a
+		%s
+		%s
+		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, groupByClause)
+		return strings.TrimSpace(query), nil
+	} else {
+		selectClause := `a.id AS id, a.name AS name, a.description AS description, a.type AS type, a.level AS level, 
+			a.startDate AS startDate, a.endDate AS endDate, a.lastModified AS lastModified, 
+			a.originLongitude AS originLongitude, a.originLatitude AS originLatitude`
+		if hasDay {
+			selectClause = "ds.day AS day, " + selectClause
+		}
+
+		limitClause := ""
+		if params.Limit != nil {
+			limitClause = fmt.Sprintf("LIMIT %d", *params.Limit)
+			if params.Offset != nil {
+				limitClause += fmt.Sprintf(" OFFSET %d", *params.Offset)
+			}
+		}
+
+		orderClause := ""
+		if sortBy != "" {
+			orderClause = "ORDER BY " + sortBy
+		}
+
+		query := fmt.Sprintf(`
+		%s
+		SELECT DISTINCT %s
+		FROM testing_db.alerts_ch AS a
+		%s
+		%s
+		%s
+		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
+		return strings.TrimSpace(query), nil
+	}
+}
+
+func (s *SharedFunctionService) BuildEventIdsAlertQuery(params models.AlertSearchParams, dateRangeConditions []string, sortBy, groupByClause string, hasDay bool) (string, error) {
+	if len(params.EventIds) == 0 {
+		return "", nil
+	}
+
+	eventUuidsStr := []string{}
+	for _, eventId := range params.EventIds {
+		eventId = strings.Trim(eventId, "'")
+		eventUuidsStr = append(eventUuidsStr, fmt.Sprintf("'%s'", eventId))
+	}
+	eventUuidsClause := strings.Join(eventUuidsStr, ", ")
+
+	dateRangeStr := ""
+	if len(dateRangeConditions) > 0 {
+		dateRangeStr = "AND " + strings.Join(dateRangeConditions, " AND ")
+	}
+
+	dateSeriesCTE := ""
+	dateSeriesJoin := ""
+	if hasDay && params.StartDate != nil && params.EndDate != nil {
+		startDate := *params.StartDate
+		endDate := *params.EndDate
+		startTime, err := time.Parse("2006-01-02", startDate)
+		if err != nil {
+			return "", fmt.Errorf("invalid startDate format: %w", err)
+		}
+		endTime, err := time.Parse("2006-01-02", endDate)
+		if err != nil {
+			return "", fmt.Errorf("invalid endDate format: %w", err)
+		}
+		daysDiff := int(endTime.Sub(startTime).Hours() / 24)
+
+		dateSeriesCTE = fmt.Sprintf(`
+		date_series AS (
+			SELECT toDate(addDays(toDate('%s'), number)) AS day
+			FROM numbers(%d)
+		),`, startDate, daysDiff+1)
+
+		dateSeriesJoin = "INNER JOIN date_series ds ON (a.startDate <= ds.day AND a.endDate >= ds.day)"
+	}
+
+	cteParts := []string{}
+	if dateSeriesCTE != "" {
+		cteParts = append(cteParts, strings.TrimSpace(dateSeriesCTE))
+	}
+	cteParts = append(cteParts, fmt.Sprintf(`filtered_event_ids AS (
+			SELECT DISTINCT event_id
+			FROM testing_db.allevent_ch
+			WHERE event_uuid IN (%s)
+				AND edition_type = 'current_edition'
+		)`, eventUuidsClause))
+	withClause := "WITH " + strings.Join(cteParts, ",\n\t\t")
+
+	if params.Required == "count" {
+		selectClause := "count(distinct a.id) as count"
+		if hasDay {
+			selectClause = "ds.day, count(distinct a.id) as count"
+		}
+		hasAlertTypeGroup := false
+		for _, group := range params.GroupBy {
+			if group == models.AlertSearchGroupByAlertType {
+				hasAlertTypeGroup = true
+				break
+			}
+		}
+		if hasAlertTypeGroup {
+			selectClause = "a.type, " + selectClause
+		}
+
+		query := fmt.Sprintf(`
+		%s
+		SELECT %s
+		FROM testing_db.event_type_ch AS et
+		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		%s
+		WHERE et.alert_id IS NOT NULL
+			AND et.event_id IN (SELECT event_id FROM filtered_event_ids)
+			%s
+		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, groupByClause)
+		return strings.TrimSpace(query), nil
+	} else {
+		selectClause := `DISTINCT a.id AS id, a.name AS name, a.description AS description, a.type AS type, a.level AS level,
+			a.startDate AS startDate, a.endDate AS endDate, a.lastModified AS lastModified,
+			a.originLongitude AS originLongitude, a.originLatitude AS originLatitude`
+		if hasDay {
+			selectClause = "ds.day AS day, " + selectClause
+		}
+
+		limitClause := ""
+		if params.Limit != nil {
+			limitClause = fmt.Sprintf("LIMIT %d", *params.Limit)
+			if params.Offset != nil {
+				limitClause += fmt.Sprintf(" OFFSET %d", *params.Offset)
+			}
+		}
+
+		orderClause := ""
+		if sortBy != "" {
+			orderClause = "ORDER BY " + sortBy
+		}
+
+		query := fmt.Sprintf(`
+		%s
+		SELECT %s
+		FROM testing_db.event_type_ch AS et
+		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		%s
+		WHERE et.alert_id IS NOT NULL
+			AND et.event_id IN (SELECT event_id FROM filtered_event_ids)
+			%s
+		%s
+		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
+		return strings.TrimSpace(query), nil
+	}
+}
+
+func (s *SharedFunctionService) BuildLocationIdsAlertQuery(params models.AlertSearchParams, dateRangeConditions []string, sortBy, groupByClause string, hasDay bool) (string, error) {
+	if len(params.LocationIds) == 0 {
+		return "", nil
+	}
+
+	locationIdsStr := []string{}
+	for _, locationId := range params.LocationIds {
+		locationId = strings.Trim(locationId, "'")
+		locationIdsStr = append(locationIdsStr, fmt.Sprintf("'%s'", locationId))
+	}
+	locationIdsClause := strings.Join(locationIdsStr, ", ")
+
+	dateRangeStr := ""
+	if len(dateRangeConditions) > 0 {
+		dateRangeStr = "AND " + strings.Join(dateRangeConditions, " AND ")
+	}
+
+	dateSeriesCTE := ""
+	dateSeriesJoin := ""
+	if hasDay && params.StartDate != nil && params.EndDate != nil {
+		startDate := *params.StartDate
+		endDate := *params.EndDate
+		startTime, err := time.Parse("2006-01-02", startDate)
+		if err != nil {
+			return "", fmt.Errorf("invalid startDate format: %w", err)
+		}
+		endTime, err := time.Parse("2006-01-02", endDate)
+		if err != nil {
+			return "", fmt.Errorf("invalid endDate format: %w", err)
+		}
+		daysDiff := int(endTime.Sub(startTime).Hours() / 24)
+
+		dateSeriesCTE = fmt.Sprintf(`
+		date_series AS (
+			SELECT toDate(addDays(toDate('%s'), number)) AS day
+			FROM numbers(%d)
+		),`, startDate, daysDiff+1)
+
+		dateSeriesJoin = "INNER JOIN date_series ds ON (a.startDate <= ds.day AND a.endDate >= ds.day)"
+	}
+
+	cteParts := []string{}
+	if dateSeriesCTE != "" {
+		cteParts = append(cteParts, strings.TrimSpace(dateSeriesCTE))
+	}
+	cteParts = append(cteParts, fmt.Sprintf(`filtered_locations AS (
+			SELECT id, id_uuid, location_type, iso
+			FROM testing_db.location_ch
+			WHERE id_uuid IN (%s)
+		)`, locationIdsClause))
+	cteParts = append(cteParts, `filtered_events AS (
+			SELECT DISTINCT ee.event_id
+			FROM testing_db.allevent_ch AS ee
+			INNER JOIN filtered_locations AS loc ON (
+				ee.venue_id = loc.id OR
+				ee.venue_city = loc.id OR
+				ee.edition_city_state_id = loc.id OR
+				(loc.location_type = 'COUNTRY' AND ee.edition_country = loc.iso)
+			)
+			WHERE ee.edition_type = 'current_edition'
+		)`)
+	withClause := "WITH " + strings.Join(cteParts, ",\n\t\t")
+
+	if params.Required == "count" {
+		selectClause := "count(distinct a.id) as count"
+		if hasDay {
+			selectClause = "ds.day, count(distinct a.id) as count"
+		}
+
+		query := fmt.Sprintf(`
+		%s
+		SELECT %s
+		FROM testing_db.event_type_ch AS et
+		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		%s
+		WHERE et.alert_id IS NOT NULL
+			AND et.event_id IN (SELECT event_id FROM filtered_events)
+			%s
+		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, groupByClause)
+		return strings.TrimSpace(query), nil
+	} else {
+		selectClause := `DISTINCT a.id AS id, a.name AS name, a.description AS description, a.type AS type, a.level AS level,
+			a.startDate AS startDate, a.endDate AS endDate, a.lastModified AS lastModified,
+			a.originLongitude AS originLongitude, a.originLatitude AS originLatitude`
+		if hasDay {
+			selectClause = "ds.day AS day, " + selectClause
+		}
+
+		limitClause := ""
+		if params.Limit != nil {
+			limitClause = fmt.Sprintf("LIMIT %d", *params.Limit)
+			if params.Offset != nil {
+				limitClause += fmt.Sprintf(" OFFSET %d", *params.Offset)
+			}
+		}
+
+		orderClause := ""
+		if sortBy != "" {
+			orderClause = "ORDER BY " + sortBy
+		}
+
+		query := fmt.Sprintf(`
+		%s
+		SELECT %s
+		FROM testing_db.event_type_ch AS et
+		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		%s
+		WHERE et.alert_id IS NOT NULL
+			AND et.event_id IN (SELECT event_id FROM filtered_events)
+			%s
+		%s
+		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
+		return strings.TrimSpace(query), nil
+	}
+}
+
+func (s *SharedFunctionService) BuildCoordinatesAlertQuery(params models.AlertSearchParams, dateRangeConditions []string, sortBy, groupByClause string, hasDay bool) (string, error) {
+	if params.Coordinates == nil {
+		return "", nil
+	}
+
+	lat := params.Coordinates.Latitude
+	lon := params.Coordinates.Longitude
+	radius := 10.0
+	if params.Coordinates.Radius != nil {
+		radius = *params.Coordinates.Radius
+	}
+	radiusMeters := radius * 1000
+
+	dateRangeStr := ""
+	if len(dateRangeConditions) > 0 {
+		dateRangeStr = "AND " + strings.Join(dateRangeConditions, " AND ")
+	}
+
+	dateSeriesCTE := ""
+	dateSeriesJoin := ""
+	if hasDay && params.StartDate != nil && params.EndDate != nil {
+		startDate := *params.StartDate
+		endDate := *params.EndDate
+		startTime, err := time.Parse("2006-01-02", startDate)
+		if err != nil {
+			return "", fmt.Errorf("invalid startDate format: %w", err)
+		}
+		endTime, err := time.Parse("2006-01-02", endDate)
+		if err != nil {
+			return "", fmt.Errorf("invalid endDate format: %w", err)
+		}
+		daysDiff := int(endTime.Sub(startTime).Hours() / 24)
+
+		dateSeriesCTE = fmt.Sprintf(`
+		date_series AS (
+			SELECT toDate(addDays(toDate('%s'), number)) AS day
+			FROM numbers(%d)
+		),`, startDate, daysDiff+1)
+
+		dateSeriesJoin = "INNER JOIN date_series ds ON (a.startDate <= ds.day AND a.endDate >= ds.day)"
+	}
+
+	cteParts := []string{}
+	if dateSeriesCTE != "" {
+		cteParts = append(cteParts, strings.TrimSpace(dateSeriesCTE))
+	}
+	cteParts = append(cteParts, fmt.Sprintf(`nearby_cities AS (
+			SELECT id
+			FROM testing_db.location_ch
+			WHERE location_type = 'CITY'
+				AND greatCircleDistance(longitude, latitude, %f, %f) <= %f
+		)`, lon, lat, radiusMeters))
+	cteParts = append(cteParts, `filtered_events AS (
+			SELECT DISTINCT ee.event_id
+			FROM testing_db.allevent_ch AS ee
+			WHERE ee.venue_city IN (SELECT id FROM nearby_cities)
+				AND ee.edition_type = 'current_edition'
+		)`)
+	withClause := "WITH " + strings.Join(cteParts, ",\n\t\t")
+
+	if params.Required == "count" {
+		selectClause := "count(distinct a.id) as count"
+		if hasDay {
+			selectClause = "ds.day, count(distinct a.id) as count"
+		}
+
+		query := fmt.Sprintf(`
+		%s
+		SELECT %s
+		FROM testing_db.event_type_ch AS et
+		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		%s
+		WHERE et.alert_id IS NOT NULL
+			AND et.event_id IN (SELECT event_id FROM filtered_events)
+			%s
+		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, groupByClause)
+		return strings.TrimSpace(query), nil
+	} else {
+		selectClause := `DISTINCT a.id AS id, a.name AS name, a.description AS description, a.type AS type, a.level AS level,
+			a.startDate AS startDate, a.endDate AS endDate, a.lastModified AS lastModified,
+			a.originLongitude AS originLongitude, a.originLatitude AS originLatitude`
+		if hasDay {
+			selectClause = "ds.day AS day, " + selectClause
+		}
+
+		limitClause := ""
+		if params.Limit != nil {
+			limitClause = fmt.Sprintf("LIMIT %d", *params.Limit)
+			if params.Offset != nil {
+				limitClause += fmt.Sprintf(" OFFSET %d", *params.Offset)
+			}
+		}
+
+		orderClause := ""
+		if sortBy != "" {
+			orderClause = "ORDER BY " + sortBy
+		} else {
+			orderClause = "ORDER BY a.level, a.startDate DESC"
+		}
+
+		query := fmt.Sprintf(`
+		%s
+		SELECT %s
+		FROM testing_db.event_type_ch AS et
+		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		%s
+		WHERE et.alert_id IS NOT NULL
+			AND et.event_id IN (SELECT event_id FROM filtered_events)
+			%s
+		%s
+		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
+		return strings.TrimSpace(query), nil
+	}
+}
