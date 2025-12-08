@@ -4274,7 +4274,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "eventCount":
 		selectors = append(selectors, "uniq(e.event_id) AS eventCount")
 	case "predictedAttendance":
-		selectors = append(selectors, "sum(e.estimatedVisitorMean) AS predictedAttendance")
+		selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
 	case "inboundEstimate":
 		selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
 	case "internationalEstimate":
@@ -4282,21 +4282,21 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "impactScore":
 		selectors = append(selectors, "sum(e.impactScore) AS impactScore")
 	case "economicImpact":
-		selectors = append(selectors, "sum(e.economicImpact) AS economicImpact")
+		selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
 		switch column {
 		case "hotel":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Accommodation') AS Float64)) AS hotel")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Accommodation'))) AS hotel")
 		case "food":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Food & Beverages') AS Float64)) AS food")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Food & Beverages'))) AS food")
 		case "entertainment":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Entertainment') AS Float64)) AS entertainment")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Entertainment'))) AS entertainment")
 		case "airline":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Flights') AS Float64)) AS airline")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Flights'))) AS airline")
 		case "transport":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Transportation') AS Float64)) AS transport")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Transportation'))) AS transport")
 		case "utilitie":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Utilities') AS Float64)) AS utilitie")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Utilities'))) AS utilitie")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -4367,7 +4367,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	if columnStr != "eventCount" {
 		switch columnStr {
 		case "predictedAttendance":
-			preFilterSelect += ", e.estimatedVisitorMean"
+			preFilterSelect += ", e.estimatedVisitorsMean"
 		case "inboundEstimate":
 			preFilterSelect += ", e.inboundAttendance"
 		case "internationalEstimate":
@@ -4375,9 +4375,9 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "impactScore":
 			preFilterSelect += ", e.impactScore"
 		case "economicImpact":
-			preFilterSelect += ", e.economicImpact"
+			preFilterSelect += ", e.event_economic_value"
 		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.economicImpactBreakdown"
+			preFilterSelect += ", e.event_economic_breakdown"
 		}
 	}
 
@@ -4532,7 +4532,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "eventCount":
 		selectors = append(selectors, "uniq(e.event_id) AS eventCount")
 	case "predictedAttendance":
-		selectors = append(selectors, "sum(e.estimatedVisitorMean) AS predictedAttendance")
+		selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
 	case "inboundEstimate":
 		selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
 	case "internationalEstimate":
@@ -4540,21 +4540,21 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "impactScore":
 		selectors = append(selectors, "sum(e.impactScore) AS impactScore")
 	case "economicImpact":
-		selectors = append(selectors, "sum(e.economicImpact) AS economicImpact")
+		selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
 		switch column {
 		case "hotel":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Accommodation') AS Float64)) AS hotel")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Accommodation'))) AS hotel")
 		case "food":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Food & Beverages') AS Float64)) AS food")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Food & Beverages'))) AS food")
 		case "entertainment":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Entertainment') AS Float64)) AS entertainment")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Entertainment'))) AS entertainment")
 		case "airline":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Flights') AS Float64)) AS airline")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Flights'))) AS airline")
 		case "transport":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Transportation') AS Float64)) AS transport")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Transportation'))) AS transport")
 		case "utilitie":
-			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Utilities') AS Float64)) AS utilitie")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Utilities'))) AS utilitie")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -4619,7 +4619,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	if columnStr != "eventCount" {
 		switch columnStr {
 		case "predictedAttendance":
-			preFilterSelect += ", e.estimatedVisitorMean"
+			preFilterSelect += ", e.estimatedVisitorsMean"
 		case "inboundEstimate":
 			preFilterSelect += ", e.inboundAttendance"
 		case "internationalEstimate":
@@ -4627,9 +4627,9 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		case "impactScore":
 			preFilterSelect += ", e.impactScore"
 		case "economicImpact":
-			preFilterSelect += ", e.economicImpact"
+			preFilterSelect += ", e.event_economic_value"
 		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.economicImpactBreakdown"
+			preFilterSelect += ", e.event_economic_breakdown"
 		}
 	}
 	preFilterSelect += ", e.start_date, e.end_date"
@@ -6491,7 +6491,7 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 			if col == "date" {
 				scanArgs[i] = new(time.Time)
 			} else if col == columnStr {
-				if columnStr == "eventCount" {
+				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" {
 					scanArgs[i] = new(uint64)
 				} else {
 					scanArgs[i] = new(float64)
@@ -6517,7 +6517,7 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 		}
 
 		var columnValue interface{}
-		if columnStr == "eventCount" {
+		if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" {
 			if valPtr, ok := scanArgs[columnIdx].(*uint64); ok && valPtr != nil {
 				columnValue = float64(*valPtr)
 			} else {
@@ -6625,7 +6625,7 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 			if col == "start_date" {
 				scanArgs[i] = new(string)
 			} else if col == columnStr {
-				if columnStr == "eventCount" {
+				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" {
 					scanArgs[i] = new(uint64)
 				} else {
 					scanArgs[i] = new(float64)
@@ -6663,7 +6663,7 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 		}
 
 		var columnValue interface{}
-		if columnStr == "eventCount" {
+		if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" {
 			if valPtr, ok := scanArgs[columnIdx].(*uint64); ok && valPtr != nil {
 				columnValue = float64(*valPtr)
 			} else {
