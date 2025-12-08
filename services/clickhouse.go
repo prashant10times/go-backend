@@ -80,3 +80,13 @@ func (c *ClickHouseService) Close() error {
 func (c *ClickHouseService) ExecuteQuery(ctx context.Context, query string, args ...interface{}) (driver.Rows, error) {
 	return c.conn.Query(ctx, query, args...)
 }
+
+func (c *ClickHouseService) CheckHealth(ctx context.Context) error {
+	if c.conn == nil {
+		return fmt.Errorf("ClickHouse connection is nil")
+	}
+	if err := c.conn.Ping(ctx); err != nil {
+		return fmt.Errorf("ClickHouse ping failed: %w", err)
+	}
+	return nil
+}

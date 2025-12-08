@@ -48,3 +48,14 @@ func (d *DatabaseService) Close() error {
 	}
 	return sqlDB.Close()
 }
+
+func (d *DatabaseService) CheckHealth() error {
+	sqlDB, err := d.DB.DB()
+	if err != nil {
+		return fmt.Errorf("failed to get database instance: %w", err)
+	}
+	if err := sqlDB.Ping(); err != nil {
+		return fmt.Errorf("database ping failed: %w", err)
+	}
+	return nil
+}

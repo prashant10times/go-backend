@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"search-event-go/config"
+	"search-event-go/health"
 	"search-event-go/middleware"
 	"search-event-go/redis"
 	"search-event-go/routes"
@@ -29,7 +30,9 @@ func main() {
 	}
 	defer clickhouseService.Close()
 
-	redis.InitRedis()
+	if err := redis.InitRedis(); err != nil {
+		log.Fatalf("Failed to initialize Redis: %v", err)
+	}
 	defer redis.Close()
 
 	app := fiber.New(fiber.Config{
@@ -53,6 +56,8 @@ func main() {
 	app.Use(middleware.PrometheusMiddleware()) //prometheus middleware
 
 	routes.SetupRoutes(app, dbService, clickhouseService, cfg)
+
+	go health.DatabaseHealthMonitor(dbService, clickhouseService)
 
 	log.Printf("Server starting on port %s", cfg.Port)
 	log.Fatal(app.Listen(":" + cfg.Port))
