@@ -46,6 +46,7 @@ const (
 	ViewTracker  View = "tracker"
 	ViewPromote  View = "promote"
 	ViewCount    View = "count"
+	ViewTrends   View = "trends"
 )
 
 type BoundType string
@@ -239,6 +240,10 @@ type FilterDataDto struct {
 	View                string `json:"view,omitempty" form:"view"`
 	CalendarType        string `json:"calendar_type,omitempty" form:"calendar_type"`
 	TrackerDates        string `json:"trackerDates,omitempty" form:"trackerDates"`
+	DateView            string `json:"dateView,omitempty" form:"dateView"`
+	Columns             string `json:"columns,omitempty" form:"columns"`
+	GroupByTrends       string `json:"groupByTrends,omitempty" form:"groupByTrends"`
+	Source              string `json:"source,omitempty" form:"source"`
 	ShowCount           bool   `json:"showCount,omitempty" form:"showCount"`
 	Frequency           string `json:"frequency,omitempty" form:"frequency"`
 	Visibility          string `json:"visibility,omitempty" form:"visibility"`
@@ -324,13 +329,16 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedTrackerDates []string `json:"-"`
-	ParsedCalendarType *string  `json:"-"`
-	ParsedRegions      []string `json:"-"`
-	ParsedCountryIds   []string `json:"-"`
-	ParsedStateIds     []string `json:"-"`
-	ParsedCityIds      []string `json:"-"`
-	ParsedVenueIds     []string `json:"-"`
+	ParsedTrackerDates  []string `json:"-"`
+	ParsedCalendarType  *string  `json:"-"`
+	ParsedDateView      *string  `json:"-"`
+	ParsedColumns       []string `json:"-"`
+	ParsedGroupByTrends *string  `json:"-"`
+	ParsedRegions       []string `json:"-"`
+	ParsedCountryIds    []string `json:"-"`
+	ParsedStateIds      []string `json:"-"`
+	ParsedCityIds       []string `json:"-"`
+	ParsedVenueIds      []string `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -509,13 +517,14 @@ func (f *FilterDataDto) Validate() error {
 				"tracker":  ViewTracker,
 				"promote":  ViewPromote,
 				"count":    ViewCount,
+				"trends":   ViewTrends,
 			}
 
 			if view, exists := validViews[viewLower]; exists {
 				f.ParsedView = []string{string(view)}
 				f.View = viewLower
 			} else {
-				validOptions := []string{"list", "agg", "map", "detail", "calendar", "tracker", "promote", "count"}
+				validOptions := []string{"list", "agg", "map", "detail", "calendar", "tracker", "promote", "count", "trends"}
 				return validation.NewError("invalid_view", "Invalid view value: "+viewStr+". Valid options are: "+strings.Join(validOptions, ", "))
 			}
 			return nil
@@ -1518,6 +1527,99 @@ func (f *FilterDataDto) Validate() error {
 				f.ParsedViewBounds = append(f.ParsedViewBounds, &viewBound)
 			}
 
+			return nil
+		}))),
+
+		validation.Field(&f.DateView, validation.When(f.View == "trends", validation.Required.Error("dateView is required for trends view"), validation.By(func(value interface{}) error {
+			dateViewStr := value.(string)
+			dateViewLower := strings.ToLower(strings.TrimSpace(dateViewStr))
+			validDateViews := map[string]bool{
+				"day":   true,
+				"week":  true,
+				"month": true,
+				"year":  true,
+			}
+			if validDateViews[dateViewLower] {
+				f.ParsedDateView = &dateViewLower
+				f.DateView = dateViewLower
+			} else {
+				validOptions := []string{"day", "week", "month", "year"}
+				return validation.NewError("invalid_dateView", "Invalid dateView value: "+dateViewStr+". Valid options are: "+strings.Join(validOptions, ", "))
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.Columns, validation.When(f.View == "trends", validation.Required.Error("columns is required for trends view"), validation.By(func(value interface{}) error {
+			columnsStr := value.(string)
+			if columnsStr == "" {
+				return validation.NewError("columns_required", "columns is required for trends view")
+			}
+
+			columns := strings.Split(columnsStr, ",")
+			f.ParsedColumns = make([]string, 0, len(columns))
+			validColumns := map[string]bool{
+				"impactScore":           true,
+				"predictedAttendance":   true,
+				"economicImpact":        true,
+				"eventCount":            true,
+				"inboundEstimate":       true,
+				"internationalEstimate": true,
+				"hotel":                 true,
+				"food":                  true,
+				"entertainment":         true,
+				"airline":               true,
+				"transport":             true,
+				"utilitie":              true,
+			}
+
+			var invalidOptions []string
+			for _, col := range columns {
+				col = strings.TrimSpace(col)
+				if col != "" {
+					if validColumns[col] {
+						f.ParsedColumns = append(f.ParsedColumns, col)
+					} else {
+						invalidOptions = append(invalidOptions, col)
+					}
+				}
+			}
+
+			if len(f.ParsedColumns) == 0 {
+				return validation.NewError("columns_empty", "At least one valid column is required for trends view")
+			}
+
+			if len(invalidOptions) > 0 {
+				validOptions := []string{"impactScore", "predictedAttendance", "economicImpact", "eventCount", "inboundEstimate", "internationalEstimate", "hotel", "food", "entertainment", "airline", "transport", "utilitie"}
+				return validation.NewError("invalid_column", "Invalid columns option: "+strings.Join(invalidOptions, ", ")+". Valid options are: "+strings.Join(validOptions, ", "))
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.GroupByTrends, validation.When(f.View == "trends", validation.Required.Error("groupByTrends is required for trends view"), validation.By(func(value interface{}) error {
+			groupByTrendsStr := value.(string)
+			groupByTrendsLower := strings.ToLower(strings.TrimSpace(groupByTrendsStr))
+			if groupByTrendsLower == "date" {
+				f.ParsedGroupByTrends = &groupByTrendsLower
+				f.GroupByTrends = groupByTrendsLower
+			} else {
+				return validation.NewError("invalid_groupByTrends", "Invalid groupByTrends value: "+groupByTrendsStr+". Valid option is: date")
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.Source, validation.When(f.View == "trends" && f.Source != "", validation.By(func(value interface{}) error {
+			sourceStr := value.(string)
+			sourceLower := strings.ToLower(strings.TrimSpace(sourceStr))
+			validSources := map[string]bool{
+				"geo": true,
+				"gtm": true,
+			}
+			if validSources[sourceLower] {
+				f.Source = sourceLower
+			} else {
+				return validation.NewError("invalid_source", "Invalid source value: "+sourceStr+". Valid options are: geo, gtm")
+			}
 			return nil
 		}))),
 	)

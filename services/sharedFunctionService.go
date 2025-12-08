@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
+	"net/http"
 	"reflect"
 	"regexp"
 	"search-event-go/config"
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/uuid"
 	"gorm.io/datatypes"
@@ -307,6 +310,11 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 	if strings.Contains(filterFields.View, "calendar") {
 		log.Printf("Query type determined: CALENDAR")
 		return "CALENDAR", nil
+	}
+
+	if strings.Contains(filterFields.View, "trends") {
+		log.Printf("Query type determined: TRENDS")
+		return "TRENDS", nil
 	}
 
 	isAggregationView := strings.Contains(filterFields.View, "agg")
@@ -1710,6 +1718,105 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 		eventFilterGroupByStr)
 
 	return countQuery
+}
+
+func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) (int, error) {
+	queryResult, err := s.buildClickHouseQuery(filterFields)
+	if err != nil {
+		log.Printf("Error building ClickHouse query: %v", err)
+		return 0, err
+	}
+
+	eventFilterSelectFields := []string{"event_id", "edition_id"}
+	eventFilterGroupByFields := []string{"event_id", "edition_id"}
+
+	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
+		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_lat as lat")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "lat")
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_long as lon")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "lon")
+		}
+		if strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon") {
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_lat as venueLat")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLat")
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_long as venueLon")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLon")
+		}
+	}
+
+	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
+	eventFilterGroupByStr := strings.Join(eventFilterGroupByFields, ", ")
+
+	cteAndJoinResult := s.buildFilterCTEsAndJoins(
+		queryResult.NeedsVisitorJoin,
+		queryResult.NeedsSpeakerJoin,
+		queryResult.NeedsExhibitorJoin,
+		queryResult.NeedsSponsorJoin,
+		queryResult.NeedsCategoryJoin,
+		queryResult.NeedsTypeJoin,
+		queryResult.NeedsEventRankingJoin,
+		queryResult.needsDesignationJoin,
+		queryResult.needsAudienceSpreadJoin,
+		queryResult.NeedsRegionsJoin,
+		queryResult.NeedsLocationIdsJoin,
+		queryResult.NeedsCountryIdsJoin,
+		queryResult.NeedsStateIdsJoin,
+		queryResult.NeedsCityIdsJoin,
+		queryResult.NeedsVenueIdsJoin,
+		queryResult.VisitorWhereConditions,
+		queryResult.SpeakerWhereConditions,
+		queryResult.ExhibitorWhereConditions,
+		queryResult.SponsorWhereConditions,
+		queryResult.CategoryWhereConditions,
+		queryResult.TypeWhereConditions,
+		queryResult.EventRankingWhereConditions,
+		queryResult.JobCompositeWhereConditions,
+		queryResult.AudienceSpreadWhereConditions,
+		queryResult.RegionsWhereConditions,
+		queryResult.LocationIdsWhereConditions,
+		queryResult.CountryIdsWhereConditions,
+		queryResult.StateIdsWhereConditions,
+		queryResult.CityIdsWhereConditions,
+		queryResult.VenueIdsWhereConditions,
+		filterFields,
+	)
+
+	hasEndDateFilters := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
+		filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != "" ||
+		filterFields.CreatedAt != "" || len(filterFields.ParsedEventIds) > 0 || len(filterFields.ParsedNotEventIds) > 0 || len(filterFields.ParsedSourceEventIds) > 0 || len(filterFields.ParsedDates) > 0 || filterFields.ParsedPastBetween != nil || filterFields.ParsedActiveBetween != nil
+
+	countQuery := s.buildListDataCountQuery(
+		queryResult,
+		&cteAndJoinResult,
+		eventFilterSelectStr,
+		eventFilterGroupByStr,
+		hasEndDateFilters,
+		filterFields,
+	)
+
+	log.Printf("Count query: %s", countQuery)
+
+	countQueryTime := time.Now()
+	countResult, err := s.clickhouseService.ExecuteQuery(context.Background(), countQuery)
+	if err != nil {
+		log.Printf("ClickHouse count query error: %v", err)
+		return 0, err
+	}
+	defer countResult.Close()
+
+	countQueryDuration := time.Since(countQueryTime)
+	log.Printf("Count query time: %v", countQueryDuration)
+
+	var totalCount uint64
+	if countResult.Next() {
+		if err := countResult.Scan(&totalCount); err != nil {
+			log.Printf("Error scanning count result: %v", err)
+			return 0, err
+		}
+	}
+
+	return int(totalCount), nil
 }
 
 func (s *SharedFunctionService) buildMultiDayDateSelect() string {
@@ -3995,6 +4102,8 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	filterFields models.FilterDataDto,
 	startDate string,
 	endDate string,
+	usecase string,
+	groupBy []models.CountGroup,
 ) (interface{}, error) {
 	cteClausesStr := ""
 	if len(cteAndJoinResult.CTEClauses) > 0 {
@@ -4041,6 +4150,17 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	filterWhereClause := ""
 	if len(filterWhereConditions) > 0 {
 		filterWhereClause = strings.Join(filterWhereConditions, " AND ")
+	}
+
+	if usecase == "trends" {
+		return s.getTrendsCountByDayInternal(
+			cteClausesStr,
+			startDate,
+			daysDiff,
+			preFilterWhereClause,
+			filterWhereClause,
+			groupBy,
+		)
 	}
 
 	query := fmt.Sprintf(`
@@ -4127,6 +4247,457 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	}
 
 	return rowsData, nil
+}
+
+func (s *SharedFunctionService) getTrendsCountByDayInternal(
+	cteClausesStr string,
+	startDate string,
+	daysDiff int,
+	preFilterWhereClause string,
+	filterWhereClause string,
+	groupBy []models.CountGroup,
+) (interface{}, error) {
+	if len(groupBy) < 2 {
+		return nil, fmt.Errorf("groupBy must have at least 2 elements: [dateView, column, ...secondaryGroups]")
+	}
+	_ = groupBy[0]
+	column := string(groupBy[1])
+	columnStr := column
+	secondaryGroupBy := groupBy[2:]
+
+	var selectors []string
+	var groupByClauses []string
+	var joinClauses []string
+	needsEventTypeJoin := false
+
+	switch column {
+	case "eventCount":
+		selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+	case "predictedAttendance":
+		selectors = append(selectors, "sum(e.estimatedVisitorMean) AS predictedAttendance")
+	case "inboundEstimate":
+		selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+	case "internationalEstimate":
+		selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+	case "impactScore":
+		selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+	case "economicImpact":
+		selectors = append(selectors, "sum(e.economicImpact) AS economicImpact")
+	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
+		switch column {
+		case "hotel":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Accommodation') AS Float64)) AS hotel")
+		case "food":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Food & Beverages') AS Float64)) AS food")
+		case "entertainment":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Entertainment') AS Float64)) AS entertainment")
+		case "airline":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Flights') AS Float64)) AS airline")
+		case "transport":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Transportation') AS Float64)) AS transport")
+		case "utilitie":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Utilities') AS Float64)) AS utilitie")
+		}
+	default:
+		return nil, fmt.Errorf("unsupported column: %s", column)
+	}
+
+	for _, group := range secondaryGroupBy {
+		switch group {
+		case models.CountGroupEventType:
+			selectors = append(selectors, "et.slug AS eventType")
+			groupByClauses = append(groupByClauses, "et.slug")
+			needsEventTypeJoin = true
+		case models.CountGroupEventTypeGroup:
+			selectors = append(selectors, "group_name AS eventTypeGroup")
+			groupByClauses = append(groupByClauses, "group_name")
+			needsEventTypeJoin = true
+		}
+	}
+
+	if needsEventTypeJoin {
+		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id")
+		if len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
+			joinClauses = append(joinClauses, "ARRAY JOIN et.groups AS group_name")
+		}
+	}
+
+	whereConditions := []string{}
+	if filterWhereClause != "" {
+		cleaned := strings.ReplaceAll(filterWhereClause, "ee.", "e.")
+		cleaned = strings.ReplaceAll(cleaned, "e.event_id = et.event_id", "")
+		cleaned = strings.TrimSpace(cleaned)
+		cleaned = strings.TrimPrefix(cleaned, "AND")
+		cleaned = strings.TrimSuffix(cleaned, "AND")
+		cleaned = strings.TrimSpace(cleaned)
+		if cleaned != "" {
+			whereConditions = append(whereConditions, cleaned)
+		}
+	}
+	whereConditions = append(whereConditions, "e.start_date <= ds.date")
+	whereConditions = append(whereConditions, "e.end_date >= ds.date")
+	if needsEventTypeJoin && len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
+		whereConditions = append(whereConditions, "group_name IN ('business', 'social', 'unattended')")
+	}
+
+	whereClause := strings.Join(whereConditions, " AND ")
+
+	groupByStr := "ds.date"
+	if len(groupByClauses) > 0 {
+		groupByStr += ", " + strings.Join(groupByClauses, ", ")
+	}
+
+	selectStr := "ds.date"
+	if len(selectors) > 0 {
+		selectStr += ", " + strings.Join(selectors, ", ")
+	}
+
+	joinStr := ""
+	if len(joinClauses) > 0 {
+		joinStr = strings.Join(joinClauses, "\n            ")
+	}
+
+	startDateParsed, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid startDate format: %w", err)
+	}
+	endDate := startDateParsed.AddDate(0, 0, daysDiff-1).Format("2006-01-02")
+
+	preFilterSelect := "e.event_id"
+	if columnStr != "eventCount" {
+		switch columnStr {
+		case "predictedAttendance":
+			preFilterSelect += ", e.estimatedVisitorMean"
+		case "inboundEstimate":
+			preFilterSelect += ", e.inboundAttendance"
+		case "internationalEstimate":
+			preFilterSelect += ", e.internationalAttendance"
+		case "impactScore":
+			preFilterSelect += ", e.impactScore"
+		case "economicImpact":
+			preFilterSelect += ", e.economicImpact"
+		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
+			preFilterSelect += ", e.economicImpactBreakdown"
+		}
+	}
+
+	preFilterSelect += ", e.start_date, e.end_date"
+
+	dateJoinCondition := "e.start_date <= ds.date AND e.end_date >= ds.date"
+
+	query := fmt.Sprintf(`
+		WITH %sdate_series AS (
+			SELECT toDate(addDays(toDate('%s'), number)) AS date
+			FROM numbers(%d)
+		),
+		preFilterEvent AS (
+			SELECT
+				%s
+			FROM testing_db.allevent_ch AS e
+			WHERE %s
+				AND e.start_date <= '%s'
+				AND e.end_date >= '%s'
+		)
+		SELECT
+			%s
+		FROM preFilterEvent e
+		INNER JOIN date_series ds ON (%s)
+		%s
+		WHERE %s
+		GROUP BY %s
+		ORDER BY ds.date
+	`,
+		cteClausesStr,
+		startDate,
+		daysDiff,
+		preFilterSelect,
+		preFilterWhereClause,
+		endDate,
+		startDate,
+		selectStr,
+		dateJoinCondition,
+		joinStr,
+		whereClause,
+		groupByStr,
+	)
+
+	log.Printf("Trends count by day query: %s", query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.transformTrendsCountByDay(rows, groupBy)
+}
+
+func (s *SharedFunctionService) GetTrendsCountByLongDurations(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	filterFields models.FilterDataDto,
+	duration string,
+	startDate string,
+	endDate string,
+	groupBy []models.CountGroup,
+) (interface{}, error) {
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	preFilterWhereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		"edition_type = 'current_edition'",
+		fmt.Sprintf("start_date <= '%s'", endDate),
+		fmt.Sprintf("end_date >= '%s'", startDate),
+	}
+	if queryResult.WhereClause != "" {
+		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
+		preFilterWhereConditions = append(preFilterWhereConditions, whereClauseFixed)
+	}
+	preFilterWhereClause := strings.Join(preFilterWhereConditions, " AND ")
+
+	filterWhereConditions := []string{}
+	if queryResult.SearchClause != "" {
+		searchClauseFixed := strings.ReplaceAll(queryResult.SearchClause, "ee.", "e.")
+		filterWhereConditions = append(filterWhereConditions, searchClauseFixed)
+	}
+	if joinConditionsStr != "" {
+		joinConditionsFixed := strings.ReplaceAll(joinConditionsStr, "ee.", "e.")
+		filterWhereConditions = append(filterWhereConditions, strings.TrimPrefix(joinConditionsFixed, "AND "))
+	}
+	filterWhereClause := ""
+	if len(filterWhereConditions) > 0 {
+		filterWhereClause = strings.Join(filterWhereConditions, " AND ")
+	}
+
+	return s.getTrendsCountByLongDurationsInternal(
+		cteClausesStr,
+		duration,
+		startDate,
+		endDate,
+		preFilterWhereClause,
+		filterWhereClause,
+		groupBy,
+	)
+}
+
+func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
+	cteClausesStr string,
+	duration string,
+	startDate string,
+	endDate string,
+	preFilterWhereClause string,
+	filterWhereClause string,
+	groupBy []models.CountGroup,
+) (interface{}, error) {
+	if len(groupBy) < 2 {
+		return nil, fmt.Errorf("groupBy must have at least 2 elements: [dateView, column, ...secondaryGroups]")
+	}
+	_ = groupBy[0]
+	column := string(groupBy[1])
+	columnStr := column
+	secondaryGroupBy := groupBy[2:]
+
+	var intervalUnit string
+	var dateFormat string
+	switch duration {
+	case "month":
+		intervalUnit = "MONTH"
+		dateFormat = "formatDateTime(fd.start_date, '%Y-%m')"
+	case "year":
+		intervalUnit = "YEAR"
+		dateFormat = "toString(toYear(fd.start_date))"
+	case "week":
+		intervalUnit = "WEEK"
+		dateFormat = "concat(toString(fd.start_date), '_', toString(fd.end_date))"
+	default:
+		return nil, fmt.Errorf("unsupported duration: %s. Valid options are: week, month, year", duration)
+	}
+
+	var selectors []string
+	var groupByClauses []string
+	var joinClauses []string
+	needsEventTypeJoin := false
+
+	switch column {
+	case "eventCount":
+		selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+	case "predictedAttendance":
+		selectors = append(selectors, "sum(e.estimatedVisitorMean) AS predictedAttendance")
+	case "inboundEstimate":
+		selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+	case "internationalEstimate":
+		selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+	case "impactScore":
+		selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+	case "economicImpact":
+		selectors = append(selectors, "sum(e.economicImpact) AS economicImpact")
+	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
+		switch column {
+		case "hotel":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Accommodation') AS Float64)) AS hotel")
+		case "food":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Food & Beverages') AS Float64)) AS food")
+		case "entertainment":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Entertainment') AS Float64)) AS entertainment")
+		case "airline":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Flights') AS Float64)) AS airline")
+		case "transport":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Transportation') AS Float64)) AS transport")
+		case "utilitie":
+			selectors = append(selectors, "sum(CAST(JSONExtractString(e.economicImpactBreakdown, 'Utilities') AS Float64)) AS utilitie")
+		}
+	default:
+		return nil, fmt.Errorf("unsupported column: %s", column)
+	}
+
+	for _, group := range secondaryGroupBy {
+		switch group {
+		case models.CountGroupEventType:
+			selectors = append(selectors, "et.slug AS eventType")
+			groupByClauses = append(groupByClauses, "et.slug")
+			needsEventTypeJoin = true
+		case models.CountGroupEventTypeGroup:
+			selectors = append(selectors, "group_name AS eventTypeGroup")
+			groupByClauses = append(groupByClauses, "group_name")
+			needsEventTypeJoin = true
+		}
+	}
+
+	if needsEventTypeJoin {
+		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id")
+		if len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
+			joinClauses = append(joinClauses, "ARRAY JOIN et.groups AS group_name")
+		}
+	}
+
+	whereConditions := []string{}
+	if filterWhereClause != "" {
+		cleaned := strings.ReplaceAll(filterWhereClause, "ee.", "e.")
+		cleaned = strings.ReplaceAll(cleaned, "e.event_id = et.event_id", "")
+		cleaned = strings.TrimSpace(cleaned)
+		cleaned = strings.TrimPrefix(cleaned, "AND")
+		cleaned = strings.TrimSuffix(cleaned, "AND")
+		cleaned = strings.TrimSpace(cleaned)
+		if cleaned != "" {
+			whereConditions = append(whereConditions, cleaned)
+		}
+	}
+	whereConditions = append(whereConditions, "e.start_date <= fd.end_date")
+	whereConditions = append(whereConditions, "e.end_date >= fd.start_date")
+	if needsEventTypeJoin && len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
+		whereConditions = append(whereConditions, "group_name IN ('business', 'social', 'unattended')")
+	}
+
+	whereClause := strings.Join(whereConditions, " AND ")
+
+	groupByStr := "fd.start_date, fd.end_date"
+	if len(groupByClauses) > 0 {
+		groupByStr += ", " + strings.Join(groupByClauses, ", ")
+	}
+
+	selectStr := dateFormat + " AS start_date"
+	if len(selectors) > 0 {
+		selectStr += ", " + strings.Join(selectors, ", ")
+	}
+
+	joinStr := ""
+	if len(joinClauses) > 0 {
+		joinStr = strings.Join(joinClauses, "\n            ")
+	}
+
+	preFilterSelect := "e.event_id"
+	if columnStr != "eventCount" {
+		switch columnStr {
+		case "predictedAttendance":
+			preFilterSelect += ", e.estimatedVisitorMean"
+		case "inboundEstimate":
+			preFilterSelect += ", e.inboundAttendance"
+		case "internationalEstimate":
+			preFilterSelect += ", e.internationalAttendance"
+		case "impactScore":
+			preFilterSelect += ", e.impactScore"
+		case "economicImpact":
+			preFilterSelect += ", e.economicImpact"
+		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
+			preFilterSelect += ", e.economicImpactBreakdown"
+		}
+	}
+	preFilterSelect += ", e.start_date, e.end_date"
+
+	query := fmt.Sprintf(`
+		WITH %sdate_series AS (
+			SELECT toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL number %s AS duration_start
+			FROM numbers(toUInt32(dateDiff('%s', toStartOfInterval(toDate('%s'), INTERVAL 1 %s), toStartOfInterval(toDate('%s'), INTERVAL 1 %s)) + 1))
+		),
+		final_dates AS (
+			SELECT
+				toDate('%s') AS start_date,
+				least(
+					toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL 1 %s - INTERVAL 1 DAY,
+					toDate('%s')
+				) AS end_date
+			UNION ALL
+			SELECT
+				duration_start AS start_date,
+				least(
+					duration_start + INTERVAL 1 %s - INTERVAL 1 DAY,
+					toDate('%s')
+				) AS end_date
+			FROM date_series
+			WHERE duration_start > toDate('%s')
+		),
+		preFilterEvent AS (
+			SELECT
+				%s
+			FROM testing_db.allevent_ch AS e
+			WHERE %s
+		)
+		SELECT
+			%s
+		FROM preFilterEvent e
+		INNER JOIN final_dates fd ON true
+		%s
+		WHERE %s
+		GROUP BY %s
+		ORDER BY fd.start_date
+	`,
+		cteClausesStr,
+		startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
+		startDate, startDate, intervalUnit, intervalUnit, endDate,
+		intervalUnit, endDate, startDate,
+		preFilterSelect,
+		preFilterWhereClause,
+		selectStr,
+		func() string {
+			if joinStr != "" {
+				return "\n            " + joinStr
+			}
+			return ""
+		}(),
+		whereClause,
+		groupByStr,
+	)
+
+	log.Printf("Trends count by %s query: %s", duration, query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	return s.transformTrendsCountByLongDurations(rows, groupBy, duration)
 }
 
 func (s *SharedFunctionService) GetEventCountByLongDurations(
@@ -4841,4 +5412,1460 @@ func (s *SharedFunctionService) BuildCoordinatesAlertQuery(params models.AlertSe
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
 		return strings.TrimSpace(query), nil
 	}
+}
+
+func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterDataDto) (*ListResult, error) {
+	if filterFields.ParsedCalendarType == nil {
+		return &ListResult{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: "calendar_type is required for calendar view",
+		}, nil
+	}
+
+	calendarType := *filterFields.ParsedCalendarType
+
+	switch calendarType {
+	case "day":
+		var startDate, endDate string
+		if len(filterFields.ParsedTrackerDates) == 2 {
+			startDate = filterFields.ParsedTrackerDates[0]
+			endDate = filterFields.ParsedTrackerDates[1]
+		} else {
+			if filterFields.ActiveGte != "" && filterFields.ActiveLte != "" {
+				startDate = filterFields.ActiveGte
+				endDate = filterFields.ActiveLte
+			} else {
+				return &ListResult{
+					StatusCode:   http.StatusBadRequest,
+					ErrorMessage: "startDate and endDate are required (use trackerDates, active.gte/active.lte, activeBetween, or pastBetween)",
+				}, nil
+			}
+		}
+
+		queryResult, err := s.buildClickHouseQuery(filterFields)
+		if err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error building ClickHouse query: %v", err),
+			}, nil
+		}
+
+		cteAndJoinResult := s.buildFilterCTEsAndJoins(
+			queryResult.NeedsVisitorJoin, queryResult.NeedsSpeakerJoin, queryResult.NeedsExhibitorJoin,
+			queryResult.NeedsSponsorJoin, queryResult.NeedsCategoryJoin, queryResult.NeedsTypeJoin,
+			queryResult.NeedsEventRankingJoin, queryResult.needsDesignationJoin, queryResult.needsAudienceSpreadJoin,
+			queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
+			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
+			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
+			queryResult.SponsorWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
+			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
+			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
+			filterFields,
+		)
+
+		if !queryResult.NeedsTypeJoin {
+			cteAndJoinResult.JoinConditions = append(cteAndJoinResult.JoinConditions, "e.event_id = et.event_id")
+		}
+
+		type dayCountResult struct {
+			data interface{}
+			err  error
+		}
+		type totalCountResult struct {
+			count int
+			err   error
+		}
+
+		dayCountChan := make(chan dayCountResult, 1)
+		totalCountChan := make(chan totalCountResult, 1)
+
+		go func() {
+			dayCountData, err := s.GetEventCountByDay(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+				startDate,
+				endDate,
+				"calendar",
+				nil, // calendar doesn't use groupBy array
+			)
+			dayCountChan <- dayCountResult{data: dayCountData, err: err}
+		}()
+
+		go func() {
+			count, err := s.getCountOnly(filterFields)
+			totalCountChan <- totalCountResult{count: count, err: err}
+		}()
+
+		dayResult := <-dayCountChan
+		countRes := <-totalCountChan
+
+		if dayResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting day count: %v", dayResult.err),
+			}, nil
+		}
+
+		if countRes.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting total count: %v", countRes.err),
+			}, nil
+		}
+
+		dayCountData := dayResult.data
+		dayCountMap, ok := dayCountData.([]map[string]interface{})
+		if !ok {
+			dayCountMap = []map[string]interface{}{}
+		}
+
+		transformedDayCount := s.transformDataService.TransformEventCountByDay(dayCountMap)
+
+		return &ListResult{
+			StatusCode: 200,
+			Data: fiber.Map{
+				"count":  countRes.count,
+				"events": transformedDayCount,
+			},
+		}, nil
+
+	case "week":
+		var startDate, endDate string
+		if len(filterFields.ParsedTrackerDates) == 2 {
+			startDate = filterFields.ParsedTrackerDates[0]
+			endDate = filterFields.ParsedTrackerDates[1]
+		} else {
+			if filterFields.ActiveGte == "" || filterFields.ActiveLte == "" {
+				return &ListResult{
+					StatusCode:   http.StatusBadRequest,
+					ErrorMessage: "startDate and endDate are required (use trackerDates or active.gte/active.lte)",
+				}, nil
+			}
+			startDate = filterFields.ActiveGte
+			endDate = filterFields.ActiveLte
+		}
+
+		type weekEventsResult struct {
+			data fiber.Map
+			err  error
+		}
+		type totalCountResult struct {
+			count int
+			err   error
+		}
+
+		weekEventsChan := make(chan weekEventsResult, 1)
+		totalCountChan := make(chan totalCountResult, 1)
+
+		go func() {
+			result, err := s.getEventsByWeek(filterFields, startDate, endDate)
+			weekEventsChan <- weekEventsResult{data: result, err: err}
+		}()
+
+		go func() {
+			count, err := s.getCountOnly(filterFields)
+			totalCountChan <- totalCountResult{count: count, err: err}
+		}()
+
+		weekResult := <-weekEventsChan
+		countRes := <-totalCountChan
+
+		if weekResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: weekResult.err.Error(),
+			}, nil
+		}
+
+		if countRes.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting total count: %v", countRes.err),
+			}, nil
+		}
+
+		result := weekResult.data
+		if result == nil {
+			result = fiber.Map{}
+		}
+		result["count"] = countRes.count
+
+		return &ListResult{
+			StatusCode: 200,
+			Data:       result,
+		}, nil
+
+	case "month":
+		var startDate, endDate string
+		if len(filterFields.ParsedTrackerDates) == 2 {
+			startDate = filterFields.ParsedTrackerDates[0]
+			endDate = filterFields.ParsedTrackerDates[1]
+		} else {
+			if filterFields.ActiveGte == "" || filterFields.ActiveLte == "" {
+				return &ListResult{
+					StatusCode:   http.StatusBadRequest,
+					ErrorMessage: "startDate and endDate are required (use trackerDates or active.gte/active.lte)",
+				}, nil
+			}
+			startDate = filterFields.ActiveGte
+			endDate = filterFields.ActiveLte
+		}
+
+		queryResult, err := s.buildClickHouseQuery(filterFields)
+		if err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error building ClickHouse query: %v", err),
+			}, nil
+		}
+
+		cteAndJoinResult := s.buildFilterCTEsAndJoins(
+			queryResult.NeedsVisitorJoin, queryResult.NeedsSpeakerJoin, queryResult.NeedsExhibitorJoin,
+			queryResult.NeedsSponsorJoin, queryResult.NeedsCategoryJoin, queryResult.NeedsTypeJoin,
+			queryResult.NeedsEventRankingJoin, queryResult.needsDesignationJoin, queryResult.needsAudienceSpreadJoin,
+			queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
+			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
+			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
+			queryResult.SponsorWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
+			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
+			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
+			filterFields,
+		)
+
+		if !queryResult.NeedsTypeJoin {
+			cteAndJoinResult.JoinConditions = append(cteAndJoinResult.JoinConditions, "e.event_id = et.event_id")
+		}
+
+		type dayCountResult struct {
+			data interface{}
+			err  error
+		}
+		type monthCountResult struct {
+			data interface{}
+			err  error
+		}
+		type totalCountResult struct {
+			count int
+			err   error
+		}
+
+		dayCountChan := make(chan dayCountResult, 1)
+		monthCountChan := make(chan monthCountResult, 1)
+		totalCountChan := make(chan totalCountResult, 1)
+
+		go func() {
+			dayCountData, err := s.GetEventCountByDay(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+				startDate,
+				endDate,
+				"calendar",
+				nil, // calendar doesn't use groupBy array
+			)
+			dayCountChan <- dayCountResult{data: dayCountData, err: err}
+		}()
+
+		go func() {
+			monthCountData, err := s.GetEventCountByLongDurations(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+				"month",
+				startDate,
+				endDate,
+			)
+			monthCountChan <- monthCountResult{data: monthCountData, err: err}
+		}()
+
+		go func() {
+			count, err := s.getCountOnly(filterFields)
+			totalCountChan <- totalCountResult{count: count, err: err}
+		}()
+
+		dayResult := <-dayCountChan
+		monthResult := <-monthCountChan
+		countRes := <-totalCountChan
+
+		if dayResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting day count: %v", dayResult.err),
+			}, nil
+		}
+
+		if monthResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting month count: %v", monthResult.err),
+			}, nil
+		}
+
+		if countRes.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting total count: %v", countRes.err),
+			}, nil
+		}
+
+		dayCountData := dayResult.data
+		monthCountData := monthResult.data
+
+		dayCountMap, ok := dayCountData.([]map[string]interface{})
+		if !ok {
+			dayCountMap = []map[string]interface{}{}
+		}
+
+		transformedDayCount := s.transformDataService.TransformEventCountByDay(dayCountMap)
+
+		monthCountRows, ok := monthCountData.([]map[string]interface{})
+		if !ok {
+			monthCountRows = []map[string]interface{}{}
+		}
+
+		transformedMonthCount := s.transformDataService.TransformEventCountByLongDurations(monthCountRows, "month")
+
+		return &ListResult{
+			StatusCode: 200,
+			Data: fiber.Map{
+				"count":        countRes.count,
+				"events":       transformedDayCount,
+				"countByMonth": transformedMonthCount,
+			},
+		}, nil
+
+	case "year":
+		var startDate, endDate string
+		if len(filterFields.ParsedTrackerDates) == 2 {
+			startDate = filterFields.ParsedTrackerDates[0]
+			endDate = filterFields.ParsedTrackerDates[1]
+		} else {
+			if filterFields.ActiveGte == "" || filterFields.ActiveLte == "" {
+				return &ListResult{
+					StatusCode:   http.StatusBadRequest,
+					ErrorMessage: "startDate and endDate are required (use trackerDates or active.gte/active.lte)",
+				}, nil
+			}
+			startDate = filterFields.ActiveGte
+			endDate = filterFields.ActiveLte
+		}
+
+		queryResult, err := s.buildClickHouseQuery(filterFields)
+		if err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error building ClickHouse query: %v", err),
+			}, nil
+		}
+
+		cteAndJoinResult := s.buildFilterCTEsAndJoins(
+			queryResult.NeedsVisitorJoin, queryResult.NeedsSpeakerJoin, queryResult.NeedsExhibitorJoin,
+			queryResult.NeedsSponsorJoin, queryResult.NeedsCategoryJoin, queryResult.NeedsTypeJoin,
+			queryResult.NeedsEventRankingJoin, queryResult.needsDesignationJoin, queryResult.needsAudienceSpreadJoin,
+			queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
+			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
+			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
+			queryResult.SponsorWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
+			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
+			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
+			filterFields,
+		)
+
+		if !queryResult.NeedsTypeJoin {
+			cteAndJoinResult.JoinConditions = append(cteAndJoinResult.JoinConditions, "e.event_id = et.event_id")
+		}
+
+		type dayCountResult struct {
+			data interface{}
+			err  error
+		}
+		type monthCountResult struct {
+			data interface{}
+			err  error
+		}
+		type yearCountResult struct {
+			data interface{}
+			err  error
+		}
+		type totalCountResult struct {
+			count int
+			err   error
+		}
+
+		dayCountChan := make(chan dayCountResult, 1)
+		monthCountChan := make(chan monthCountResult, 1)
+		yearCountChan := make(chan yearCountResult, 1)
+		totalCountChan := make(chan totalCountResult, 1)
+
+		go func() {
+			dayCountData, err := s.GetEventCountByDay(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+				startDate,
+				endDate,
+				"calendar",
+				nil, // calendar doesn't use groupBy array
+			)
+			dayCountChan <- dayCountResult{data: dayCountData, err: err}
+		}()
+
+		go func() {
+			monthCountData, err := s.GetEventCountByLongDurations(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+				"month",
+				startDate,
+				endDate,
+			)
+			monthCountChan <- monthCountResult{data: monthCountData, err: err}
+		}()
+
+		go func() {
+			yearCountData, err := s.GetEventCountByLongDurations(
+				queryResult,
+				&cteAndJoinResult,
+				filterFields,
+				"year",
+				startDate,
+				endDate,
+			)
+			yearCountChan <- yearCountResult{data: yearCountData, err: err}
+		}()
+
+		go func() {
+			count, err := s.getCountOnly(filterFields)
+			totalCountChan <- totalCountResult{count: count, err: err}
+		}()
+
+		dayResult := <-dayCountChan
+		monthResult := <-monthCountChan
+		yearResult := <-yearCountChan
+		countRes := <-totalCountChan
+
+		if dayResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting day count: %v", dayResult.err),
+			}, nil
+		}
+
+		if monthResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting month count: %v", monthResult.err),
+			}, nil
+		}
+
+		if yearResult.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting year count: %v", yearResult.err),
+			}, nil
+		}
+
+		if countRes.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting total count: %v", countRes.err),
+			}, nil
+		}
+
+		dayCountData := dayResult.data
+		monthCountData := monthResult.data
+		yearCountData := yearResult.data
+
+		dayCountMap, ok := dayCountData.([]map[string]interface{})
+		if !ok {
+			dayCountMap = []map[string]interface{}{}
+		}
+
+		transformedDayCount := s.transformDataService.TransformEventCountByDay(dayCountMap)
+
+		monthCountRows, ok := monthCountData.([]map[string]interface{})
+		if !ok {
+			monthCountRows = []map[string]interface{}{}
+		}
+
+		transformedMonthCount := s.transformDataService.TransformEventCountByLongDurations(monthCountRows, "month")
+
+		yearCountRows, ok := yearCountData.([]map[string]interface{})
+		if !ok {
+			yearCountRows = []map[string]interface{}{}
+		}
+
+		transformedYearCount := s.transformDataService.TransformEventCountByLongDurations(yearCountRows, "year")
+
+		return &ListResult{
+			StatusCode: 200,
+			Data: fiber.Map{
+				"count":        countRes.count,
+				"events":       transformedDayCount,
+				"countByMonth": transformedMonthCount,
+				"countByYear":  transformedYearCount,
+			},
+		}, nil
+	default:
+		return &ListResult{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: fmt.Sprintf("Invalid calendar_type: %s. Valid options are: week, month, year, day", calendarType),
+		}, nil
+	}
+}
+
+func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDto, startDate string, endDate string) (fiber.Map, error) {
+	queryResult, err := s.buildClickHouseQuery(filterFields)
+	if err != nil {
+		return nil, fmt.Errorf("error building ClickHouse query: %w", err)
+	}
+
+	cteAndJoinResult := s.buildFilterCTEsAndJoins(
+		queryResult.NeedsVisitorJoin,
+		queryResult.NeedsSpeakerJoin,
+		queryResult.NeedsExhibitorJoin,
+		queryResult.NeedsSponsorJoin,
+		queryResult.NeedsCategoryJoin,
+		queryResult.NeedsTypeJoin,
+		queryResult.NeedsEventRankingJoin,
+		queryResult.needsDesignationJoin,
+		queryResult.needsAudienceSpreadJoin,
+		queryResult.NeedsRegionsJoin,
+		queryResult.NeedsLocationIdsJoin,
+		queryResult.NeedsCountryIdsJoin,
+		queryResult.NeedsStateIdsJoin,
+		queryResult.NeedsCityIdsJoin,
+		queryResult.NeedsVenueIdsJoin,
+		queryResult.VisitorWhereConditions,
+		queryResult.SpeakerWhereConditions,
+		queryResult.ExhibitorWhereConditions,
+		queryResult.SponsorWhereConditions,
+		queryResult.CategoryWhereConditions,
+		queryResult.TypeWhereConditions,
+		queryResult.EventRankingWhereConditions,
+		queryResult.JobCompositeWhereConditions,
+		queryResult.AudienceSpreadWhereConditions,
+		queryResult.RegionsWhereConditions,
+		queryResult.LocationIdsWhereConditions,
+		queryResult.CountryIdsWhereConditions,
+		queryResult.StateIdsWhereConditions,
+		queryResult.CityIdsWhereConditions,
+		queryResult.VenueIdsWhereConditions,
+		filterFields,
+	)
+
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinConditionsStr := ""
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	}
+
+	baseWhereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		"edition_type = 'current_edition'",
+		fmt.Sprintf("start_date <= '%s'", endDate),
+		fmt.Sprintf("end_date >= '%s'", startDate),
+	}
+
+	if queryResult.WhereClause != "" {
+		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, whereClauseFixed)
+	}
+	if queryResult.SearchClause != "" {
+		searchClauseFixed := strings.ReplaceAll(queryResult.SearchClause, "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, searchClauseFixed)
+	}
+	if joinConditionsStr != "" {
+		joinConditionsFixed := strings.ReplaceAll(strings.TrimPrefix(joinConditionsStr, "AND "), "ee.", "e.")
+		baseWhereConditions = append(baseWhereConditions, joinConditionsFixed)
+	}
+	whereClause := strings.Join(baseWhereConditions, " AND ")
+
+	startDateParsed, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid startDate format: %w", err)
+	}
+	endDateParsed, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid endDate format: %w", err)
+	}
+	daysDiff := int(endDateParsed.Sub(startDateParsed).Hours()/24) + 1
+
+	query := fmt.Sprintf(`
+		WITH %sdate_series AS (
+			SELECT toDate(addDays(toDate('%s'), number)) AS date
+			FROM numbers(%d)
+		),
+		preFilterEvent AS (
+			SELECT 
+				e.event_uuid,
+				e.event_name,
+				e.start_date,
+				e.end_date,
+				e.editions_audiance_type,
+				e.impactScore,
+				e.event_score,
+				e.PrimaryEventType,
+				toUInt32(dateDiff('day', toDate(e.start_date), toDate(e.end_date))) AS duration
+			FROM testing_db.allevent_ch AS e
+			WHERE %s
+				AND e.start_date <= '%s'
+				AND e.end_date >= '%s'
+		),
+		events AS (
+			SELECT 
+				e.event_uuid AS id,
+				e.event_name AS name,
+				ds.date AS startDateTime,
+				ds.date AS endDateTime,
+				e.duration,
+				multiIf(
+					e.editions_audiance_type = 11000, 'B2B',
+					e.editions_audiance_type = 10100, 'B2C',
+					''
+				) AS audienceType,
+				e.impactScore AS impactScore,
+				e.event_score AS score,
+				e.PrimaryEventType AS primaryEventType,
+				row_number() OVER (
+					PARTITION BY ds.date 
+					ORDER BY 
+						e.event_score DESC,
+						COALESCE(e.editions_audiance_type, 0) ASC,
+						e.start_date DESC,
+						e.duration DESC
+				) AS rn
+			FROM preFilterEvent e
+			INNER JOIN date_series ds ON (
+				e.start_date <= ds.date AND e.end_date >= ds.date
+			)
+		)
+		SELECT 
+			id,
+			name,
+			toString(startDateTime) AS startDateTime,
+			toString(endDateTime) AS endDateTime,
+			audienceType,
+			primaryEventType,
+			impactScore,
+			duration,
+			score
+		FROM events
+		WHERE rn <= 5
+		ORDER BY 
+			startDateTime ASC,
+			score DESC,
+			audienceType ASC,
+			duration DESC
+	`,
+		cteClausesStr,
+		startDate,
+		daysDiff,
+		whereClause,
+		endDate,
+		startDate,
+	)
+
+	log.Printf("Events by week query: %s", query)
+
+	queryStartTime := time.Now()
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	queryDuration := time.Since(queryStartTime)
+	log.Printf("Calendar week query execution time: %v", queryDuration)
+	if err != nil {
+		log.Printf("ClickHouse query error: %v", err)
+		return nil, fmt.Errorf("ClickHouse query error: %w", err)
+	}
+	defer rows.Close()
+
+	var events []map[string]interface{}
+	for rows.Next() {
+		var id, name, startDateTime, endDateTime, audienceType string
+		var primaryEventType *string
+		var impactScore uint32
+		var score int32
+		var duration uint32
+
+		if err := rows.Scan(&id, &name, &startDateTime, &endDateTime, &audienceType, &primaryEventType, &impactScore, &duration, &score); err != nil {
+			log.Printf("Error scanning row: %v", err)
+			continue
+		}
+
+		event := map[string]interface{}{
+			"id":            id,
+			"name":          name,
+			"startDateTime": startDateTime,
+			"endDateTime":   endDateTime,
+			"audienceType":  audienceType,
+			"impactScore":   impactScore,
+			"duration":      duration,
+			"score":         score,
+		}
+
+		if primaryEventType != nil {
+			if slug, exists := EventTypeById[*primaryEventType]; exists {
+				event["primaryEventType"] = slug
+			} else {
+				event["primaryEventType"] = nil
+			}
+		} else {
+			event["primaryEventType"] = nil
+		}
+
+		events = append(events, event)
+	}
+
+	transformedEvents := s.transformDataService.TransformEventsByWeek(events)
+
+	return fiber.Map{
+		"events": transformedEvents,
+	}, nil
+}
+
+func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDto) (*ListResult, error) {
+	if filterFields.ParsedDateView == nil {
+		return &ListResult{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: "dateView is required for trends view",
+		}, nil
+	}
+
+	dateView := *filterFields.ParsedDateView
+
+	if dateView != "day" && dateView != "week" && dateView != "month" && dateView != "year" {
+		return &ListResult{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: fmt.Sprintf("dateView '%s' not supported. Valid options are: day, week, month, year", dateView),
+		}, nil
+	}
+
+	var startDate, endDate string
+	if len(filterFields.ParsedTrackerDates) == 2 {
+		startDate = filterFields.ParsedTrackerDates[0]
+		endDate = filterFields.ParsedTrackerDates[1]
+	} else {
+		if filterFields.ActiveGte != "" && filterFields.ActiveLte != "" {
+			startDate = filterFields.ActiveGte
+			endDate = filterFields.ActiveLte
+		} else if filterFields.ParsedActiveBetween != nil {
+			startDate = filterFields.ParsedActiveBetween.Start
+			endDate = filterFields.ParsedActiveBetween.End
+		} else if filterFields.ParsedPastBetween != nil {
+			startDate = filterFields.ParsedPastBetween.Start
+			endDate = filterFields.ParsedPastBetween.End
+		} else {
+			return &ListResult{
+				StatusCode:   http.StatusBadRequest,
+				ErrorMessage: "startDate and endDate are required (use trackerDates, active.gte/active.lte, activeBetween, or pastBetween)",
+			}, nil
+		}
+	}
+
+	if len(filterFields.ParsedColumns) == 0 {
+		return &ListResult{
+			StatusCode:   http.StatusBadRequest,
+			ErrorMessage: "columns are required for trends view",
+		}, nil
+	}
+
+	queryResult, err := s.buildClickHouseQuery(filterFields)
+	if err != nil {
+		return &ListResult{
+			StatusCode:   http.StatusInternalServerError,
+			ErrorMessage: fmt.Sprintf("error building ClickHouse query: %v", err),
+		}, nil
+	}
+
+	cteAndJoinResult := s.buildFilterCTEsAndJoins(
+		queryResult.NeedsVisitorJoin, queryResult.NeedsSpeakerJoin, queryResult.NeedsExhibitorJoin,
+		queryResult.NeedsSponsorJoin, queryResult.NeedsCategoryJoin, queryResult.NeedsTypeJoin,
+		queryResult.NeedsEventRankingJoin, queryResult.needsDesignationJoin, queryResult.needsAudienceSpreadJoin,
+		queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
+		queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
+		queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
+		queryResult.SponsorWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+		queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
+		queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
+		queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
+		filterFields,
+	)
+
+	type trendsCountResult struct {
+		result map[string]interface{}
+		group  string
+		column string
+		err    error
+	}
+
+	// all queries run in parallel
+	resultsChan := make(chan trendsCountResult, len(filterFields.ParsedColumns)*3)
+
+	for _, column := range filterFields.ParsedColumns {
+		col := column
+		if dateView == "day" {
+			// Day view uses GetEventCountByDay
+			go func(col string) {
+				groupBy := []models.CountGroup{
+					models.CountGroup(*filterFields.ParsedDateView), // dateView (day)
+					models.CountGroup(col),                          // column
+				}
+				result, err := s.GetEventCountByDay(
+					queryResult,
+					&cteAndJoinResult,
+					filterFields,
+					startDate,
+					endDate,
+					"trends",
+					groupBy,
+				)
+				if err != nil {
+					resultsChan <- trendsCountResult{err: err, column: col, group: "total"}
+					return
+				}
+				if resultMap, ok := result.(map[string]interface{}); ok {
+					resultsChan <- trendsCountResult{result: resultMap, column: col, group: "total"}
+				} else {
+					resultsChan <- trendsCountResult{err: fmt.Errorf("unexpected result type for total"), column: col, group: "total"}
+				}
+			}(col)
+
+			go func(col string) {
+				groupBy := []models.CountGroup{
+					models.CountGroup(*filterFields.ParsedDateView), // dateView
+					models.CountGroup(col),                          // column
+					models.CountGroupEventType,                      // eventType
+				}
+				result, err := s.GetEventCountByDay(
+					queryResult,
+					&cteAndJoinResult,
+					filterFields,
+					startDate,
+					endDate,
+					"trends",
+					groupBy,
+				)
+				if err != nil {
+					resultsChan <- trendsCountResult{err: err, column: col, group: "byEventType"}
+					return
+				}
+				if resultMap, ok := result.(map[string]interface{}); ok {
+					resultsChan <- trendsCountResult{result: resultMap, column: col, group: "byEventType"}
+				} else {
+					resultsChan <- trendsCountResult{err: fmt.Errorf("unexpected result type for byEventType"), column: col, group: "byEventType"}
+				}
+			}(col)
+
+			go func(col string) {
+				groupBy := []models.CountGroup{
+					models.CountGroup(*filterFields.ParsedDateView), // dateView
+					models.CountGroup(col),                          // column
+					models.CountGroupEventTypeGroup,                 // eventTypeGroup
+				}
+				result, err := s.GetEventCountByDay(
+					queryResult,
+					&cteAndJoinResult,
+					filterFields,
+					startDate,
+					endDate,
+					"trends",
+					groupBy,
+				)
+				if err != nil {
+					resultsChan <- trendsCountResult{err: err, column: col, group: "byEventTypeGroup"}
+					return
+				}
+				if resultMap, ok := result.(map[string]interface{}); ok {
+					resultsChan <- trendsCountResult{result: resultMap, column: col, group: "byEventTypeGroup"}
+				} else {
+					resultsChan <- trendsCountResult{err: fmt.Errorf("unexpected result type for byEventTypeGroup"), column: col, group: "byEventTypeGroup"}
+				}
+			}(col)
+		} else {
+			go func(col string) {
+				groupBy := []models.CountGroup{
+					models.CountGroup(*filterFields.ParsedDateView), // dateView (week/month/year)
+					models.CountGroup(col),                          // column
+				}
+				result, err := s.GetTrendsCountByLongDurations(
+					queryResult,
+					&cteAndJoinResult,
+					filterFields,
+					dateView,
+					startDate,
+					endDate,
+					groupBy,
+				)
+				if err != nil {
+					resultsChan <- trendsCountResult{err: err, column: col, group: "total"}
+					return
+				}
+				if resultMap, ok := result.(map[string]interface{}); ok {
+					resultsChan <- trendsCountResult{result: resultMap, column: col, group: "total"}
+				} else {
+					resultsChan <- trendsCountResult{err: fmt.Errorf("unexpected result type for total"), column: col, group: "total"}
+				}
+			}(col)
+
+			go func(col string) {
+				groupBy := []models.CountGroup{
+					models.CountGroup(*filterFields.ParsedDateView), // dateView
+					models.CountGroup(col),                          // column
+					models.CountGroupEventType,                      // eventType
+				}
+				result, err := s.GetTrendsCountByLongDurations(
+					queryResult,
+					&cteAndJoinResult,
+					filterFields,
+					dateView,
+					startDate,
+					endDate,
+					groupBy,
+				)
+				if err != nil {
+					resultsChan <- trendsCountResult{err: err, column: col, group: "byEventType"}
+					return
+				}
+				if resultMap, ok := result.(map[string]interface{}); ok {
+					resultsChan <- trendsCountResult{result: resultMap, column: col, group: "byEventType"}
+				} else {
+					resultsChan <- trendsCountResult{err: fmt.Errorf("unexpected result type for byEventType"), column: col, group: "byEventType"}
+				}
+			}(col)
+
+			go func(col string) {
+				groupBy := []models.CountGroup{
+					models.CountGroup(*filterFields.ParsedDateView), // dateView
+					models.CountGroup(col),                          // column
+					models.CountGroupEventTypeGroup,                 // eventTypeGroup
+				}
+				result, err := s.GetTrendsCountByLongDurations(
+					queryResult,
+					&cteAndJoinResult,
+					filterFields,
+					dateView,
+					startDate,
+					endDate,
+					groupBy,
+				)
+				if err != nil {
+					resultsChan <- trendsCountResult{err: err, column: col, group: "byEventTypeGroup"}
+					return
+				}
+				if resultMap, ok := result.(map[string]interface{}); ok {
+					resultsChan <- trendsCountResult{result: resultMap, column: col, group: "byEventTypeGroup"}
+				} else {
+					resultsChan <- trendsCountResult{err: fmt.Errorf("unexpected result type for byEventTypeGroup"), column: col, group: "byEventTypeGroup"}
+				}
+			}(col)
+		}
+	}
+
+	count := make(map[string]map[string]interface{})
+	for i := 0; i < len(filterFields.ParsedColumns)*3; i++ {
+		result := <-resultsChan
+		if result.err != nil {
+			return &ListResult{
+				StatusCode:   http.StatusInternalServerError,
+				ErrorMessage: fmt.Sprintf("error getting trends count for column %s, group %s: %v", result.column, result.group, result.err),
+			}, nil
+		}
+
+		resultMap := result.result
+		for date, dateData := range resultMap {
+			if count[date] == nil {
+				count[date] = make(map[string]interface{})
+			}
+			if count[date][result.column] == nil {
+				count[date][result.column] = make(map[string]interface{})
+			}
+
+			columnData := count[date][result.column].(map[string]interface{})
+			switch result.group {
+			case "total":
+				if totalVal, ok := dateData.(map[string]interface{})["total"]; ok {
+					columnData["total"] = totalVal
+				}
+			case "byEventType":
+				columnData["byEventType"] = dateData
+			case "byEventTypeGroup":
+				columnData["byEventTypeGroup"] = dateData
+			}
+			count[date][result.column] = columnData
+		}
+	}
+
+	defaultGroupedValues := make(map[string]interface{})
+	for _, col := range filterFields.ParsedColumns {
+		defaultGroupedValues[col] = map[string]interface{}{
+			"total":            0,
+			"byEventType":      make(map[string]interface{}),
+			"byEventTypeGroup": make(map[string]interface{}),
+		}
+	}
+
+	groupedDataWithEmptyDates, err := s.addEmptyDates(startDate, endDate, count, defaultGroupedValues, dateView)
+	if err != nil {
+		return &ListResult{
+			StatusCode:   http.StatusInternalServerError,
+			ErrorMessage: fmt.Sprintf("error adding empty dates: %v", err),
+		}, nil
+	}
+
+	thresholdData := s.getThresholdData(groupedDataWithEmptyDates)
+
+	return &ListResult{
+		StatusCode: 200,
+		Data: fiber.Map{
+			"thresholds":  thresholdData,
+			"groupedData": groupedDataWithEmptyDates,
+		},
+	}, nil
+}
+
+func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, groupBy []models.CountGroup) (map[string]interface{}, error) {
+	if len(groupBy) < 2 {
+		return nil, fmt.Errorf("groupBy must have at least 2 elements")
+	}
+
+	column := groupBy[1]
+	secondaryGroupBy := groupBy[2:]
+
+	result := make(map[string]interface{})
+
+	var columns []string
+	var dateIdx, columnIdx, groupByIdx int = -1, -1, -1
+	columnStr := string(column)
+	firstRow := true
+
+	for rows.Next() {
+		if firstRow {
+			columns = rows.Columns()
+			log.Printf("transformTrendsCountByDay: Available columns: %v, looking for column: %s, secondaryGroupBy: %v", columns, columnStr, secondaryGroupBy)
+
+			if len(columns) == 0 {
+				return nil, fmt.Errorf("no columns returned from query")
+			}
+
+			for i, col := range columns {
+				if col == "date" {
+					dateIdx = i
+				} else if col == columnStr {
+					columnIdx = i
+				} else if len(secondaryGroupBy) > 0 {
+					if secondaryGroupBy[0] == models.CountGroupEventType && col == "eventType" {
+						groupByIdx = i
+					} else if secondaryGroupBy[0] == models.CountGroupEventTypeGroup && col == "eventTypeGroup" {
+						groupByIdx = i
+					}
+				}
+			}
+
+			if dateIdx == -1 {
+				return nil, fmt.Errorf("required columns not found in result: missing 'date' column. Available columns: %v", columns)
+			}
+			if columnIdx == -1 {
+				return nil, fmt.Errorf("required columns not found in result: missing '%s' column. Available columns: %v", columnStr, columns)
+			}
+			if len(secondaryGroupBy) > 0 && groupByIdx == -1 {
+				expectedCol := "eventType"
+				if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
+					expectedCol = "eventTypeGroup"
+				}
+				return nil, fmt.Errorf("required columns not found in result: missing '%s' column for secondary group by. Available columns: %v", expectedCol, columns)
+			}
+
+			firstRow = false
+		}
+
+		scanArgs := make([]interface{}, len(columns))
+		for i, col := range columns {
+			if col == "date" {
+				scanArgs[i] = new(time.Time)
+			} else if col == columnStr {
+				if columnStr == "eventCount" {
+					scanArgs[i] = new(uint64)
+				} else {
+					scanArgs[i] = new(float64)
+				}
+			} else if len(secondaryGroupBy) > 0 && ((secondaryGroupBy[0] == models.CountGroupEventType && col == "eventType") || (secondaryGroupBy[0] == models.CountGroupEventTypeGroup && col == "eventTypeGroup")) {
+				scanArgs[i] = new(string)
+			} else {
+				scanArgs[i] = new(string)
+			}
+		}
+
+		if err := rows.Scan(scanArgs...); err != nil {
+			log.Printf("Error scanning row: %v", err)
+			continue
+		}
+
+		var dateStr string
+		if datePtr, ok := scanArgs[dateIdx].(*time.Time); ok && datePtr != nil {
+			dateStr = datePtr.Format("2006-01-02")
+		} else {
+			log.Printf("Error: date column is not *time.Time")
+			continue
+		}
+
+		var columnValue interface{}
+		if columnStr == "eventCount" {
+			if valPtr, ok := scanArgs[columnIdx].(*uint64); ok && valPtr != nil {
+				columnValue = float64(*valPtr)
+			} else {
+				columnValue = 0
+			}
+		} else {
+			if valPtr, ok := scanArgs[columnIdx].(*float64); ok && valPtr != nil {
+				columnValue = *valPtr
+			} else {
+				columnValue = 0
+			}
+		}
+
+		if result[dateStr] == nil {
+			if len(secondaryGroupBy) > 0 {
+				result[dateStr] = make(map[string]interface{})
+			} else {
+				result[dateStr] = map[string]interface{}{
+					"total": columnValue,
+				}
+			}
+		}
+
+		if len(secondaryGroupBy) > 0 && groupByIdx != -1 {
+			dateData := result[dateStr].(map[string]interface{})
+			var groupKey string
+			if groupValPtr, ok := scanArgs[groupByIdx].(*string); ok && groupValPtr != nil {
+				groupKey = *groupValPtr
+			} else {
+				continue
+			}
+
+			if dateData[groupKey] == nil {
+				dateData[groupKey] = columnValue
+			} else {
+				if existingVal, ok := dateData[groupKey].(float64); ok {
+					if newVal, ok := columnValue.(float64); ok {
+						dateData[groupKey] = existingVal + newVal
+					}
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.Rows, groupBy []models.CountGroup, duration string) (map[string]interface{}, error) {
+	if len(groupBy) < 2 {
+		return nil, fmt.Errorf("groupBy must have at least 2 elements")
+	}
+
+	column := groupBy[1]
+	secondaryGroupBy := groupBy[2:]
+
+	result := make(map[string]interface{})
+
+	var columns []string
+	var dateIdx, columnIdx, groupByIdx int = -1, -1, -1
+	columnStr := string(column)
+	firstRow := true
+
+	for rows.Next() {
+		if firstRow {
+			columns = rows.Columns()
+			log.Printf("transformTrendsCountByLongDurations: Available columns: %v, looking for column: %s, secondaryGroupBy: %v, duration: %s", columns, columnStr, secondaryGroupBy, duration)
+
+			if len(columns) == 0 {
+				return nil, fmt.Errorf("no columns returned from query")
+			}
+
+			for i, col := range columns {
+				if col == "start_date" {
+					dateIdx = i
+				} else if col == columnStr {
+					columnIdx = i
+				} else if len(secondaryGroupBy) > 0 {
+					if secondaryGroupBy[0] == models.CountGroupEventType && col == "eventType" {
+						groupByIdx = i
+					} else if secondaryGroupBy[0] == models.CountGroupEventTypeGroup && col == "eventTypeGroup" {
+						groupByIdx = i
+					}
+				}
+			}
+
+			if dateIdx == -1 {
+				return nil, fmt.Errorf("required columns not found in result: missing 'start_date' column. Available columns: %v", columns)
+			}
+			if columnIdx == -1 {
+				return nil, fmt.Errorf("required columns not found in result: missing '%s' column. Available columns: %v", columnStr, columns)
+			}
+			if len(secondaryGroupBy) > 0 && groupByIdx == -1 {
+				expectedCol := "eventType"
+				if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
+					expectedCol = "eventTypeGroup"
+				}
+				return nil, fmt.Errorf("required columns not found in result: missing '%s' column for secondary group by. Available columns: %v", expectedCol, columns)
+			}
+
+			firstRow = false
+		}
+
+		scanArgs := make([]interface{}, len(columns))
+		for i, col := range columns {
+			if col == "start_date" {
+				scanArgs[i] = new(string)
+			} else if col == columnStr {
+				if columnStr == "eventCount" {
+					scanArgs[i] = new(uint64)
+				} else {
+					scanArgs[i] = new(float64)
+				}
+			} else if len(secondaryGroupBy) > 0 && ((secondaryGroupBy[0] == models.CountGroupEventType && col == "eventType") || (secondaryGroupBy[0] == models.CountGroupEventTypeGroup && col == "eventTypeGroup")) {
+				scanArgs[i] = new(string)
+			} else {
+				scanArgs[i] = new(string)
+			}
+		}
+
+		if err := rows.Scan(scanArgs...); err != nil {
+			log.Printf("Error scanning row: %v", err)
+			continue
+		}
+
+		var dateStr string
+		if datePtr, ok := scanArgs[dateIdx].(*string); ok && datePtr != nil {
+			dateStr = *datePtr
+			switch duration {
+			case "month":
+				parts := strings.Split(dateStr, "-")
+				if len(parts) >= 2 {
+					dateStr = parts[0] + "-" + parts[1]
+				}
+			case "year":
+				parts := strings.Split(dateStr, "-")
+				if len(parts) > 0 {
+					dateStr = parts[0]
+				}
+			}
+		} else {
+			log.Printf("Error: start_date column is not *string")
+			continue
+		}
+
+		var columnValue interface{}
+		if columnStr == "eventCount" {
+			if valPtr, ok := scanArgs[columnIdx].(*uint64); ok && valPtr != nil {
+				columnValue = float64(*valPtr)
+			} else {
+				columnValue = 0
+			}
+		} else {
+			if valPtr, ok := scanArgs[columnIdx].(*float64); ok && valPtr != nil {
+				columnValue = *valPtr
+			} else {
+				columnValue = 0
+			}
+		}
+
+		if result[dateStr] == nil {
+			if len(secondaryGroupBy) > 0 {
+				result[dateStr] = make(map[string]interface{})
+			} else {
+				result[dateStr] = map[string]interface{}{
+					"total": columnValue,
+				}
+			}
+		}
+
+		if len(secondaryGroupBy) > 0 && groupByIdx != -1 {
+			dateData := result[dateStr].(map[string]interface{})
+			var groupKey string
+			if groupValPtr, ok := scanArgs[groupByIdx].(*string); ok && groupValPtr != nil {
+				groupKey = *groupValPtr
+			} else {
+				continue
+			}
+
+			if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
+				// Initialize with business, social, unattended if not exists
+				if dateData[columnStr] == nil {
+					dateData[columnStr] = map[string]interface{}{
+						"business":   0,
+						"social":     0,
+						"unattended": 0,
+					}
+				}
+				columnData := dateData[columnStr].(map[string]interface{})
+				if groupKey == "business" || groupKey == "social" || groupKey == "unattended" {
+					columnData[groupKey] = columnValue
+				}
+			} else {
+				if dateData[columnStr] == nil {
+					dateData[columnStr] = make(map[string]interface{})
+				}
+				columnData := dateData[columnStr].(map[string]interface{})
+				columnData[groupKey] = columnValue
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func (s *SharedFunctionService) addEmptyDates(startDate, endDate string, data map[string]map[string]interface{}, defaultValues map[string]interface{}, dateView string) (map[string]map[string]interface{}, error) {
+	start, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid startDate format: %w", err)
+	}
+	end, err := time.Parse("2006-01-02", endDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid endDate format: %w", err)
+	}
+
+	allDates := []string{}
+
+	switch dateView {
+	case "day":
+		current := start
+		for !current.After(end) {
+			allDates = append(allDates, current.Format("2006-01-02"))
+			current = current.AddDate(0, 0, 1)
+		}
+	case "week":
+		firstWeekStart := start
+		weekday := int(firstWeekStart.Weekday())
+		if weekday == 0 {
+			weekday = 7
+		}
+		firstWeekStart = firstWeekStart.AddDate(0, 0, -(weekday - 1))
+		firstWeekEnd := firstWeekStart.AddDate(0, 0, 6)
+		if firstWeekEnd.After(end) {
+			firstWeekEnd = end
+		}
+		allDates = append(allDates, firstWeekStart.Format("2006-01-02")+"_"+firstWeekEnd.Format("2006-01-02"))
+
+		current := firstWeekStart.AddDate(0, 0, 7)
+		for !current.After(end) {
+			weekStart := current
+			weekEnd := weekStart.AddDate(0, 0, 6)
+			if weekEnd.After(end) {
+				weekEnd = end
+			}
+			allDates = append(allDates, weekStart.Format("2006-01-02")+"_"+weekEnd.Format("2006-01-02"))
+			current = current.AddDate(0, 0, 7)
+		}
+
+		lastWeekStart := time.Date(end.Year(), end.Month(), end.Day(), 0, 0, 0, 0, end.Location())
+		lastWeekday := int(lastWeekStart.Weekday())
+		if lastWeekday == 0 {
+			lastWeekday = 7
+		}
+		lastWeekStart = lastWeekStart.AddDate(0, 0, -(lastWeekday - 1))
+		if lastWeekStart.After(firstWeekStart) && lastWeekStart != firstWeekStart {
+			lastWeekEnd := end
+			allDates = append(allDates, lastWeekStart.Format("2006-01-02")+"_"+lastWeekEnd.Format("2006-01-02"))
+		}
+	case "month":
+		current := time.Date(start.Year(), start.Month(), 1, 0, 0, 0, 0, start.Location())
+		for !current.After(end) {
+			allDates = append(allDates, current.Format("2006-01"))
+			current = current.AddDate(0, 1, 0)
+		}
+	case "year":
+		current := time.Date(start.Year(), 1, 1, 0, 0, 0, 0, start.Location())
+		for !current.After(end) {
+			allDates = append(allDates, current.Format("2006"))
+			current = current.AddDate(1, 0, 0)
+		}
+	default:
+		return nil, fmt.Errorf("unsupported dateView: %s. Valid options are: day, week, month, year", dateView)
+	}
+
+	for _, date := range allDates {
+		if data[date] == nil {
+			defaultCopy := make(map[string]interface{})
+			for k, v := range defaultValues {
+				if vMap, ok := v.(map[string]interface{}); ok {
+					vCopy := make(map[string]interface{})
+					for k2, v2 := range vMap {
+						if v2Map, ok2 := v2.(map[string]interface{}); ok2 {
+							v2Copy := make(map[string]interface{})
+							for k3, v3 := range v2Map {
+								v2Copy[k3] = v3
+							}
+							vCopy[k2] = v2Copy
+						} else {
+							vCopy[k2] = v2
+						}
+					}
+					defaultCopy[k] = vCopy
+				} else {
+					defaultCopy[k] = v
+				}
+			}
+			data[date] = defaultCopy
+		}
+	}
+
+	sortedData := make(map[string]map[string]interface{})
+	dateKeys := make([]string, 0, len(data))
+	for k := range data {
+		dateKeys = append(dateKeys, k)
+	}
+	for i := 0; i < len(dateKeys)-1; i++ {
+		for j := i + 1; j < len(dateKeys); j++ {
+			if dateKeys[i] > dateKeys[j] {
+				dateKeys[i], dateKeys[j] = dateKeys[j], dateKeys[i]
+			}
+		}
+	}
+	for _, k := range dateKeys {
+		sortedData[k] = data[k]
+	}
+
+	return sortedData, nil
+}
+
+func (s *SharedFunctionService) getThresholdData(groupedData map[string]map[string]interface{}) map[string]interface{} {
+	days := len(groupedData)
+	if days == 0 {
+		return make(map[string]interface{})
+	}
+
+	totals := make(map[string]float64)
+
+	for _, dateData := range groupedData {
+		for column, columnData := range dateData {
+			if columnMap, ok := columnData.(map[string]interface{}); ok {
+				var total float64
+				if totalVal, ok := columnMap["total"].(float64); ok {
+					total = totalVal
+				} else if totalVal, ok := columnMap["total"].(int); ok {
+					total = float64(totalVal)
+				} else if totalVal, ok := columnMap["total"].(int64); ok {
+					total = float64(totalVal)
+				} else {
+					total = 0
+				}
+				totals[column] += total
+			}
+		}
+	}
+
+	thresholds := make(map[string]interface{})
+	for column, total := range totals {
+		thresholds[column] = int(math.Round(total / float64(days)))
+	}
+
+	return thresholds
 }
