@@ -588,12 +588,42 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	if len(filterFields.ParsedAudienceSpread) > 0 {
 		result.needsAudienceSpreadJoin = true
-		var jsonConditions []string
+		var isoCodes []string
+		var locationUUIDs []string
+
 		for _, audienceSpread := range filterFields.ParsedAudienceSpread {
-			escapedISO := escapeSqlValue(audienceSpread)
-			jsonConditions = append(jsonConditions, fmt.Sprintf("arrayExists(x -> x.cntry_id = %s AND x.total_count >= 5, user_by_cntry)", escapedISO))
+			trimmed := strings.TrimSpace(audienceSpread)
+			if len(trimmed) > 2 {
+				locationUUIDs = append(locationUUIDs, trimmed)
+			} else {
+				isoCodes = append(isoCodes, trimmed)
+			}
 		}
-		result.AudienceSpreadWhereConditions = append(result.AudienceSpreadWhereConditions, fmt.Sprintf("(%s)", strings.Join(jsonConditions, " AND ")))
+
+		if len(locationUUIDs) > 0 {
+			uuidISOs, err := s.getISOFromLocationUUIDs(locationUUIDs)
+			if err != nil {
+				log.Printf("Error fetching ISO codes from location UUIDs: %v", err)
+				return nil, fmt.Errorf("error fetching ISO codes from location UUIDs: %w", err)
+			}
+			isoCodes = append(isoCodes, uuidISOs...)
+		}
+
+		isoSet := make(map[string]bool)
+		for _, iso := range isoCodes {
+			if iso != "" {
+				isoSet[iso] = true
+			}
+		}
+
+		if len(isoSet) > 0 {
+			var jsonConditions []string
+			for iso := range isoSet {
+				escapedISO := escapeSqlValue(iso)
+				jsonConditions = append(jsonConditions, fmt.Sprintf("arrayExists(x -> x.cntry_id = %s AND x.total_count >= 5, user_by_cntry)", escapedISO))
+			}
+			result.AudienceSpreadWhereConditions = append(result.AudienceSpreadWhereConditions, fmt.Sprintf("(%s)", strings.Join(jsonConditions, " AND ")))
+		}
 	}
 
 	if len(filterFields.ParsedRegions) > 0 {
@@ -2730,6 +2760,62 @@ func (s *SharedFunctionService) validateParameters(filterFields models.FilterDat
 	}
 
 	return filterFields, nil
+}
+
+// getISOFromLocationUUIDs queries location_ch table to get ISO codes for given location UUIDs
+// where location_type = 'COUNTRY'
+func (s *SharedFunctionService) getISOFromLocationUUIDs(locationUUIDs []string) ([]string, error) {
+	if len(locationUUIDs) == 0 {
+		return []string{}, nil
+	}
+
+	escapeSqlValue := func(value string) string {
+		if value == "" {
+			return ""
+		}
+		escaped := strings.ReplaceAll(value, "'", "''")
+		return fmt.Sprintf("'%s'", escaped)
+	}
+
+	uuidList := make([]string, 0, len(locationUUIDs))
+	for _, uuid := range locationUUIDs {
+		escapedUUID := escapeSqlValue(uuid)
+		uuidList = append(uuidList, escapedUUID)
+	}
+	uuidListStr := strings.Join(uuidList, ",")
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT iso
+		FROM testing_db.location_ch
+		WHERE location_type = 'COUNTRY' 
+		AND id_uuid IN (%s)
+		AND iso IS NOT NULL
+		AND iso != ''
+	`, uuidListStr)
+
+	log.Printf("Fetching ISO codes from location UUIDs query: %s", query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("Error fetching ISO codes from location UUIDs: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var isoCodes []string
+	for rows.Next() {
+		var iso string
+		if err := rows.Scan(&iso); err != nil {
+			log.Printf("Error scanning ISO code row: %v", err)
+			continue
+		}
+		if iso != "" {
+			isoCodes = append(isoCodes, iso)
+		}
+	}
+
+	log.Printf("Found %d ISO codes from %d location UUIDs", len(isoCodes), len(locationUUIDs))
+	return isoCodes, nil
 }
 
 type EventLocationData struct {
