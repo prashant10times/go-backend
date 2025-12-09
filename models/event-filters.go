@@ -686,8 +686,11 @@ func (f *FilterDataDto) Validate() error {
 			modes := strings.Split(modeStr, ",")
 			if len(modes) > 0 {
 				mode := strings.TrimSpace(modes[0])
-				if mode != "online" && mode != "physical" && mode != "hybrid" {
-					return validation.NewError("invalid_mode", "Invalid mode value: "+mode+". Must be 'online', 'physical', or 'hybrid'")
+				if mode != "online" && mode != "in_person" && mode != "hybrid" {
+					return validation.NewError("invalid_mode", "Invalid mode value: "+mode+". Must be 'online', 'in_person', or 'hybrid'")
+				}
+				if mode == "in_person" {
+					mode = "offline"
 				}
 				f.ParsedMode = &mode
 			}

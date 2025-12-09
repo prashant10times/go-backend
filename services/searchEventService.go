@@ -1525,6 +1525,20 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				} else {
 					rowData[col] = nil
 				}
+			case "format":
+				if formatVal, ok := val.(*string); ok && formatVal != nil {
+					formatStr := strings.ToLower(strings.TrimSpace(*formatVal))
+					if formatStr == "offline" {
+						rowData[col] = "in-person"
+					} else if formatStr != "" {
+						result := strings.ToLower(*formatVal)
+						rowData[col] = result
+					} else {
+						rowData[col] = nil
+					}
+				} else {
+					rowData[col] = nil
+				}
 			default:
 				if ptr, ok := val.(*string); ok && ptr != nil {
 					if strings.TrimSpace(*ptr) == "" {
@@ -2106,18 +2120,17 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		combinedData = append(combinedData, combinedEvent)
 	}
 
-	if fieldCtx.Processor.GetShowValues() != "" && filterFields.View != "" {
-		viewLower := strings.ToLower(strings.TrimSpace(filterFields.View))
-		if viewLower == "promote" {
-			transformedData := s.getPromoteEventListingResponse(combinedData)
-			return &ListResult{
-				StatusCode: 200,
-				Data:       transformedData,
-				Count:      totalCount,
-			}, nil
-		}
+	viewLower := strings.ToLower(strings.TrimSpace(filterFields.View))
+	if viewLower == "promote" {
+		log.Printf("Transforming data for promote view: %v", viewLower)
+		transformedData := s.getPromoteEventListingResponse(combinedData)
+		return &ListResult{
+			StatusCode: 200,
+			Data:       transformedData,
+			Count:      totalCount,
+		}, nil
 	}
-
+	log.Printf("Returning combined data: %v", combinedData)
 	return &ListResult{
 		StatusCode: 200,
 		Data:       combinedData,
@@ -2498,7 +2511,11 @@ func (s *SearchEventService) getPromoteEventListingResponse(events []map[string]
 			description = val
 		}
 		if val, ok := basic["format"]; ok {
-			format = val
+			if val == "OFFLINE" {
+				format = "in-person"
+			} else {
+				format = strings.ToLower(val.(string))
+			}
 		}
 		if val, ok := basic["primaryEventType"]; ok {
 			primaryEventType = val

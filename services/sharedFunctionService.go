@@ -319,8 +319,9 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 
 	isAggregationView := strings.Contains(filterFields.View, "agg")
 	isMapView := strings.Contains(filterFields.View, "map")
+	isPromoteView := strings.Contains(filterFields.View, "promote")
 
-	log.Printf("isAggregationView: %v, isMapView: %v, View: '%s'", isAggregationView, isMapView, filterFields.View)
+	log.Printf("isAggregationView: %v, isMapView: %v, isPromoteView: %v, View: '%s'", isAggregationView, isMapView, isPromoteView, filterFields.View)
 
 	if isAggregationView {
 		log.Printf("Query type determined: AGGREGATION")
@@ -330,6 +331,11 @@ func (s *SharedFunctionService) determineQueryType(filterFields models.FilterDat
 	if isMapView {
 		log.Printf("Query type determined: MAP")
 		return "MAP", nil
+	}
+
+	if isPromoteView {
+		log.Printf("Query type determined: PROMOTE")
+		return "LIST", nil
 	}
 
 	log.Printf("Query type determined: LIST")
@@ -980,14 +986,15 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	}
 
 	if filterFields.ParsedMode != nil {
+		log.Printf("Parsed mode: %v", filterFields.ParsedMode)
 		mode := *filterFields.ParsedMode
 		switch mode {
 		case "hybrid":
 			whereConditions = append(whereConditions, "ee.event_format = 'HYBRID'")
 		case "online":
 			whereConditions = append(whereConditions, "ee.event_format = 'ONLINE'")
-		case "physical":
-			whereConditions = append(whereConditions, "ee.event_format = 'PHYSICAL'")
+		case "offline":
+			whereConditions = append(whereConditions, "ee.event_format = 'OFFLINE'")
 		}
 	}
 
