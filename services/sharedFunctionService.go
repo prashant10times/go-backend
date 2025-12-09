@@ -577,7 +577,89 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		result.EventRankingWhereConditions = append(result.EventRankingWhereConditions, fmt.Sprintf("event_rank <= %s", eventRankingValue))
 	}
 
-	if len(filterFields.ParsedJobComposite) > 0 {
+	if filterFields.ParsedJobCompositeFilter != nil {
+		result.needsDesignationJoin = true
+		var whereConditions []string
+
+		if len(filterFields.ParsedJobCompositeFilter.DesignationIds) > 0 {
+			designationUUIDs := make([]string, 0, len(filterFields.ParsedJobCompositeFilter.DesignationIds))
+			for _, id := range filterFields.ParsedJobCompositeFilter.DesignationIds {
+				trimmed := strings.TrimSpace(id)
+				if trimmed != "" {
+					designationUUIDs = append(designationUUIDs, escapeSqlValue(trimmed))
+				}
+			}
+			if len(designationUUIDs) > 0 {
+				whereConditions = append(whereConditions, fmt.Sprintf("designation_uuid IN (%s)", strings.Join(designationUUIDs, ",")))
+			}
+		}
+
+		if filterFields.ParsedJobCompositeFilter.Conditions != nil {
+			var conditionsWhere []string
+
+			if len(filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds) > 0 {
+				departmentUUIDs := make([]string, 0, len(filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds))
+				for _, id := range filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds {
+					trimmed := strings.TrimSpace(id)
+					if trimmed != "" {
+						departmentUUIDs = append(departmentUUIDs, escapeSqlValue(trimmed))
+					}
+				}
+				if len(departmentUUIDs) > 0 {
+					conditionsWhere = append(conditionsWhere, fmt.Sprintf("designation_uuid IN (%s)", strings.Join(departmentUUIDs, ",")))
+				}
+			}
+
+			if len(filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds) > 0 {
+				seniorityUUIDs := make([]string, 0, len(filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds))
+				for _, id := range filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds {
+					trimmed := strings.TrimSpace(id)
+					if trimmed != "" {
+						seniorityUUIDs = append(seniorityUUIDs, escapeSqlValue(trimmed))
+					}
+				}
+				if len(seniorityUUIDs) > 0 {
+					conditionsWhere = append(conditionsWhere, fmt.Sprintf("designation_uuid IN (%s)", strings.Join(seniorityUUIDs, ",")))
+				}
+			}
+
+			if len(conditionsWhere) > 0 {
+				conditionsLogic := filterFields.ParsedJobCompositeFilter.Conditions.Logic
+				if conditionsLogic != "" && (conditionsLogic == "AND" || conditionsLogic == "OR") {
+					if len(conditionsWhere) == 1 {
+						whereConditions = append(whereConditions, conditionsWhere[0])
+					} else {
+						combinedCondition := fmt.Sprintf("(%s)", strings.Join(conditionsWhere, fmt.Sprintf(" %s ", conditionsLogic)))
+						whereConditions = append(whereConditions, combinedCondition)
+					}
+				} else {
+					if len(conditionsWhere) == 1 {
+						whereConditions = append(whereConditions, conditionsWhere[0])
+					} else {
+						combinedCondition := strings.Join(conditionsWhere, " AND ")
+						whereConditions = append(whereConditions, combinedCondition)
+					}
+				}
+			}
+		}
+
+		if len(whereConditions) > 0 {
+			mainLogic := filterFields.ParsedJobCompositeFilter.Logic
+			if mainLogic == "" {
+				mainLogic = "AND"
+			}
+
+			var finalCondition string
+			if len(whereConditions) == 1 {
+				finalCondition = whereConditions[0]
+			} else {
+				finalCondition = fmt.Sprintf("(%s)", strings.Join(whereConditions, fmt.Sprintf(" %s ", mainLogic)))
+			}
+
+			result.JobCompositeWhereConditions = append(result.JobCompositeWhereConditions, fmt.Sprintf("%s AND total_visitors >= 5", finalCondition))
+		}
+	} else if len(filterFields.ParsedJobComposite) > 0 {
+		// Fallback: Handle old simple string format (backward compatibility)
 		result.needsDesignationJoin = true
 		jobComposites := make([]string, len(filterFields.ParsedJobComposite))
 		for i, jobComposite := range filterFields.ParsedJobComposite {
@@ -2759,11 +2841,50 @@ func (s *SharedFunctionService) validateParameters(filterFields models.FilterDat
 		filterFields.ParsedSeniorityId = expandedIds
 	}
 
+	if filterFields.ParsedJobCompositeFilter != nil {
+		if filterFields.ParsedJobCompositeFilter.Conditions != nil {
+			if len(filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds) > 0 {
+				expanded, err := s.getDesignationIdsByDepartment(context.Background(), filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds)
+				if err != nil {
+					return filterFields, fmt.Errorf("failed to expand department IDs in jobComposite conditions: %w", err)
+				}
+				expandedSet := make(map[string]bool)
+				for _, id := range expanded {
+					trimmed := strings.TrimSpace(id)
+					if trimmed != "" {
+						expandedSet[trimmed] = true
+					}
+				}
+				filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds = make([]string, 0, len(expandedSet))
+				for id := range expandedSet {
+					filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds = append(filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds, id)
+				}
+			}
+
+			// Expand seniorityIds
+			if len(filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds) > 0 {
+				expanded, err := s.getSeniorityIdsByRole(context.Background(), filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds)
+				if err != nil {
+					return filterFields, fmt.Errorf("failed to expand seniority IDs in jobComposite conditions: %w", err)
+				}
+				expandedSet := make(map[string]bool)
+				for _, id := range expanded {
+					trimmed := strings.TrimSpace(id)
+					if trimmed != "" {
+						expandedSet[trimmed] = true
+					}
+				}
+				filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds = make([]string, 0, len(expandedSet))
+				for id := range expandedSet {
+					filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds = append(filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds, id)
+				}
+			}
+		}
+	}
+
 	return filterFields, nil
 }
 
-// getISOFromLocationUUIDs queries location_ch table to get ISO codes for given location UUIDs
-// where location_type = 'COUNTRY'
 func (s *SharedFunctionService) getISOFromLocationUUIDs(locationUUIDs []string) ([]string, error) {
 	if len(locationUUIDs) == 0 {
 		return []string{}, nil

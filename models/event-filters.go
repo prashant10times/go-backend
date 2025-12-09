@@ -119,6 +119,18 @@ type AlertSearchParams struct {
 	GroupBy     []AlertSearchGroupBy `json:"groupBy,omitempty"`
 }
 
+type JobCompositeConditions struct {
+	Logic         string   `json:"logic,omitempty"` // "AND" or "OR"
+	DepartmentIds []string `json:"departmentIds,omitempty"`
+	SeniorityIds  []string `json:"seniorityIds,omitempty"`
+}
+
+type JobCompositeFilter struct {
+	DesignationIds []string                `json:"designationIds,omitempty"`
+	Logic          string                  `json:"logic,omitempty"` // defaults to "AND"
+	Conditions     *JobCompositeConditions `json:"conditions,omitempty"`
+}
+
 type FilterDataDto struct {
 	Q              string `json:"q,omitempty" form:"q"`
 	EventIds       string `json:"eventIds,omitempty" form:"eventIds"`
@@ -280,48 +292,49 @@ type FilterDataDto struct {
 	EconomicImpactGte     string `json:"economicImpact.gte,omitempty" form:"economicImpact.gte"`
 	EconomicImpactLte     string `json:"economicImpact.lte,omitempty" form:"economicImpact.lte"`
 
-	ParsedCategory        []string     `json:"-"`
-	ParsedLocationIds     []string     `json:"-"`
-	ParsedCity            []string     `json:"-"`
-	ParsedCountry         []string     `json:"-"`
-	ParsedProducts        []string     `json:"-"`
-	ParsedType            []string     `json:"-"`
-	ParsedEventTypes      []string     `json:"-"`
-	ParsedVenue           []string     `json:"-"`
-	ParsedCompany         []string     `json:"-"`
-	ParsedView            []string     `json:"-"`
-	ParsedToAggregate     []string     `json:"-"`
-	ParsedKeywords        *Keywords    `json:"-"`
-	ParsedIsBranded       *bool        `json:"-"`
-	ParsedMode            *string      `json:"-"`
-	ParsedStatus          []string     `json:"-"`
-	ParsedState           []string     `json:"-"`
-	ParsedCompanyState    []string     `json:"-"`
-	ParsedCompanyCity     []string     `json:"-"`
-	ParsedCompanyDomain   []string     `json:"-"`
-	ParsedCompanyCountry  []string     `json:"-"`
-	ParsedSpeakerState    []string     `json:"-"`
-	ParsedExhibitorState  []string     `json:"-"`
-	ParsedSponsorState    []string     `json:"-"`
-	ParsedVisitorState    []string     `json:"-"`
-	ParsedJobComposite    []string     `json:"-"`
-	ParsedEventRanking    []string     `json:"-"`
-	ParsedAudienceZone    []string     `json:"-"`
-	ParsedAudienceSpread  []string     `json:"-"`
-	ParsedPublished       []string     `json:"-"`
-	ParsedEventTypeGroup  *Groups      `json:"-"`
-	ParsedDesignationId   []string     `json:"-"`
-	ParsedSeniorityId     []string     `json:"-"`
-	ParsedViewBound       *ViewBound   `json:"-"`
-	ParsedViewBounds      []*ViewBound `json:"-"`
-	ParsedEventIds        []string     `json:"-"`
-	ParsedNotEventIds     []string     `json:"-"`
-	ParsedSourceEventIds  []string     `json:"-"`
-	ParsedGroupBy         []CountGroup `json:"-"`
-	ParsedGetNew          *bool        `json:"-"`
-	ParsedEventGroupCount *bool        `json:"-"`
-	ParsedDates           []DateRange  `json:"-"`
-	ParsedPastBetween     *struct {
+	ParsedCategory           []string            `json:"-"`
+	ParsedLocationIds        []string            `json:"-"`
+	ParsedCity               []string            `json:"-"`
+	ParsedCountry            []string            `json:"-"`
+	ParsedProducts           []string            `json:"-"`
+	ParsedType               []string            `json:"-"`
+	ParsedEventTypes         []string            `json:"-"`
+	ParsedVenue              []string            `json:"-"`
+	ParsedCompany            []string            `json:"-"`
+	ParsedView               []string            `json:"-"`
+	ParsedToAggregate        []string            `json:"-"`
+	ParsedKeywords           *Keywords           `json:"-"`
+	ParsedIsBranded          *bool               `json:"-"`
+	ParsedMode               *string             `json:"-"`
+	ParsedStatus             []string            `json:"-"`
+	ParsedState              []string            `json:"-"`
+	ParsedCompanyState       []string            `json:"-"`
+	ParsedCompanyCity        []string            `json:"-"`
+	ParsedCompanyDomain      []string            `json:"-"`
+	ParsedCompanyCountry     []string            `json:"-"`
+	ParsedSpeakerState       []string            `json:"-"`
+	ParsedExhibitorState     []string            `json:"-"`
+	ParsedSponsorState       []string            `json:"-"`
+	ParsedVisitorState       []string            `json:"-"`
+	ParsedJobComposite       []string            `json:"-"`
+	ParsedJobCompositeFilter *JobCompositeFilter `json:"-"`
+	ParsedEventRanking       []string            `json:"-"`
+	ParsedAudienceZone       []string            `json:"-"`
+	ParsedAudienceSpread     []string            `json:"-"`
+	ParsedPublished          []string            `json:"-"`
+	ParsedEventTypeGroup     *Groups             `json:"-"`
+	ParsedDesignationId      []string            `json:"-"`
+	ParsedSeniorityId        []string            `json:"-"`
+	ParsedViewBound          *ViewBound          `json:"-"`
+	ParsedViewBounds         []*ViewBound        `json:"-"`
+	ParsedEventIds           []string            `json:"-"`
+	ParsedNotEventIds        []string            `json:"-"`
+	ParsedSourceEventIds     []string            `json:"-"`
+	ParsedGroupBy            []CountGroup        `json:"-"`
+	ParsedGetNew             *bool               `json:"-"`
+	ParsedEventGroupCount    *bool               `json:"-"`
+	ParsedDates              []DateRange         `json:"-"`
+	ParsedPastBetween        *struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
@@ -1306,12 +1319,47 @@ func (f *FilterDataDto) Validate() error {
 
 		validation.Field(&f.JobComposite, validation.When(f.JobComposite != "", validation.By(func(value interface{}) error {
 			jobCompositeStr := value.(string)
-			jobComposites := strings.Split(jobCompositeStr, ",")
-			f.ParsedJobComposite = make([]string, 0, len(jobComposites))
-			for _, jobComposite := range jobComposites {
-				jobComposite = strings.TrimSpace(jobComposite)
-				if jobComposite != "" {
-					f.ParsedJobComposite = append(f.ParsedJobComposite, jobComposite)
+			jobCompositeStr = strings.TrimSpace(jobCompositeStr)
+
+			if strings.HasPrefix(jobCompositeStr, "{") {
+				var jobCompositeFilter JobCompositeFilter
+				if err := json.Unmarshal([]byte(jobCompositeStr), &jobCompositeFilter); err != nil {
+					return validation.NewError("invalid_job_composite_json", "Invalid jobComposite JSON format: "+err.Error())
+				}
+
+				if jobCompositeFilter.Logic != "" && jobCompositeFilter.Logic != "AND" && jobCompositeFilter.Logic != "OR" {
+					return validation.NewError("invalid_job_composite_logic", "Invalid logic value. Must be 'AND' or 'OR'")
+				}
+
+				if jobCompositeFilter.Logic == "" {
+					jobCompositeFilter.Logic = "AND"
+				}
+
+				if jobCompositeFilter.Conditions != nil {
+					if jobCompositeFilter.Conditions.Logic != "" && jobCompositeFilter.Conditions.Logic != "AND" && jobCompositeFilter.Conditions.Logic != "OR" {
+						return validation.NewError("invalid_job_composite_conditions_logic", "Invalid conditions logic value. Must be 'AND' or 'OR'")
+					}
+
+					hasDepartmentOrSeniority := len(jobCompositeFilter.Conditions.DepartmentIds) > 0 || len(jobCompositeFilter.Conditions.SeniorityIds) > 0
+					if hasDepartmentOrSeniority && jobCompositeFilter.Conditions.Logic == "" {
+						return validation.NewError("missing_job_composite_conditions_logic", "logic is required when departmentIds or seniorityIds is provided in conditions")
+					}
+
+					if jobCompositeFilter.Conditions.Logic == "" && hasDepartmentOrSeniority {
+						jobCompositeFilter.Conditions.Logic = "AND"
+					}
+				}
+
+				f.ParsedJobCompositeFilter = &jobCompositeFilter
+			} else {
+				// Parse as simple comma-separated string (backward compatibility)
+				jobComposites := strings.Split(jobCompositeStr, ",")
+				f.ParsedJobComposite = make([]string, 0, len(jobComposites))
+				for _, jobComposite := range jobComposites {
+					jobComposite = strings.TrimSpace(jobComposite)
+					if jobComposite != "" {
+						f.ParsedJobComposite = append(f.ParsedJobComposite, jobComposite)
+					}
 				}
 			}
 			return nil
