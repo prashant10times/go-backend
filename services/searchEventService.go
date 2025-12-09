@@ -2122,7 +2122,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 	viewLower := strings.ToLower(strings.TrimSpace(filterFields.View))
 	if viewLower == "promote" {
-		log.Printf("Transforming data for promote view: %v", viewLower)
 		transformedData := s.getPromoteEventListingResponse(combinedData)
 		return &ListResult{
 			StatusCode: 200,
@@ -2130,7 +2129,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			Count:      totalCount,
 		}, nil
 	}
-	log.Printf("Returning combined data: %v", combinedData)
 	return &ListResult{
 		StatusCode: 200,
 		Data:       combinedData,
