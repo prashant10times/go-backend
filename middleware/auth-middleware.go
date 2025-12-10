@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log"
 	auth "search-event-go/auth"
+	"search-event-go/config"
 	"search-event-go/models"
 	"search-event-go/redis"
 	"strings"
@@ -27,9 +28,29 @@ func JwtAuthMiddleware(db *gorm.DB) fiber.Handler {
 		}
 		token := strings.TrimPrefix(authHeader, "Bearer ")
 
+		// Load config to check for infinite validity users
+		cfg := config.LoadConfig()
 		claims, err := auth.ParseToken(token)
 		if err != nil {
-			return NewAuthorizationError("Invalid or expired token", err.Error())
+			log.Printf("ParseToken failed with error: %v - attempting ParseTokenWithoutExpiration", err)
+			claimsWithoutExp, parseErr := auth.ParseTokenWithoutExpiration(token)
+			if parseErr != nil {
+				log.Printf("ParseTokenWithoutExpiration also failed: %v", parseErr)
+				return NewAuthorizationError("Invalid or expired token", err.Error())
+			}
+			log.Printf("ParseTokenWithoutExpiration succeeded, claims: %v", claimsWithoutExp)
+
+			if hasInfiniteTokenValidity(claimsWithoutExp.UserId, cfg.UnlimitedAccessUserIDs) {
+				log.Printf("User %s has infinite token validity, allowing expired token", claimsWithoutExp.UserId)
+				claims = claimsWithoutExp
+			} else {
+				return NewAuthorizationError("Invalid or expired token", err.Error())
+			}
+		} else {
+			// Token is valid, log expiration info
+			if claims.ExpiresAt != nil {
+				log.Printf("Token is valid, expires at: %v", claims.ExpiresAt.Time)
+			}
 		}
 
 		if claims.UserId == "" {
@@ -43,15 +64,21 @@ func JwtAuthMiddleware(db *gorm.DB) fiber.Handler {
 		var user map[string]interface{}
 		var fromCache bool
 
-		// Check if this specific token is explicitly revoked
-		if redis.GetClient() != nil {
+		// Check if user has infinite token validity (calculate once)
+		hasInfiniteValidity := hasInfiniteTokenValidity(claims.UserId, cfg.UnlimitedAccessUserIDs)
+
+		// Check token validity: First try Redis, fallback to database if Redis is down
+		redisAvailable := redis.GetClient() != nil
+		tokenValidInRedis := false
+
+		if redisAvailable && !hasInfiniteValidity {
 			tokenValid, err := redis.GetClient().Get(context.Background(), tokenCacheKey).Result()
 			if err == nil && tokenValid == "revoked" {
 				return NewAuthorizationError("Token has been revoked")
 			}
-
-			// If token is marked as valid, try to get user from cache
 			if err == nil && tokenValid == "valid" {
+				tokenValidInRedis = true
+				// Try to get user from cache
 				cachedUser, err = redis.GetClient().Get(context.Background(), cacheKey).Result()
 				if err == nil && cachedUser != "" {
 					user = make(map[string]interface{})
@@ -62,6 +89,27 @@ func JwtAuthMiddleware(db *gorm.DB) fiber.Handler {
 						fromCache = true
 					}
 				}
+			}
+		}
+
+		// Fallback to database token validation
+		// - If Redis is down: Always validate from database (for all users)
+		// - If Redis is up but token not cached: Validate from database (except infinite validity users for performance)
+		if !redisAvailable {
+			// Redis is down, validate from database (all users including infinite validity)
+			var apiToken models.APIToken
+			result := db.Where("token = ? AND is_active = ?", token, true).First(&apiToken)
+			if result.Error != nil {
+				log.Printf("Token not found in database or inactive: %v", result.Error)
+				return NewAuthorizationError("Token is not active or has been revoked")
+			}
+		} else if !tokenValidInRedis && !fromCache && !hasInfiniteValidity {
+			// Redis is up but token not cached, validate from database (first request, skip infinite validity for performance)
+			var apiToken models.APIToken
+			result := db.Where("token = ? AND is_active = ?", token, true).First(&apiToken)
+			if result.Error != nil {
+				log.Printf("Token not found in database or inactive: %v", result.Error)
+				return NewAuthorizationError("Token is not active or has been revoked")
 			}
 		}
 
@@ -119,4 +167,18 @@ func JwtAuthMiddleware(db *gorm.DB) fiber.Handler {
 		c.Locals("userId", claims.UserId)
 		return c.Next()
 	}
+}
+
+func hasInfiniteTokenValidity(userId, infiniteValidityUserIDs string) bool {
+	if infiniteValidityUserIDs == "" {
+		return false
+	}
+
+	userIDs := strings.Split(infiniteValidityUserIDs, ",")
+	for _, id := range userIDs {
+		if strings.TrimSpace(id) == userId {
+			return true
+		}
+	}
+	return false
 }

@@ -28,9 +28,9 @@ type Config struct {
 	AllowMethods             string
 	AlertId                  string
 	UnlimitedAccessUserIDs   string // Comma-separated list of user IDs with unlimited access to all filters and parameters
-	EventQueryEncrypt        string 
-	EventChiprIV             string 
-	TEN_TIMES_ID_ENCRYPT_KEY string 
+	EventQueryEncrypt        string
+	EventChiprIV             string
+	TEN_TIMES_ID_ENCRYPT_KEY string
 }
 
 func LoadConfig() *Config {

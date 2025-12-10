@@ -104,14 +104,16 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 	}
 
 	// Store new token in transaction
+	now := time.Now()
 	apiToken := models.APIToken{
-		UserID:   user.ID,
-		Token:    token,
-		IsActive: true,
+		UserID:     user.ID,
+		Token:      token,
+		IsActive:   true,
+		LastUsedAt: &now,
 	}
 
 	err = tx.Where("user_id = ?", user.ID).
-		Assign(models.APIToken{Token: token, IsActive: true}).
+		Assign(models.APIToken{Token: token, IsActive: true, LastUsedAt: &now}).
 		FirstOrCreate(&apiToken).Error
 	if err != nil {
 		tx.Rollback()
@@ -175,21 +177,28 @@ func (h *LoginHandler) Login(c *fiber.Ctx) error {
 				}
 			}
 		}
-		// Revoke old token immediately
+		// Revoke old token immediately in Redis
 		if oldToken != "" && oldToken != token {
 			redis.GetClient().Set(context.Background(), "token:"+oldToken, "revoked", time.Hour*24)
-			log.Printf("Revoked old token: %s", oldToken)
+			log.Printf("Revoked old token in Redis: %s", oldToken)
 		}
 	}
 
+	// Defensive: Mark old tokens inactive before creating new one, handles edge cases where multiple active tokens might exist
+	h.db.Model(&models.APIToken{}).
+		Where("user_id = ? AND is_active = ?", user.ID, true).
+		Update("is_active", false)
+
+	now := time.Now()
 	apiToken := models.APIToken{
-		UserID:   user.ID,
-		Token:    token,
-		IsActive: true,
+		UserID:     user.ID,
+		Token:      token,
+		IsActive:   true,
+		LastUsedAt: &now,
 	}
 
 	err = h.db.Where("user_id = ?", user.ID).
-		Assign(models.APIToken{Token: token, IsActive: true}).
+		Assign(models.APIToken{Token: token, IsActive: true, LastUsedAt: &now}).
 		FirstOrCreate(&apiToken).Error
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": "Failed to store token"})

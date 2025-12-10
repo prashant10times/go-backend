@@ -42,3 +42,29 @@ func ParseToken(tokenStr string) (*JwtCustomClaims, error) {
 	}
 	return nil, errors.New("invalid token")
 }
+
+func ParseTokenWithoutExpiration(tokenStr string) (*JwtCustomClaims, error) {
+	parser := jwt.NewParser(jwt.WithoutClaimsValidation())
+
+	token, err := parser.ParseWithClaims(tokenStr, &JwtCustomClaims{}, func(token *jwt.Token) (interface{}, error) {
+		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, errors.New("unexpected signing method")
+		}
+		return []byte(jwtSecret), nil
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	claims, ok := token.Claims.(*JwtCustomClaims)
+	if !ok {
+		return nil, errors.New("invalid token claims")
+	}
+
+	if !token.Valid {
+		return nil, errors.New("invalid token signature")
+	}
+
+	return claims, nil
+}
