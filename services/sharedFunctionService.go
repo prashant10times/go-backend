@@ -565,7 +565,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		for i, t := range filterFields.ParsedType {
 			types[i] = escapeSqlValue(t)
 		}
-		result.TypeWhereConditions = append(result.TypeWhereConditions, fmt.Sprintf("name IN (%s)", strings.Join(types, ",")))
+		result.TypeWhereConditions = append(result.TypeWhereConditions, fmt.Sprintf("etc.name IN (%s)", strings.Join(types, ",")))
 	}
 
 	if len(filterFields.ParsedEventTypes) > 0 {
@@ -574,7 +574,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		for i, et := range filterFields.ParsedEventTypes {
 			eventTypes[i] = escapeSqlValue(et)
 		}
-		result.TypeWhereConditions = append(result.TypeWhereConditions, fmt.Sprintf("eventtype_uuid IN (%s)", strings.Join(eventTypes, ",")))
+		result.TypeWhereConditions = append(result.TypeWhereConditions, fmt.Sprintf("etc.eventtype_uuid IN (%s)", strings.Join(eventTypes, ",")))
 	}
 
 	if len(filterFields.ParsedEventRanking) > 0 {
@@ -1070,6 +1070,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 type CTEAndJoinResult struct {
 	CTEClauses     []string
 	JoinConditions []string
+	JoinClausesStr string // JOIN clause for event_type_ch
 }
 
 func (s *SharedFunctionService) buildFilterCTEsAndJoins(
@@ -1108,6 +1109,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	result := CTEAndJoinResult{
 		CTEClauses:     make([]string, 0),
 		JoinConditions: make([]string, 0),
+		JoinClausesStr: "",
 	}
 
 	previousCTE := ""
@@ -1314,40 +1316,53 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	}
 
 	if needsTypeJoin {
-		typeWhereClause := ""
+		// OLD LOGIC: Creating filtered_types CTE - COMMENTED OUT
+		// We now use direct JOIN instead of CTE for better performance
+		// typeWhereClause := ""
+		// if len(typeWhereConditions) > 0 {
+		// 	typeWhereClause = fmt.Sprintf("WHERE %s", strings.Join(typeWhereConditions, " AND "))
+		// }
+		//
+		// typeQuery := fmt.Sprintf(`filtered_types AS (
+		// 	SELECT event_id
+		// 	FROM testing_db.event_type_ch
+		// 	%s`, typeWhereClause)
+		//
+		// if previousCTE != "" {
+		// 	var selectColumn string
+		// 	if previousCTE == "filtered_categories" {
+		// 		selectColumn = "event"
+		// 	} else {
+		// 		selectColumn = "event_id"
+		// 	}
+		// 	typeQuery = fmt.Sprintf(`filtered_types AS (
+		// 		SELECT event_id
+		// 		FROM testing_db.event_type_ch
+		// 		WHERE event_id IN (SELECT %s FROM %s)`, selectColumn, previousCTE)
+		// 	if len(typeWhereConditions) > 0 {
+		// 		typeQuery += fmt.Sprintf(`
+		// 		AND %s`, strings.Join(typeWhereConditions, " AND "))
+		// 	}
+		// }
+		//
+		// typeQuery += `
+		// 	GROUP BY event_id
+		// 	-- ORDER BY event_id
+		// )`
+		//
+		// result.CTEClauses = append(result.CTEClauses, typeQuery)
+		// previousCTE = "filtered_types"
+
+		// NEW LOGIC: Build JOIN clause for event_type_ch
+		typeJoinOnClause := "etc.event_id = ee.event_id"
 		if len(typeWhereConditions) > 0 {
-			typeWhereClause = fmt.Sprintf("WHERE %s", strings.Join(typeWhereConditions, " AND "))
+			// Add typeWhereConditions to the ON clause
+			typeJoinOnClause += fmt.Sprintf("\n       AND %s", strings.Join(typeWhereConditions, " AND "))
 		}
+		result.JoinClausesStr = fmt.Sprintf("INNER JOIN testing_db.event_type_ch etc\n        ON %s", typeJoinOnClause)
 
-		typeQuery := fmt.Sprintf(`filtered_types AS (
-			SELECT event_id
-			FROM testing_db.event_type_ch
-			%s`, typeWhereClause)
-
-		if previousCTE != "" {
-			var selectColumn string
-			if previousCTE == "filtered_categories" {
-				selectColumn = "event"
-			} else {
-				selectColumn = "event_id"
-			}
-			typeQuery = fmt.Sprintf(`filtered_types AS (
-				SELECT event_id
-				FROM testing_db.event_type_ch
-				WHERE event_id IN (SELECT %s FROM %s)`, selectColumn, previousCTE)
-			if len(typeWhereConditions) > 0 {
-				typeQuery += fmt.Sprintf(`
-				AND %s`, strings.Join(typeWhereConditions, " AND "))
-			}
-		}
-
-		typeQuery += `
-			GROUP BY event_id
-			-- ORDER BY event_id
-		)`
-
-		result.CTEClauses = append(result.CTEClauses, typeQuery)
-		previousCTE = "filtered_types"
+		// Note: We don't set previousCTE = "filtered_types" anymore since we're not creating a CTE
+		// The previousCTE chain will continue with the next CTE if any
 	}
 
 	if needsEventRankingJoin {
@@ -1356,7 +1371,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		preEventFilterConditions := []string{
 			s.buildPublishedCondition(filterFields),
 			s.buildStatusCondition(filterFields),
-			"edition_type = 'current_edition'",
+			"ee.edition_type = 'current_edition'",
 		}
 		hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
 			filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != ""
@@ -1742,31 +1757,31 @@ func (s *SharedFunctionService) addGeographicFilters(whereConditions *[]string, 
 
 func (s *SharedFunctionService) buildStatusCondition(filterFields models.FilterDataDto) string {
 	if len(filterFields.ParsedStatus) == 0 {
-		return "status != 'U'"
+		return "ee.status != 'U'"
 	}
 	statuses := make([]string, len(filterFields.ParsedStatus))
 	for i, status := range filterFields.ParsedStatus {
 		statuses[i] = fmt.Sprintf("'%s'", status)
 	}
 
-	return fmt.Sprintf("status IN (%s)", strings.Join(statuses, ","))
+	return fmt.Sprintf("ee.status IN (%s)", strings.Join(statuses, ","))
 }
 
 func (s *SharedFunctionService) buildPublishedCondition(filterFields models.FilterDataDto) string {
 	if filterFields.GroupBy != "" && filterFields.GroupBy == "eventTypeGroup" {
-		return "published in (1, 2, 4)"
+		return "ee.published in (1, 2, 4)"
 	}
 	if len(filterFields.ParsedPublished) == 0 {
-		return "published = '1'"
+		return "ee.published = '1'"
 	}
 	if len(filterFields.ParsedPublished) == 1 {
-		return fmt.Sprintf("published = '%s'", filterFields.ParsedPublished[0])
+		return fmt.Sprintf("ee.published = '%s'", filterFields.ParsedPublished[0])
 	}
 	publishedValues := make([]string, len(filterFields.ParsedPublished))
 	for i, published := range filterFields.ParsedPublished {
 		publishedValues[i] = fmt.Sprintf("'%s'", published)
 	}
-	return fmt.Sprintf("published IN (%s)", strings.Join(publishedValues, ","))
+	return fmt.Sprintf("ee.published IN (%s)", strings.Join(publishedValues, ","))
 }
 
 func (s *SharedFunctionService) buildListDataCountQuery(
@@ -1789,13 +1804,20 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
 	}
 
+	// Add JOIN clauses if present
+	joinClauses := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClauses = cteAndJoinResult.JoinClausesStr
+	}
+
 	countQuery := fmt.Sprintf(`
 		WITH %sevent_filter AS (
 			SELECT %s
 			FROM testing_db.allevent_ch AS ee
+			%s
 			WHERE %s 
 			AND %s
-			AND edition_type = 'current_edition'
+			AND ee.edition_type = 'current_edition'
 			%s
 			%s
 			%s
@@ -1813,6 +1835,7 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 	`,
 		cteClausesStr,
 		eventFilterSelectStr,
+		joinClauses,
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
 		func() string {
@@ -1846,8 +1869,8 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 		return 0, err
 	}
 
-	eventFilterSelectFields := []string{"event_id", "edition_id"}
-	eventFilterGroupByFields := []string{"event_id", "edition_id"}
+	eventFilterSelectFields := []string{"ee.event_id as event_id", "ee.edition_id as edition_id"}
+	eventFilterGroupByFields := []string{"ee.event_id", "ee.edition_id"}
 
 	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
 		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
@@ -2135,7 +2158,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 	editionFilterConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"edition_type = 'current_edition'",
+		"ee.edition_type = 'current_edition'",
 		fmt.Sprintf("end_date >= '%s'", today),
 	}
 
@@ -2237,7 +2260,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		preEventFilterConditions := []string{
 			s.buildPublishedCondition(filterFields),
 			s.buildStatusCondition(filterFields),
-			"edition_type = 'current_edition'",
+			"ee.edition_type = 'current_edition'",
 		}
 
 		hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != ""
@@ -3570,7 +3593,7 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 			FROM testing_db.allevent_ch AS ee
 			WHERE %s 
 			AND %s
-			AND edition_type = 'current_edition'
+			AND ee.edition_type = 'current_edition'
 			%s
 			%s
 			%s
@@ -3734,7 +3757,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"edition_type = 'current_edition'",
+		"ee.edition_type = 'current_edition'",
 	}
 	if queryResult.WhereClause != "" {
 		baseWhereConditions = append(baseWhereConditions, queryResult.WhereClause)
@@ -4075,7 +4098,7 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"edition_type = 'current_edition'",
+		"ee.edition_type = 'current_edition'",
 	}
 	if queryResult.WhereClause != "" {
 		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
@@ -4210,7 +4233,7 @@ func (s *SharedFunctionService) GetEventCountByDate(
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"edition_type = 'current_edition'",
+		"ee.edition_type = 'current_edition'",
 	}
 	if queryResult.WhereClause != "" {
 		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
@@ -4342,7 +4365,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"edition_type = 'current_edition'",
+		"ee.edition_type = 'current_edition'",
 		fmt.Sprintf("start_date <= '%s'", endDate),
 		fmt.Sprintf("end_date >= '%s'", startDate),
 	}
@@ -4669,7 +4692,7 @@ func (s *SharedFunctionService) GetTrendsCountByLongDurations(
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"edition_type = 'current_edition'",
+		"ee.edition_type = 'current_edition'",
 		fmt.Sprintf("start_date <= '%s'", endDate),
 		fmt.Sprintf("end_date >= '%s'", startDate),
 	}
@@ -4935,7 +4958,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"edition_type = 'current_edition'",
+		"ee.edition_type = 'current_edition'",
 		fmt.Sprintf("start_date <= '%s'", endDate),
 		fmt.Sprintf("end_date >= '%s'", startDate),
 	}
@@ -5330,7 +5353,7 @@ func (s *SharedFunctionService) BuildEventIdsAlertQuery(params models.AlertSearc
 			SELECT DISTINCT event_id
 			FROM testing_db.allevent_ch
 			WHERE event_uuid IN (%s)
-				AND edition_type = 'current_edition'
+				AND ee.edition_type = 'current_edition'
 		)`, eventUuidsClause))
 	withClause := "WITH " + strings.Join(cteParts, ",\n\t\t")
 
@@ -6185,7 +6208,7 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"edition_type = 'current_edition'",
+		"ee.edition_type = 'current_edition'",
 		fmt.Sprintf("start_date <= '%s'", endDate),
 		fmt.Sprintf("end_date >= '%s'", startDate),
 	}

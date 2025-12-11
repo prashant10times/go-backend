@@ -968,8 +968,8 @@ func (s *SearchEventService) buildEventFilterFields(
 	dbToAliasMap map[string]string,
 	conditionalFields []string,
 ) (*EventFilterFields, []string) {
-	eventFilterSelectFields := []string{"event_id", "edition_id"}
-	eventFilterGroupByFields := []string{"event_id", "edition_id"}
+	eventFilterSelectFields := []string{"ee.event_id as event_id", "ee.edition_id as edition_id"}
+	eventFilterGroupByFields := []string{"ee.event_id", "ee.edition_id"}
 
 	if len(sortClause) > 0 {
 		for _, sort := range sortClause {
@@ -1183,13 +1183,20 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
 	}
 
+	// Add type JOIN clause if present
+	joinClauses := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClauses = cteAndJoinResult.JoinClausesStr
+	}
+
 	eventDataQuery := fmt.Sprintf(`
 		WITH %sevent_filter AS (
 			SELECT %s
 			FROM testing_db.allevent_ch AS ee
+			%s
 			WHERE %s 
 			AND %s
-			AND edition_type = 'current_edition'
+			AND ee.edition_type = 'current_edition'
 			%s
 			%s
 			%s
@@ -1214,6 +1221,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	`,
 		cteClausesStr,
 		eventFilterSelectStr,
+		joinClauses,
 		s.sharedFunctionService.buildPublishedCondition(filterFields),
 		s.sharedFunctionService.buildStatusCondition(filterFields),
 		func() string {
@@ -2157,8 +2165,8 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		}, nil
 	}
 
-	eventFilterSelectFields := []string{"event_id", "edition_id"}
-	eventFilterGroupByFields := []string{"event_id", "edition_id"}
+	eventFilterSelectFields := []string{"ee.event_id as event_id", "ee.edition_id as edition_id"}
+	eventFilterGroupByFields := []string{"ee.event_id", "ee.edition_id"}
 
 	if len(sortClause) > 0 {
 		for _, sort := range sortClause {
@@ -2271,7 +2279,7 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	whereConditions := []string{
 		s.sharedFunctionService.buildPublishedCondition(filterFields),
 		s.sharedFunctionService.buildStatusCondition(filterFields),
-		"edition_type = 'current_edition'",
+		"ee.edition_type = 'current_edition'",
 	}
 	if !hasEndDateFilters {
 		whereConditions = append(whereConditions, fmt.Sprintf("end_date >= '%s'", today))
