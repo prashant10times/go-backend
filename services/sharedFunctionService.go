@@ -1070,7 +1070,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 type CTEAndJoinResult struct {
 	CTEClauses     []string
 	JoinConditions []string
-	JoinClausesStr string // JOIN clause for event_type_ch
+	JoinClausesStr string // JOIN clauses
 }
 
 func (s *SharedFunctionService) buildFilterCTEsAndJoins(
@@ -1113,6 +1113,15 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	}
 
 	previousCTE := ""
+
+	// function to add JOIN clause (only used for type and category which always use JOIN)
+	addJoinClause := func(joinClause string) {
+		if result.JoinClausesStr == "" {
+			result.JoinClausesStr = joinClause
+		} else {
+			result.JoinClausesStr += "\n\t\t" + joinClause
+		}
+	}
 
 	if needsRegionsJoin && len(regionsWhereConditions) > 0 {
 		regionsWhereClause := strings.Join(regionsWhereConditions, " AND ")
@@ -1285,36 +1294,6 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		previousCTE = "filtered_sponsors"
 	}
 
-	if needsCategoryJoin {
-		categoryWhereClause := ""
-		if len(categoryWhereConditions) > 0 {
-			categoryWhereClause = fmt.Sprintf("WHERE %s", strings.Join(categoryWhereConditions, " AND "))
-		}
-
-		categoryQuery := fmt.Sprintf(`filtered_categories AS (
-			SELECT event
-			FROM testing_db.event_category_ch
-			%s`, categoryWhereClause)
-
-		if previousCTE != "" {
-			categoryQuery = fmt.Sprintf(`filtered_categories AS (
-				SELECT event
-				FROM testing_db.event_category_ch
-				WHERE event IN (SELECT event_id FROM %s)`, previousCTE)
-			if len(categoryWhereConditions) > 0 {
-				categoryQuery += fmt.Sprintf(`
-				AND %s`, strings.Join(categoryWhereConditions, " AND "))
-			}
-		}
-
-		categoryQuery += `
-			GROUP BY event
-		)`
-
-		result.CTEClauses = append(result.CTEClauses, categoryQuery)
-		previousCTE = "filtered_categories"
-	}
-
 	if needsTypeJoin {
 		// OLD LOGIC: Creating filtered_types CTE - COMMENTED OUT
 		// We now use direct JOIN instead of CTE for better performance
@@ -1353,16 +1332,33 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		// result.CTEClauses = append(result.CTEClauses, typeQuery)
 		// previousCTE = "filtered_types"
 
-		// NEW LOGIC: Build JOIN clause for event_type_ch
+		// Type uses JOIN 
 		typeJoinOnClause := "etc.event_id = ee.event_id"
 		if len(typeWhereConditions) > 0 {
-			// Add typeWhereConditions to the ON clause
-			typeJoinOnClause += fmt.Sprintf("\n       AND %s", strings.Join(typeWhereConditions, " AND "))
+			typeJoinOnClause += fmt.Sprintf("\n\t\t\tAND %s", strings.Join(typeWhereConditions, " AND "))
 		}
-		result.JoinClausesStr = fmt.Sprintf("INNER JOIN testing_db.event_type_ch etc\n        ON %s", typeJoinOnClause)
+		typeJoinClause := fmt.Sprintf("INNER JOIN testing_db.event_type_ch etc\n\t\t\tON %s", typeJoinOnClause)
+		addJoinClause(typeJoinClause)
+	}
 
-		// Note: We don't set previousCTE = "filtered_types" anymore since we're not creating a CTE
-		// The previousCTE chain will continue with the next CTE if any
+	if needsCategoryJoin {
+		categoryJoinOnClause := "ec.event = ee.event_id"
+		if len(categoryWhereConditions) > 0 {
+			prefixedConditions := make([]string, len(categoryWhereConditions))
+			for i, condition := range categoryWhereConditions {
+				prefixedCondition := condition
+				categoryFields := []string{"name", "is_group"}
+				for _, field := range categoryFields {
+					fieldPattern := fmt.Sprintf("\\b%s\\b", field)
+					re := regexp.MustCompile(fieldPattern)
+					prefixedCondition = re.ReplaceAllString(prefixedCondition, fmt.Sprintf("ec.%s", field))
+				}
+				prefixedConditions[i] = prefixedCondition
+			}
+			categoryJoinOnClause += fmt.Sprintf("\n\t\t\tAND %s", strings.Join(prefixedConditions, " AND "))
+		}
+		categoryJoinClause := fmt.Sprintf("INNER JOIN testing_db.event_category_ch ec\n\t\t\tON %s", categoryJoinOnClause)
+		addJoinClause(categoryJoinClause)
 	}
 
 	if needsEventRankingJoin {
@@ -1799,29 +1795,41 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
 	}
 
-	joinConditionsStr := ""
-	if len(cteAndJoinResult.JoinConditions) > 0 {
-		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
-	}
-
-	// Add JOIN clauses if present
 	joinClauses := ""
 	if cteAndJoinResult.JoinClausesStr != "" {
 		joinClauses = cteAndJoinResult.JoinClausesStr
 	}
+
+	whereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		"ee.edition_type = 'current_edition'",
+	}
+
+	if !hasEndDateFilters {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.end_date >= '%s'", today))
+	}
+
+	if queryResult.WhereClause != "" {
+		whereConditions = append(whereConditions, queryResult.WhereClause)
+	}
+
+	if queryResult.SearchClause != "" {
+		whereConditions = append(whereConditions, queryResult.SearchClause)
+	}
+
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		whereConditions = append(whereConditions, cteAndJoinResult.JoinConditions...)
+	}
+
+	whereClause := strings.Join(whereConditions, "\n\t\t\tAND ")
 
 	countQuery := fmt.Sprintf(`
 		WITH %sevent_filter AS (
 			SELECT %s
 			FROM testing_db.allevent_ch AS ee
 			%s
-			WHERE %s 
-			AND %s
-			AND ee.edition_type = 'current_edition'
-			%s
-			%s
-			%s
-			%s
+			WHERE %s
 			GROUP BY %s
 		),
 		event_data AS (
@@ -1835,28 +1843,13 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 	`,
 		cteClausesStr,
 		eventFilterSelectStr,
-		joinClauses,
-		s.buildPublishedCondition(filterFields),
-		s.buildStatusCondition(filterFields),
 		func() string {
-			if !hasEndDateFilters {
-				return fmt.Sprintf("AND end_date >= '%s'", today)
+			if joinClauses != "" {
+				return "\t\t" + joinClauses
 			}
 			return ""
 		}(),
-		func() string {
-			if queryResult.WhereClause != "" {
-				return fmt.Sprintf("AND %s", queryResult.WhereClause)
-			}
-			return ""
-		}(),
-		func() string {
-			if queryResult.SearchClause != "" {
-				return fmt.Sprintf("AND %s", queryResult.SearchClause)
-			}
-			return ""
-		}(),
-		joinConditionsStr,
+		whereClause,
 		eventFilterGroupByStr)
 
 	return countQuery

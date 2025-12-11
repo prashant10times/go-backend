@@ -1178,29 +1178,41 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
 	}
 
-	joinConditionsStr := ""
-	if len(cteAndJoinResult.JoinConditions) > 0 {
-		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
-	}
-
-	// Add type JOIN clause if present
 	joinClauses := ""
 	if cteAndJoinResult.JoinClausesStr != "" {
 		joinClauses = cteAndJoinResult.JoinClausesStr
 	}
+
+	whereConditions := []string{
+		s.sharedFunctionService.buildPublishedCondition(filterFields),
+		s.sharedFunctionService.buildStatusCondition(filterFields),
+		"ee.edition_type = 'current_edition'",
+	}
+
+	if !hasEndDateFilters {
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.end_date >= '%s'", today))
+	}
+
+	if queryResult.WhereClause != "" {
+		whereConditions = append(whereConditions, queryResult.WhereClause)
+	}
+
+	if queryResult.SearchClause != "" {
+		whereConditions = append(whereConditions, queryResult.SearchClause)
+	}
+
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		whereConditions = append(whereConditions, cteAndJoinResult.JoinConditions...)
+	}
+
+	whereClause := strings.Join(whereConditions, "\n\t\t\tAND ")
 
 	eventDataQuery := fmt.Sprintf(`
 		WITH %sevent_filter AS (
 			SELECT %s
 			FROM testing_db.allevent_ch AS ee
 			%s
-			WHERE %s 
-			AND %s
-			AND ee.edition_type = 'current_edition'
-			%s
-			%s
-			%s
-			%s
+			WHERE %s
 			GROUP BY %s
 			%s
 			LIMIT %d OFFSET %d
@@ -1221,28 +1233,13 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	`,
 		cteClausesStr,
 		eventFilterSelectStr,
-		joinClauses,
-		s.sharedFunctionService.buildPublishedCondition(filterFields),
-		s.sharedFunctionService.buildStatusCondition(filterFields),
 		func() string {
-			if !hasEndDateFilters {
-				return fmt.Sprintf("AND end_date >= '%s'", today)
+			if joinClauses != "" {
+				return "\t\t" + joinClauses
 			}
 			return ""
 		}(),
-		func() string {
-			if queryResult.WhereClause != "" {
-				return fmt.Sprintf("AND %s", queryResult.WhereClause)
-			}
-			return ""
-		}(),
-		func() string {
-			if queryResult.SearchClause != "" {
-				return fmt.Sprintf("AND %s", queryResult.SearchClause)
-			}
-			return ""
-		}(),
-		joinConditionsStr,
+		whereClause,
 		eventFilterGroupByStr,
 		eventFilterOrderBy,
 		pagination.Limit, pagination.Offset,
