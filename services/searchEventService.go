@@ -2253,6 +2253,11 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
 	}
 
+	joinClauses := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClauses = cteAndJoinResult.JoinClausesStr
+	}
+
 	joinConditionsStr := ""
 	if len(cteAndJoinResult.JoinConditions) > 0 {
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
@@ -2264,7 +2269,7 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		"ee.edition_type = 'current_edition'",
 	}
 	if !hasEndDateFilters {
-		whereConditions = append(whereConditions, fmt.Sprintf("end_date >= '%s'", today))
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.end_date >= '%s'", today))
 	}
 	if queryResult.WhereClause != "" {
 		whereConditions = append(whereConditions, queryResult.WhereClause)
@@ -2281,6 +2286,7 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		WITH %sevent_filter AS (
 			SELECT %s
 			FROM testing_db.allevent_ch AS ee
+			%s
 			WHERE %s
 			GROUP BY %s
 			%s
@@ -2296,6 +2302,12 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	`,
 		cteClausesStr,
 		eventFilterSelectStr,
+		func() string {
+			if joinClauses != "" {
+				return "\t\t" + joinClauses
+			}
+			return ""
+		}(),
 		whereClause,
 		eventFilterGroupByStr,
 		eventFilterOrderBy,
