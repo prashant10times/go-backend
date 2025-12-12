@@ -1160,17 +1160,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		return "ORDER BY score ASC"
 	}()
 
-	finalOrderByClause := func() string {
-		if finalOrderClause != "" {
-			fixedOrderBy := fieldCtx.FieldsSelector.FixOrderByForFields(finalOrderClause, requiredFieldsStatic)
-			if fixedOrderBy != "" {
-				return fixedOrderBy
-			}
-			return s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true)
-		}
-		return ""
-	}()
-
 	today := time.Now().Format("2006-01-02")
 
 	cteClausesStr := ""
@@ -1225,11 +1214,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				%s
 			%s
 		)
-		SELECT %s
+		SELECT *
 		FROM event_data
-		GROUP BY
-			%s
-		%s
 	`,
 		cteClausesStr,
 		eventFilterSelectStr,
@@ -1243,8 +1229,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		eventFilterGroupByStr,
 		eventFilterOrderBy,
 		pagination.Limit, pagination.Offset,
-		fieldsString, finalGroupByClause, innerOrderBy,
-		finalGroupByClause, finalGroupByClause, finalOrderByClause)
+		fieldsString, finalGroupByClause, innerOrderBy)
 
 	log.Printf("Event data query: %s", eventDataQuery)
 

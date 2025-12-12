@@ -1385,21 +1385,21 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 				selectColumn = "event_id"
 			}
 			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
-				SELECT event_id, edition_id
+				SELECT event_id, edition_id, event_score
 				FROM testing_db.allevent_ch AS ee
 				WHERE event_id IN (SELECT %s FROM %s)
 				AND %s
-				GROUP BY event_id, edition_id
-				ORDER BY event_id ASC
+				GROUP BY event_id, edition_id, event_score
+				ORDER BY event_score DESC
 			)`, selectColumn, previousCTE, preEventFilterWhereClause)
 			result.CTEClauses = append(result.CTEClauses, preEventFilterCTE)
 		} else {
 			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
-				SELECT event_id, edition_id
+				SELECT event_id, edition_id, event_score
 				FROM testing_db.allevent_ch AS ee
 				WHERE %s
-				GROUP BY event_id, edition_id
-				ORDER BY event_id ASC
+				GROUP BY event_id, edition_id, event_score
+				ORDER BY event_score DESC
 			)`, preEventFilterWhereClause)
 			result.CTEClauses = append(result.CTEClauses, preEventFilterCTE)
 		}
