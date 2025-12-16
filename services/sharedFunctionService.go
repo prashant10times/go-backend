@@ -792,8 +792,12 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id IN (%s)", strings.Join(filterFields.ParsedSourceEventIds, ",")))
 	}
 
-	if filterFields.Visibility != "" {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_functionality = %s", escapeSqlValue(filterFields.Visibility)))
+	if len(filterFields.ParsedVisibility) > 0 {
+		escapedVisibilities := make([]string, len(filterFields.ParsedVisibility))
+		for i, visibility := range filterFields.ParsedVisibility {
+			escapedVisibilities[i] = escapeSqlValue(visibility)
+		}
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_functionality IN (%s)", strings.Join(escapedVisibilities, ",")))
 	}
 	if filterFields.EstimatedVisitors != "" {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_estimatedVisitors = %s", escapeSqlValue(filterFields.EstimatedVisitors)))
@@ -1332,7 +1336,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		// result.CTEClauses = append(result.CTEClauses, typeQuery)
 		// previousCTE = "filtered_types"
 
-		// Type uses JOIN 
+		// Type uses JOIN
 		typeJoinOnClause := "etc.event_id = ee.event_id"
 		if len(typeWhereConditions) > 0 {
 			typeJoinOnClause += fmt.Sprintf("\n\t\t\tAND %s", strings.Join(typeWhereConditions, " AND "))

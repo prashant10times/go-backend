@@ -322,6 +322,7 @@ type FilterDataDto struct {
 	ParsedAudienceZone       []string            `json:"-"`
 	ParsedAudienceSpread     []string            `json:"-"`
 	ParsedPublished          []string            `json:"-"`
+	ParsedVisibility         []string            `json:"-"`
 	ParsedEventTypeGroup     *Groups             `json:"-"`
 	ParsedDesignationId      []string            `json:"-"`
 	ParsedSeniorityId        []string            `json:"-"`
@@ -679,7 +680,35 @@ func (f *FilterDataDto) Validate() error {
 
 		validation.Field(&f.Frequency, validation.When(f.Frequency != "", validation.In("Weekly", "Monthly", "Quarterly", "Bi-annual", "Annual", "Biennial", "Triennial", "Quinquennial", "One-time", "Quadrennial"))), // Frequency validation
 
-		validation.Field(&f.Visibility, validation.When(f.Visibility != "", validation.In("open", "private", "draft"))), // Visibility validation
+		validation.Field(&f.Visibility, validation.By(func(value interface{}) error {
+			visibilityStr := value.(string)
+			validVisibilities := map[string]bool{
+				"open":    true,
+				"private": true,
+				"draft":   true,
+			}
+
+			f.ParsedVisibility = []string{"open"}
+
+			if visibilityStr != "" {
+				visibilities := strings.Split(visibilityStr, ",")
+				visibilitySet := map[string]bool{"open": true} // Track to avoid duplicates
+
+				for _, visibility := range visibilities {
+					visibility = strings.TrimSpace(strings.ToLower(visibility))
+					if visibility != "" {
+						if !validVisibilities[visibility] {
+							return validation.NewError("invalid_visibility", "Invalid visibility value: "+visibility+". Valid values are: open, private, draft")
+						}
+						if !visibilitySet[visibility] {
+							f.ParsedVisibility = append(f.ParsedVisibility, visibility)
+							visibilitySet[visibility] = true
+						}
+					}
+				}
+			}
+			return nil
+		})), // Visibility validation
 
 		validation.Field(&f.Mode, validation.When(f.Mode != "", validation.By(func(value interface{}) error {
 			modeStr := value.(string)
