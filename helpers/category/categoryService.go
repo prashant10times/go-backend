@@ -3,6 +3,7 @@ package category
 import (
 	"context"
 	"fmt"
+	"log"
 	"search-event-go/middleware"
 	"search-event-go/models"
 	"search-event-go/services"
@@ -60,7 +61,6 @@ func (s *CategoryService) GetCategory(query models.SearchCategoryDto) (interface
 				name = strings.TrimSpace(name)
 				if name != "" {
 					escapedName := strings.ReplaceAll(name, "'", "''")
-					// Case-insensitive LIKE in ClickHouse using lower()
 					nameConditions = append(nameConditions, fmt.Sprintf("lower(name) LIKE lower('%%%s%%')", escapedName))
 				}
 			}
@@ -99,6 +99,8 @@ func (s *CategoryService) GetCategory(query models.SearchCategoryDto) (interface
 		GROUP BY name, category_uuid, slug, is_group
 		ORDER BY name ASC
 	`, whereClause)
+
+	log.Printf("category query: %s", selectQuery)
 
 	selectQuery += fmt.Sprintf(" LIMIT %d", query.ParsedTake)
 	if query.ParsedSkip > 0 {

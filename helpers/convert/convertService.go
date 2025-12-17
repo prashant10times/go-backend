@@ -31,22 +31,26 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 	categoryChan := make(chan conversionResult, 1)
 
 	go func() {
-		data, err := s.convertEventIds(ctx, query.ParsedEventIds)
+		log.Printf("Getting EVENT ID's Data")
+		data, err := s.convertEventIds(ctx, query.ParsedEventIds, query.ParsedEventUUIDs)
 		eventChan <- conversionResult{data: data, err: err}
 	}()
 
 	go func() {
-		data, err := s.convertCountryIds(ctx, query.ParsedCountryIds)
+		log.Printf("Getting COUNTRY ID's Data")
+		data, err := s.convertCountryIds(ctx, query.ParsedCountryIds, query.ParsedCountryUUIDs)
 		countryChan <- conversionResult{data: data, err: err}
 	}()
 
 	go func() {
-		data, err := s.convertCityIds(ctx, query.ParsedCityIds)
+		log.Printf("Getting CITY ID's Data")
+		data, err := s.convertCityIds(ctx, query.ParsedCityIds, query.ParsedCityUUIDs)
 		cityChan <- conversionResult{data: data, err: err}
 	}()
 
 	go func() {
-		data, err := s.convertCategoryIds(ctx, query.ParsedCategoryIds)
+		log.Printf("Getting CATEGORY ID's Data")
+		data, err := s.convertCategoryIds(ctx, query.ParsedCategoryIds, query.ParsedCategoryUUIDs)
 		categoryChan <- conversionResult{data: data, err: err}
 	}()
 
@@ -80,7 +84,50 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 	return response, nil
 }
 
-func (s *ConvertService) convertEventIds(ctx context.Context, ids []string) (map[string]interface{}, error) {
+func (s *ConvertService) convertEventIds(ctx context.Context, ids []string, uuids []string) (map[string]interface{}, error) {
+	if len(uuids) > 0 {
+		quotedUUIDs := make([]string, 0, len(uuids))
+		for _, uuid := range uuids {
+			uuid = strings.TrimSpace(uuid)
+			if uuid != "" {
+				quotedUUIDs = append(quotedUUIDs, fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''")))
+			}
+		}
+
+		if len(quotedUUIDs) > 0 {
+			query := fmt.Sprintf(`
+				SELECT event_uuid, event_id as id
+				FROM testing_db.allevent_ch
+				WHERE edition_type = 'current_edition' AND event_uuid IN (%s)
+			`, strings.Join(quotedUUIDs, ","))
+
+			log.Printf("convertEventIds uuids query: %s", query)
+			rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			result := make(map[string]interface{})
+			for rows.Next() {
+				var eventUUID string
+				var sourceID uint32
+
+				if err := rows.Scan(&eventUUID, &sourceID); err != nil {
+					return nil, err
+				}
+
+				result[eventUUID] = fmt.Sprintf("%d", sourceID)
+			}
+
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+
+			return result, nil
+		}
+	}
+
 	if len(ids) == 0 {
 		return map[string]interface{}{}, nil
 	}
@@ -129,7 +176,59 @@ func (s *ConvertService) convertEventIds(ctx context.Context, ids []string) (map
 	return result, nil
 }
 
-func (s *ConvertService) convertCategoryIds(ctx context.Context, ids []string) (map[string]interface{}, error) {
+func (s *ConvertService) convertCategoryIds(ctx context.Context, ids []string, uuids []string) (map[string]interface{}, error) {
+	if len(uuids) > 0 {
+		quotedUUIDs := make([]string, 0, len(uuids))
+		for _, uuid := range uuids {
+			uuid = strings.TrimSpace(uuid)
+			if uuid != "" {
+				quotedUUIDs = append(quotedUUIDs, fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''")))
+			}
+		}
+
+		if len(quotedUUIDs) > 0 {
+			query := fmt.Sprintf(`
+				SELECT category_uuid, category, name, is_group, slug
+				FROM testing_db.event_category_ch
+				WHERE category_uuid IN (%s)
+				GROUP BY category_uuid, category, name, is_group, slug
+			`, strings.Join(quotedUUIDs, ","))
+
+			log.Printf("convertCategoryIds uuids query: %s", query)
+			rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			result := make(map[string]interface{})
+			for rows.Next() {
+				var categoryUUID, name, slug string
+				var isGroup uint8
+				var categoryID *uint32
+
+				if err := rows.Scan(&categoryUUID, &categoryID, &name, &isGroup, &slug); err != nil {
+					return nil, err
+				}
+
+				if categoryID != nil {
+					result[categoryUUID] = map[string]interface{}{
+						"id":      fmt.Sprintf("%d", *categoryID),
+						"name":    name,
+						"isGroup": isGroup == 1,
+						"slug":    slug,
+					}
+				}
+			}
+
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+
+			return result, nil
+		}
+	}
+
 	if len(ids) == 0 {
 		return map[string]interface{}{}, nil
 	}
@@ -196,7 +295,50 @@ func (s *ConvertService) convertCategoryIds(ctx context.Context, ids []string) (
 	return result, nil
 }
 
-func (s *ConvertService) convertCountryIds(ctx context.Context, ids []string) (map[string]interface{}, error) {
+func (s *ConvertService) convertCountryIds(ctx context.Context, ids []string, uuids []string) (map[string]interface{}, error) {
+	if len(uuids) > 0 {
+		quotedUUIDs := make([]string, 0, len(uuids))
+		for _, uuid := range uuids {
+			uuid = strings.TrimSpace(uuid)
+			if uuid != "" {
+				quotedUUIDs = append(quotedUUIDs, fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''")))
+			}
+		}
+
+		if len(quotedUUIDs) > 0 {
+			query := fmt.Sprintf(`
+				SELECT id_uuid, name, location_type, replace(id_10x, 'country-', '') as iso
+				FROM testing_db.location_ch
+				WHERE location_type = 'COUNTRY'
+				AND id_uuid IN (%s)
+			`, strings.Join(quotedUUIDs, ","))
+
+			log.Printf("convertCountryIds uuids query: %s", query)
+			rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			result := make(map[string]interface{})
+			for rows.Next() {
+				var locationUUID, name, locationType, iso string
+
+				if err := rows.Scan(&locationUUID, &name, &locationType, &iso); err != nil {
+					return nil, err
+				}
+
+				result[locationUUID] = iso
+			}
+
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+
+			return result, nil
+		}
+	}
+
 	if len(ids) == 0 {
 		return map[string]interface{}{}, nil
 	}
@@ -254,7 +396,53 @@ func (s *ConvertService) convertCountryIds(ctx context.Context, ids []string) (m
 	return result, nil
 }
 
-func (s *ConvertService) convertCityIds(ctx context.Context, ids []string) (map[string]interface{}, error) {
+func (s *ConvertService) convertCityIds(ctx context.Context, ids []string, uuids []string) (map[string]interface{}, error) {
+	if len(uuids) > 0 {
+		quotedUUIDs := make([]string, 0, len(uuids))
+		for _, uuid := range uuids {
+			uuid = strings.TrimSpace(uuid)
+			if uuid != "" {
+				quotedUUIDs = append(quotedUUIDs, fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''")))
+			}
+		}
+
+		if len(quotedUUIDs) > 0 {
+			query := fmt.Sprintf(`
+				SELECT id_uuid, name, location_type, toInt32OrNull(replace(id_10x, 'city-', '')) as idten
+				FROM testing_db.location_ch
+				WHERE location_type = 'CITY'
+				AND id_uuid IN (%s)
+			`, strings.Join(quotedUUIDs, ","))
+
+			log.Printf("convertCityIds uuids query: %s", query)
+			rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+
+			result := make(map[string]interface{})
+			for rows.Next() {
+				var locationUUID, name, locationType string
+				var idten *int32
+
+				if err := rows.Scan(&locationUUID, &name, &locationType, &idten); err != nil {
+					return nil, err
+				}
+
+				if idten != nil {
+					result[locationUUID] = fmt.Sprintf("%d", *idten)
+				}
+			}
+
+			if err := rows.Err(); err != nil {
+				return nil, err
+			}
+
+			return result, nil
+		}
+	}
+
 	if len(ids) == 0 {
 		return map[string]interface{}{}, nil
 	}
