@@ -4,6 +4,7 @@ import (
 	"search-event-go/config"
 	"search-event-go/handlers"
 	"search-event-go/helpers/category"
+	"search-event-go/helpers/convert"
 	"search-event-go/helpers/designation"
 	"search-event-go/middleware"
 	"search-event-go/services"
@@ -37,6 +38,9 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	designationService := designation.NewDesignationService(clickhouseService)
 	designationController := designation.NewDesignationController(designationService)
 
+	convertService := convert.NewConvertService(clickhouseService)
+	convertController := convert.NewConvertController(convertService)
+
 	api := app.Group("/v1")
 	api.Get("/health", healthHandler.HealthCheck)
 	api.Post("/register", authHandler.Register)
@@ -45,6 +49,7 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	// helper module routes
 	app.Get("/categories", categoryController.GetCategories)
 	app.Get("/designations", designationController.GetDesignations)
+	app.Get("/convert/ids", convertController.ConvertIds)
 
 	//protected route
 	api.Use(middleware.JwtAuthMiddleware(dbService.DB))
