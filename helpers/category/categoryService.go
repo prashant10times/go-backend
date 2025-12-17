@@ -8,6 +8,7 @@ import (
 	"search-event-go/models"
 	"search-event-go/services"
 	"strings"
+	"time"
 )
 
 type CategoryService struct {
@@ -87,16 +88,11 @@ func (s *CategoryService) GetCategory(query models.SearchCategoryDto) (interface
 		whereClause = "1=1"
 	}
 
-	// query
 	selectQuery := fmt.Sprintf(`
-		SELECT
-			name,
-			category_uuid,
-			slug,
-			is_group
+		SELECT category, category_uuid, created, is_group, name, short_name, slug, published
 		FROM testing_db.event_category_ch
 		WHERE %s
-		GROUP BY name, category_uuid, slug, is_group
+		GROUP BY category, category_uuid, created, is_group, name, short_name, slug, published
 		ORDER BY name ASC
 	`, whereClause)
 
@@ -113,11 +109,64 @@ func (s *CategoryService) GetCategory(query models.SearchCategoryDto) (interface
 	}
 	defer rows.Close()
 
-	var categories []Category
+	columns := rows.Columns()
+	var categories []map[string]interface{}
+
 	for rows.Next() {
-		var category Category
-		if err := rows.Scan(&category.Name, &category.CategoryUUID, &category.Slug, &category.IsGroup); err != nil {
+		scanArgs := make([]interface{}, len(columns))
+		for i, col := range columns {
+			switch col {
+			case "category", "event", "version":
+				scanArgs[i] = new(uint32)
+			case "is_group":
+				scanArgs[i] = new(uint8)
+			case "published":
+				scanArgs[i] = new(int8)
+			case "created", "last_updated_at":
+				scanArgs[i] = new(time.Time)
+			default:
+				scanArgs[i] = new(string)
+			}
+		}
+
+		if err := rows.Scan(scanArgs...); err != nil {
 			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
+		}
+
+		category := make(map[string]interface{})
+		for i, col := range columns {
+			switch col {
+			case "category", "event", "version":
+				if val, ok := scanArgs[i].(*uint32); ok && val != nil {
+					category[col] = *val
+				} else {
+					category[col] = uint32(0)
+				}
+			case "is_group":
+				if val, ok := scanArgs[i].(*uint8); ok && val != nil {
+					category[col] = *val
+				} else {
+					category[col] = uint8(0)
+				}
+			case "published":
+				if val, ok := scanArgs[i].(*int8); ok && val != nil {
+					category[col] = *val
+				} else {
+					category[col] = int8(0)
+				}
+			case "created", "last_updated_at":
+				if val, ok := scanArgs[i].(*time.Time); ok && val != nil {
+					category[col] = *val
+				} else {
+					category[col] = nil
+				}
+			default:
+				if val, ok := scanArgs[i].(*string); ok && val != nil {
+					category[col] = *val
+				} else {
+					category[col] = ""
+				}
+			}
 		}
 		categories = append(categories, category)
 	}

@@ -18,6 +18,9 @@ func NewCategoryController(categoryService *CategoryService) *CategoryController
 func (c *CategoryController) GetCategories(ctx *fiber.Ctx) error {
 	var query models.SearchCategoryDto
 
+	// parsing '_' and '.' Notation query params
+	query.ID10x = ctx.Query("id_10x")
+
 	if err := ctx.QueryParser(&query); err != nil {
 		return ctx.Status(fiber.StatusBadRequest).JSON(map[string]interface{}{
 			"error": err.Error(),
