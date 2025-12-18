@@ -725,7 +725,15 @@ func (s *ConvertService) convertDesignationIds(ctx context.Context, uuids []stri
 			designationData["id"] = *designationID
 		}
 
-		result[designationUUID] = designationData
+		if existing, exists := result[designationUUID]; exists {
+			if arr, ok := existing.([]interface{}); ok {
+				result[designationUUID] = append(arr, designationData)
+			} else {
+				result[designationUUID] = []interface{}{existing, designationData}
+			}
+		} else {
+			result[designationUUID] = designationData
+		}
 	}
 
 	if err := rows.Err(); err != nil {
@@ -793,7 +801,15 @@ func (s *ConvertService) convertRoleIds(ctx context.Context, uuids []string) (ma
 			designationData["id"] = *designationID
 		}
 
-		result[designationUUID] = designationData
+		if existing, exists := result[designationUUID]; exists {
+			if arr, ok := existing.([]interface{}); ok {
+				result[designationUUID] = append(arr, designationData)
+			} else {
+				result[designationUUID] = []interface{}{existing, designationData}
+			}
+		} else {
+			result[designationUUID] = designationData
+		}
 	}
 
 	if err := rows.Err(); err != nil {
@@ -806,7 +822,6 @@ func (s *ConvertService) convertRoleIds(ctx context.Context, uuids []string) (ma
 func (s *ConvertService) convertDepartmentIds(ctx context.Context, uuids []string) (map[string]interface{}, error) {
 	log.Printf("convertDepartmentIds called with %d UUIDs: %v", len(uuids), uuids)
 	if len(uuids) == 0 {
-		log.Printf("convertDepartmentIds: No UUIDs provided, returning empty map")
 		return map[string]interface{}{}, nil
 	}
 
@@ -819,7 +834,6 @@ func (s *ConvertService) convertDepartmentIds(ctx context.Context, uuids []strin
 	}
 
 	if len(quotedUUIDs) == 0 {
-		log.Printf("convertDepartmentIds: No valid UUIDs after trimming, returning empty map")
 		return map[string]interface{}{}, nil
 	}
 
@@ -863,7 +877,15 @@ func (s *ConvertService) convertDepartmentIds(ctx context.Context, uuids []strin
 			designationData["id"] = *designationID
 		}
 
-		result[designationUUID] = designationData
+		if existing, exists := result[designationUUID]; exists {
+			if arr, ok := existing.([]interface{}); ok {
+				result[designationUUID] = append(arr, designationData)
+			} else {
+				result[designationUUID] = []interface{}{existing, designationData}
+			}
+		} else {
+			result[designationUUID] = designationData
+		}
 	}
 
 	if err := rows.Err(); err != nil {
