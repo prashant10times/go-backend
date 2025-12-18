@@ -13,17 +13,23 @@ type ConvertSchemaDto struct {
 	CategoryIds string `json:"categoryIds,omitempty" form:"categoryIds"`
 	// CityUUIDs   string `json:"cityUUIDs,omitempty" form:"cityUUIDs"`
 	// CountryUUIDs string `json:"countryUUIDs,omitempty" form:"countryUUIDs"`
-	LocationIDs string `json:"locationIDs,omitempty" form:"locationIDs"`
-	EventUUIDs   string `json:"eventUUIDs,omitempty" form:"eventUUIDs"`
-	CategoryUUIDs string `json:"categoryUUIDs,omitempty" form:"categoryUUIDs"`
+	LocationIDs    string `json:"locationIDs,omitempty" form:"locationIDs"`
+	EventUUIDs     string `json:"eventUUIDs,omitempty" form:"eventUUIDs"`
+	CategoryUUIDs  string `json:"categoryUUIDs,omitempty" form:"categoryUUIDs"`
+	DesignationIds string `json:"designationIds,omitempty" form:"designationIds"`
+	RoleIds        string `json:"roleIds,omitempty" form:"roleIds"`
+	DepartmentIds  string `json:"departmentIds,omitempty" form:"departmentIds"`
 
-	ParsedCityIds     []string `json:"-"`
-	ParsedCountryIds  []string `json:"-"`
-	ParsedEventIds    []string `json:"-"`
-	ParsedCategoryIds []string `json:"-"`
-	ParsedLocationIDs   []string `json:"-"`
-	ParsedEventUUIDs   []string `json:"-"`
-	ParsedCategoryUUIDs []string `json:"-"`
+	ParsedCityIds        []string `json:"-"`
+	ParsedCountryIds     []string `json:"-"`
+	ParsedEventIds       []string `json:"-"`
+	ParsedCategoryIds    []string `json:"-"`
+	ParsedLocationIDs    []string `json:"-"`
+	ParsedEventUUIDs     []string `json:"-"`
+	ParsedCategoryUUIDs  []string `json:"-"`
+	ParsedDesignationIds []string `json:"-"`
+	ParsedRoleIds        []string `json:"-"`
+	ParsedDepartmentIds  []string `json:"-"`
 }
 
 func (c *ConvertSchemaDto) Validate() error {
@@ -50,5 +56,8 @@ func (c *ConvertSchemaDto) Validate() error {
 		validation.Field(&c.LocationIDs, validation.When(c.LocationIDs != "", validation.By(parseCSV(&c.ParsedLocationIDs)))),
 		validation.Field(&c.EventUUIDs, validation.When(c.EventUUIDs != "", validation.By(parseCSV(&c.ParsedEventUUIDs)))),
 		validation.Field(&c.CategoryUUIDs, validation.When(c.CategoryUUIDs != "", validation.By(parseCSV(&c.ParsedCategoryUUIDs)))),
+		validation.Field(&c.DesignationIds, validation.When(c.DesignationIds != "", validation.By(parseCSV(&c.ParsedDesignationIds)))),
+		validation.Field(&c.RoleIds, validation.When(c.RoleIds != "", validation.By(parseCSV(&c.ParsedRoleIds)))),
+		validation.Field(&c.DepartmentIds, validation.When(c.DepartmentIds != "", validation.By(parseCSV(&c.ParsedDepartmentIds)))),
 	)
 }

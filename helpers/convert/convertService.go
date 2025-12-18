@@ -30,6 +30,9 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 	cityChan := make(chan conversionResult, 1)
 	categoryChan := make(chan conversionResult, 1)
 	locationChan := make(chan conversionResult, 1)
+	designationChan := make(chan conversionResult, 1)
+	roleChan := make(chan conversionResult, 1)
+	departmentChan := make(chan conversionResult, 1)
 
 	go func() {
 		log.Printf("Getting EVENT ID's Data")
@@ -61,6 +64,24 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 		locationChan <- conversionResult{data: data, err: err}
 	}()
 
+	go func() {
+		log.Printf("Getting DESIGNATION ID's Data")
+		data, err := s.convertDesignationIds(ctx, query.ParsedDesignationIds)
+		designationChan <- conversionResult{data: data, err: err}
+	}()
+
+	go func() {
+		log.Printf("Getting ROLE ID's Data")
+		data, err := s.convertRoleIds(ctx, query.ParsedRoleIds)
+		roleChan <- conversionResult{data: data, err: err}
+	}()
+
+	go func() {
+		log.Printf("Getting DEPARTMENT ID's Data")
+		data, err := s.convertDepartmentIds(ctx, query.ParsedDepartmentIds)
+		departmentChan <- conversionResult{data: data, err: err}
+	}()
+
 	eventRes := <-eventChan
 	if eventRes.err != nil {
 		return nil, eventRes.err
@@ -86,12 +107,32 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 		return nil, locationRes.err
 	}
 
+	designationRes := <-designationChan
+	if designationRes.err != nil {
+		return nil, designationRes.err
+	}
+
+	roleRes := <-roleChan
+	if roleRes.err != nil {
+		return nil, roleRes.err
+	}
+
+	departmentRes := <-departmentChan
+	if departmentRes.err != nil {
+		return nil, departmentRes.err
+	}
+
 	response := map[string]interface{}{
 		"cityIds":     cityRes.data,
 		"countryIds":  countryRes.data,
 		"eventIds":    eventRes.data,
 		"categoryIds": categoryRes.data,
 		"locationIds": locationRes.data,
+		"designations": map[string]interface{}{
+			"designation": designationRes.data,
+			"role":        roleRes.data,
+			"department":  departmentRes.data,
+		},
 	}
 
 	return response, nil
@@ -619,6 +660,210 @@ func (s *ConvertService) convertLocationIds(ctx context.Context, uuids []string)
 				venueMap[locationUUID] = locationData
 			}
 		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (s *ConvertService) convertDesignationIds(ctx context.Context, uuids []string) (map[string]interface{}, error) {
+	log.Printf("convertDesignationIds called with %d UUIDs: %v", len(uuids), uuids)
+	if len(uuids) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	quotedUUIDs := make([]string, 0, len(uuids))
+	for _, uuid := range uuids {
+		uuid = strings.TrimSpace(uuid)
+		if uuid != "" {
+			quotedUUIDs = append(quotedUUIDs, fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''")))
+		}
+	}
+
+	if len(quotedUUIDs) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			designation_uuid,
+			designation_id as id,
+			display_name as name,
+			role,
+			department
+		FROM testing_db.event_designation_ch
+		WHERE designation_uuid IN (%s)
+		GROUP BY designation_uuid, designation_id, display_name, role, department
+	`, strings.Join(quotedUUIDs, ","))
+
+	log.Printf("convertDesignationIds query: %s", query)
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]interface{})
+	for rows.Next() {
+		var designationUUID, name, role, department string
+		var designationID *uint32
+
+		if err := rows.Scan(&designationUUID, &designationID, &name, &role, &department); err != nil {
+			return nil, err
+		}
+
+		designationData := map[string]interface{}{
+			"name":       name,
+			"role":       role,
+			"department": department,
+		}
+
+		if designationID != nil {
+			designationData["id"] = *designationID
+		}
+
+		result[designationUUID] = designationData
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (s *ConvertService) convertRoleIds(ctx context.Context, uuids []string) (map[string]interface{}, error) {
+	log.Printf("convertRoleIds called with %d UUIDs: %v", len(uuids), uuids)
+	if len(uuids) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	quotedUUIDs := make([]string, 0, len(uuids))
+	for _, uuid := range uuids {
+		uuid = strings.TrimSpace(uuid)
+		if uuid != "" {
+			quotedUUIDs = append(quotedUUIDs, fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''")))
+		}
+	}
+
+	if len(quotedUUIDs) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			d1.designation_uuid,
+			d1.designation_id as id,
+			d1.display_name as name,
+			d1.role,
+			d1.department
+		FROM testing_db.event_designation_ch AS d1
+		INNER JOIN testing_db.event_designation_ch AS d2 
+			ON d1.role = d2.role
+		WHERE d2.designation_uuid IN (%s)
+		GROUP BY d1.designation_uuid, d1.designation_id, d1.display_name, d1.role, d1.department
+	`, strings.Join(quotedUUIDs, ","))
+
+	log.Printf("convertRoleIds query: %s", query)
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]interface{})
+	for rows.Next() {
+		var designationUUID, name, role, department string
+		var designationID *uint32
+
+		if err := rows.Scan(&designationUUID, &designationID, &name, &role, &department); err != nil {
+			return nil, err
+		}
+
+		designationData := map[string]interface{}{
+			"name":       name,
+			"role":       role,
+			"department": department,
+		}
+
+		if designationID != nil {
+			designationData["id"] = *designationID
+		}
+
+		result[designationUUID] = designationData
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (s *ConvertService) convertDepartmentIds(ctx context.Context, uuids []string) (map[string]interface{}, error) {
+	log.Printf("convertDepartmentIds called with %d UUIDs: %v", len(uuids), uuids)
+	if len(uuids) == 0 {
+		log.Printf("convertDepartmentIds: No UUIDs provided, returning empty map")
+		return map[string]interface{}{}, nil
+	}
+
+	quotedUUIDs := make([]string, 0, len(uuids))
+	for _, uuid := range uuids {
+		uuid = strings.TrimSpace(uuid)
+		if uuid != "" {
+			quotedUUIDs = append(quotedUUIDs, fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''")))
+		}
+	}
+
+	if len(quotedUUIDs) == 0 {
+		log.Printf("convertDepartmentIds: No valid UUIDs after trimming, returning empty map")
+		return map[string]interface{}{}, nil
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			d1.designation_uuid,
+			d1.designation_id as id,
+			d1.display_name as name,
+			d1.role,
+			d1.department
+		FROM testing_db.event_designation_ch AS d1
+		INNER JOIN testing_db.event_designation_ch AS d2 
+			ON d1.department = d2.department
+		WHERE d2.designation_uuid IN (%s)
+		GROUP BY d1.designation_uuid, d1.designation_id, d1.display_name, d1.role, d1.department
+	`, strings.Join(quotedUUIDs, ","))
+
+	log.Printf("convertDepartmentIds query: %s", query)
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]interface{})
+	for rows.Next() {
+		var designationUUID, name, role, department string
+		var designationID *uint32
+
+		if err := rows.Scan(&designationUUID, &designationID, &name, &role, &department); err != nil {
+			return nil, err
+		}
+
+		designationData := map[string]interface{}{
+			"name":       name,
+			"role":       role,
+			"department": department,
+		}
+
+		if designationID != nil {
+			designationData["id"] = *designationID
+		}
+
+		result[designationUUID] = designationData
 	}
 
 	if err := rows.Err(); err != nil {
