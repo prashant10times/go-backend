@@ -29,6 +29,7 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 	countryChan := make(chan conversionResult, 1)
 	cityChan := make(chan conversionResult, 1)
 	categoryChan := make(chan conversionResult, 1)
+	locationChan := make(chan conversionResult, 1)
 
 	go func() {
 		log.Printf("Getting EVENT ID's Data")
@@ -38,13 +39,13 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 
 	go func() {
 		log.Printf("Getting COUNTRY ID's Data")
-		data, err := s.convertCountryIds(ctx, query.ParsedCountryIds, query.ParsedCountryUUIDs)
+		data, err := s.convertCountryIds(ctx, query.ParsedCountryIds, []string{})
 		countryChan <- conversionResult{data: data, err: err}
 	}()
 
 	go func() {
 		log.Printf("Getting CITY ID's Data")
-		data, err := s.convertCityIds(ctx, query.ParsedCityIds, query.ParsedCityUUIDs)
+		data, err := s.convertCityIds(ctx, query.ParsedCityIds, []string{})
 		cityChan <- conversionResult{data: data, err: err}
 	}()
 
@@ -52,6 +53,12 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 		log.Printf("Getting CATEGORY ID's Data")
 		data, err := s.convertCategoryIds(ctx, query.ParsedCategoryIds, query.ParsedCategoryUUIDs)
 		categoryChan <- conversionResult{data: data, err: err}
+	}()
+
+	go func() {
+		log.Printf("Getting LOCATION ID's Data")
+		data, err := s.convertLocationIds(ctx, query.ParsedLocationIDs)
+		locationChan <- conversionResult{data: data, err: err}
 	}()
 
 	eventRes := <-eventChan
@@ -74,11 +81,17 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 		return nil, categoryRes.err
 	}
 
+	locationRes := <-locationChan
+	if locationRes.err != nil {
+		return nil, locationRes.err
+	}
+
 	response := map[string]interface{}{
 		"cityIds":     cityRes.data,
 		"countryIds":  countryRes.data,
 		"eventIds":    eventRes.data,
 		"categoryIds": categoryRes.data,
+		"locationIds": locationRes.data,
 	}
 
 	return response, nil
@@ -493,6 +506,100 @@ func (s *ConvertService) convertCityIds(ctx context.Context, ids []string, uuids
 
 		if idten != nil {
 			result[fmt.Sprintf("%d", *idten)] = locationUUID
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (s *ConvertService) convertLocationIds(ctx context.Context, uuids []string) (map[string]interface{}, error) {
+	if len(uuids) == 0 {
+		return map[string]interface{}{
+			"country": map[string]interface{}{},
+			"state":   map[string]interface{}{},
+			"city":    map[string]interface{}{},
+			"venue":   map[string]interface{}{},
+		}, nil
+	}
+
+	quotedUUIDs := make([]string, 0, len(uuids))
+	for _, uuid := range uuids {
+		uuid = strings.TrimSpace(uuid)
+		if uuid != "" {
+			quotedUUIDs = append(quotedUUIDs, fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''")))
+		}
+	}
+
+	if len(quotedUUIDs) == 0 {
+		return map[string]interface{}{
+			"country": map[string]interface{}{},
+			"state":   map[string]interface{}{},
+			"city":    map[string]interface{}{},
+			"venue":   map[string]interface{}{},
+		}, nil
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			id_uuid,
+			location_type,
+			id,
+			replace(id_10x, 'country-', '') as iso,
+			toInt32OrNull(replace(id_10x, 'city-', '')) as city_id
+		FROM testing_db.location_ch
+		WHERE location_type IN ('COUNTRY', 'CITY', 'STATE', 'VENUE')
+		AND id_uuid IN (%s)
+	`, strings.Join(quotedUUIDs, ","))
+
+	log.Printf("convertLocationIds query: %s", query)
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := map[string]interface{}{
+		"country": make(map[string]interface{}),
+		"state":   make(map[string]interface{}),
+		"city":    make(map[string]interface{}),
+		"venue":   make(map[string]interface{}),
+	}
+
+	countryMap := result["country"].(map[string]interface{})
+	stateMap := result["state"].(map[string]interface{})
+	cityMap := result["city"].(map[string]interface{})
+	venueMap := result["venue"].(map[string]interface{})
+
+	for rows.Next() {
+		var locationUUID, locationType, iso string
+		var id *uint32
+		var cityID *int32
+
+		if err := rows.Scan(&locationUUID, &locationType, &id, &iso, &cityID); err != nil {
+			return nil, err
+		}
+
+		switch locationType {
+		case "COUNTRY":
+			if iso != "" {
+				countryMap[locationUUID] = strings.ToUpper(iso)
+			}
+		case "STATE":
+			if id != nil {
+				stateMap[locationUUID] = fmt.Sprintf("%d", *id)
+			}
+		case "CITY":
+			if cityID != nil {
+				cityMap[locationUUID] = fmt.Sprintf("%d", *cityID)
+			}
+		case "VENUE":
+			if id != nil {
+				venueMap[locationUUID] = fmt.Sprintf("%d", *id)
+			}
 		}
 	}
 
