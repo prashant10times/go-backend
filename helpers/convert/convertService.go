@@ -548,6 +548,8 @@ func (s *ConvertService) convertLocationIds(ctx context.Context, uuids []string)
 			id_uuid,
 			location_type,
 			id,
+			name,
+			slug,
 			replace(id_10x, 'country-', '') as iso,
 			toInt32OrNull(replace(id_10x, 'city-', '')) as city_id
 		FROM testing_db.location_ch
@@ -576,29 +578,45 @@ func (s *ConvertService) convertLocationIds(ctx context.Context, uuids []string)
 
 	for rows.Next() {
 		var locationUUID, locationType, iso string
+		var name, slug *string
 		var id *uint32
 		var cityID *int32
 
-		if err := rows.Scan(&locationUUID, &locationType, &id, &iso, &cityID); err != nil {
+		if err := rows.Scan(&locationUUID, &locationType, &id, &name, &slug, &iso, &cityID); err != nil {
 			return nil, err
+		}
+
+		locationData := map[string]interface{}{
+			"name": "",
+			"slug": "",
+		}
+		if name != nil {
+			locationData["name"] = *name
+		}
+		if slug != nil {
+			locationData["slug"] = *slug
 		}
 
 		switch locationType {
 		case "COUNTRY":
 			if iso != "" {
-				countryMap[locationUUID] = strings.ToUpper(iso)
+				locationData["id"] = strings.ToUpper(iso)
+				countryMap[locationUUID] = locationData
 			}
 		case "STATE":
 			if id != nil {
-				stateMap[locationUUID] = fmt.Sprintf("%d", *id)
+				locationData["id"] = fmt.Sprintf("%d", *id)
+				stateMap[locationUUID] = locationData
 			}
 		case "CITY":
 			if cityID != nil {
-				cityMap[locationUUID] = fmt.Sprintf("%d", *cityID)
+				locationData["id"] = fmt.Sprintf("%d", *cityID)
+				cityMap[locationUUID] = locationData
 			}
 		case "VENUE":
 			if id != nil {
-				venueMap[locationUUID] = fmt.Sprintf("%d", *id)
+				locationData["id"] = fmt.Sprintf("%d", *id)
+				venueMap[locationUUID] = locationData
 			}
 		}
 	}
