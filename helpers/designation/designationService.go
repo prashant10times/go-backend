@@ -122,7 +122,7 @@ func (s *DesignationService) getDesignationsFromDesignationTable(query models.Se
 		}
 
 		selectQuery := fmt.Sprintf(`
-			SELECT DISTINCT
+			SELECT
 				display_name,
 				designation_uuid,
 				department,
@@ -169,7 +169,7 @@ func (s *DesignationService) getDesignationsFromDesignationTable(query models.Se
 	escapedName := strings.ReplaceAll(nameLower, "'", "''")
 
 	designationQuery := fmt.Sprintf(`
-		SELECT DISTINCT
+		SELECT
 			display_name,
 			designation_uuid as id
 		FROM testing_db.event_designation_ch
@@ -178,6 +178,7 @@ func (s *DesignationService) getDesignationsFromDesignationTable(query models.Se
 			OR lower(display_name) LIKE '%% %s%%'
 		)
 		%s
+		GROUP BY display_name, designation_uuid
 		ORDER BY position(lower(display_name), '%s'), length(display_name), display_name ASC
 		LIMIT %d OFFSET %d
 	`, escapedName, escapedName,
@@ -192,7 +193,7 @@ func (s *DesignationService) getDesignationsFromDesignationTable(query models.Se
 	log.Printf("Designation query (designation search): %s", designationQuery)
 
 	departmentQuery := fmt.Sprintf(`
-		SELECT DISTINCT
+		SELECT
 			designation_uuid as id,
 			department as name
 		FROM testing_db.event_designation_ch
@@ -206,7 +207,7 @@ func (s *DesignationService) getDesignationsFromDesignationTable(query models.Se
 	log.Printf("Designation query (department search): %s", departmentQuery)
 
 	roleQuery := fmt.Sprintf(`
-		SELECT DISTINCT
+		SELECT
 			designation_uuid as id,
 			role as name
 		FROM testing_db.event_designation_ch
