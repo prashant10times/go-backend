@@ -6,6 +6,7 @@ import (
 	"search-event-go/helpers/category"
 	"search-event-go/helpers/convert"
 	"search-event-go/helpers/designation"
+	"search-event-go/helpers/location"
 	"search-event-go/middleware"
 	"search-event-go/services"
 	"strconv"
@@ -34,9 +35,10 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	// helper module
 	categoryService := category.NewCategoryService(clickhouseService)
 	categoryController := category.NewCategoryController(categoryService)
-
 	designationService := designation.NewDesignationService(clickhouseService)
 	designationController := designation.NewDesignationController(designationService)
+	locationService := location.NewLocationService(clickhouseService)
+	locationController := location.NewLocationController(locationService)
 
 	convertService := convert.NewConvertService(clickhouseService)
 	convertController := convert.NewConvertController(convertService)
@@ -49,6 +51,7 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	// helper module routes
 	app.Get("/categories", categoryController.GetCategories)
 	app.Get("/designations", designationController.GetDesignations)
+	app.Get("/locations", locationController.GetLocations)
 	app.Get("/convert/ids", convertController.ConvertIds)
 
 	//protected route
