@@ -3740,7 +3740,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		)
 	}
 
-	if (getNew == nil || !*getNew) && eventTypeGroup == nil && (eventGroupCount == nil || !*eventGroupCount) {
+	if (getNew == nil || !*getNew) && (eventGroupCount == nil || !*eventGroupCount) {
 		if !isEventEntity {
 			selectClauses = append(selectClauses, "uniq(e.event_id) AS count")
 		}
@@ -3768,7 +3768,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	whereClause := strings.Join(baseWhereConditions, " AND ")
 
 	// !eventTypeGroup && !eventGroupCount - Group by all groups using arrayJoin
-	if eventTypeGroup == nil && (eventGroupCount == nil || !*eventGroupCount) {
+	if eventTypeGroup == nil && (eventGroupCount == nil || !*eventGroupCount) && searchByEntity != "eventestimatecount" && searchByEntity != "economicimpactbreakdowncount" {
 		query := fmt.Sprintf(`
 			WITH %spreFilterEvent AS (
 				SELECT
@@ -3782,10 +3782,10 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 				FROM preFilterEvent e
 				INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
 				ARRAY JOIN et.groups AS group_name
-				WHERE has(et.groups, 'business') OR has(et.groups, 'social') OR has(et.groups, 'unattended')
+				WHERE group_name IN ('business', 'social', 'unattended')
 				GROUP BY group_name
 			)
-			SELECT * FROM grouped_counts WHERE group_name IN ('business', 'social', 'unattended')
+			SELECT * FROM grouped_counts
 		`,
 			cteClausesStr,
 			whereClause,
@@ -3860,7 +3860,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	}
 
 	// eventGroupCount = true - Special filtering with published status
-	if eventGroupCount != nil && *eventGroupCount {
+	if eventGroupCount != nil && *eventGroupCount && searchByEntity != "eventestimatecount" && searchByEntity != "economicimpactbreakdowncount" {
 		eventGroupCountConditions := []string{
 			"(e.published = '4' AND has(et.groups, 'unattended'))",
 			"(e.published = '1' AND has(et.groups, 'business'))",
@@ -3885,13 +3885,6 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			finalSelectClauses = append(finalSelectClauses, "COALESCE(gr.total_event_ids, '') AS total_event_ids")
 			if getNew != nil && *getNew {
 				finalSelectClauses = append(finalSelectClauses, "COALESCE(gr.new_event_ids, '') AS new_event_ids")
-			}
-		} else {
-			for _, clause := range selectClauses {
-				if !strings.Contains(clause, "total_event_ids") && !strings.Contains(clause, "new_event_ids") {
-					colName := strings.Split(clause, " AS ")[1]
-					finalSelectClauses = append(finalSelectClauses, fmt.Sprintf("COALESCE(gr.%s, 0) AS %s", colName, colName))
-				}
 			}
 		}
 		finalSelectStr := strings.Join(finalSelectClauses, ", ")
@@ -3988,6 +3981,160 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 				}
 			}
 			result[groupName] = groupData
+		}
+
+		return result, nil
+	}
+
+	// eventEstimateCount - Group by business/social with past/upcoming counts and visitor estimates
+	if searchByEntity == "eventestimatecount" {
+		query := fmt.Sprintf(`
+			WITH %spreFilterEvent AS (
+				SELECT
+					ee.event_id,
+					ee.estimatedVisitorsMean,
+					ee.end_date,
+					ee.published
+				FROM testing_db.allevent_ch AS ee
+				WHERE %s
+				AND ee.published = '1'
+			),
+			classified AS (
+				SELECT
+					e.event_id,
+					e.estimatedVisitorsMean,
+					CASE
+						WHEN has(et.groups, 'business') THEN 'business'
+						WHEN has(et.groups, 'social') THEN 'social'
+					END AS group_name,
+					if(e.end_date < today(), 'past', 'upcoming') AS time_state
+				FROM preFilterEvent e
+				INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+				WHERE has(et.groups, 'business') OR has(et.groups, 'social')
+			),
+			grouped AS (
+				SELECT
+					group_name,
+					countIf(time_state = 'past') AS past_count,
+					countIf(time_state = 'upcoming') AS upcoming_count,
+					count(*) AS total_count,
+					toFloat64(sum(estimatedVisitorsMean)) AS total_visitors
+				FROM classified
+				WHERE group_name != ''
+				GROUP BY group_name
+			)
+			SELECT
+				g.group_name,
+				COALESCE(gr.past_count, 0) AS past_count,
+				COALESCE(gr.upcoming_count, 0) AS upcoming_count,
+				COALESCE(gr.total_count, 0) AS total_count,
+				COALESCE(gr.total_visitors, 0) AS total_visitor_sum
+			FROM (
+				SELECT 'business' AS group_name
+				UNION ALL SELECT 'social'
+			) g
+			LEFT JOIN grouped gr ON g.group_name = gr.group_name
+			-- ORDER BY g.group_name
+		`,
+			cteClausesStr,
+			whereClause,
+		)
+
+		log.Printf("Event count by event type group query (eventEstimateCount): %s", query)
+
+		rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+		if err != nil {
+			log.Printf("ClickHouse query error: %v", err)
+			return nil, err
+		}
+		defer rows.Close()
+
+		var response []map[string]interface{}
+		for rows.Next() {
+			var groupName string
+			var pastCount, upcomingCount, totalCount uint64
+			var totalVisitorSum float64
+
+			if err := rows.Scan(&groupName, &pastCount, &upcomingCount, &totalCount, &totalVisitorSum); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				return nil, err
+			}
+
+			response = append(response, map[string]interface{}{
+				"groupName":       groupName,
+				"pastCount":       int(pastCount),
+				"upcomingCount":   int(upcomingCount),
+				"totalCount":      int(totalCount),
+				"totalVisitorSum": totalVisitorSum,
+			})
+		}
+
+		return response, nil
+	}
+
+	// economicImpactBreakdownCount - Sum economic impact breakdown by category
+	if searchByEntity == "economicimpactbreakdowncount" {
+		query := fmt.Sprintf(`
+			WITH %spreFilterEvent AS (
+				SELECT
+					ee.event_id,
+					ee.event_economic_breakdown
+				FROM testing_db.allevent_ch AS ee
+				WHERE %s
+			),
+			extracted AS (
+				SELECT
+					toJSONString(e.event_economic_breakdown) AS breakdown_json
+				FROM preFilterEvent e
+				%s
+			)
+			SELECT
+				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Accommodation'))) AS accommodation,
+				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Flights'))) AS inbound_transport,
+				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Food & Beverages'))) AS food,
+				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Transportation'))) AS local_transport,
+				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Utilities'))) AS utilities
+			FROM extracted
+		`,
+			cteClausesStr,
+			whereClause,
+			func() string {
+				if joinConditionsStr != "" {
+					return "WHERE " + strings.TrimPrefix(joinConditionsStr, "AND ")
+				}
+				return ""
+			}(),
+		)
+
+		log.Printf("Event count by event type group query (economicImpactBreakdownCount): %s", query)
+
+		rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+		if err != nil {
+			log.Printf("ClickHouse query error: %v", err)
+			return nil, err
+		}
+		defer rows.Close()
+
+		result := make(map[string]interface{})
+		if rows.Next() {
+			var accommodation, inboundTransport, food, localTransport, utilities float64
+
+			if err := rows.Scan(&accommodation, &inboundTransport, &food, &localTransport, &utilities); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				return nil, err
+			}
+
+			result["accommodation"] = accommodation
+			result["inbound_transport"] = inboundTransport
+			result["food"] = food
+			result["local_transport"] = localTransport
+			result["utilities"] = utilities
+		} else {
+			result["accommodation"] = 0.0
+			result["inbound_transport"] = 0.0
+			result["food"] = 0.0
+			result["local_transport"] = 0.0
+			result["utilities"] = 0.0
 		}
 
 		return result, nil

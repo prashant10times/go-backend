@@ -3388,8 +3388,15 @@ func (s *SearchEventService) handleGroupByRequest(
 
 func (s *SearchEventService) validateEventTypeGroupSearchByEntity(filterFields models.FilterDataDto) error {
 	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
-	if searchByEntity != "" && searchByEntity != "event" && searchByEntity != "keywords" {
-		return fmt.Errorf("eventTypeGroup groupBy is only supported when searchByEntity is empty, 'event', or 'keywords'")
+	validValues := map[string]bool{
+		"":                             true,
+		"event":                        true,
+		"keywords":                     true,
+		"eventestimatecount":           true,
+		"economicimpactbreakdowncount": true,
+	}
+	if searchByEntity != "" && !validValues[searchByEntity] {
+		return fmt.Errorf("eventTypeGroup groupBy is only supported when searchByEntity is empty, 'event', 'keywords', 'eventEstimateCount', or 'economicImpactBreakdownCount'")
 	}
 	return nil
 }
