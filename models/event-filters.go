@@ -151,7 +151,7 @@ type FilterDataDto struct {
 
 	SearchByEntity  string `json:"searchByEntity,omitempty" form:"searchByEntity"`
 	GroupBy         string `json:"groupBy,omitempty" form:"groupBy"`
-	GetNew          string `json:"getNew,omitempty" form:"getNew"`
+	GetNew          *bool  `json:"getNew,omitempty" form:"getNew"`
 	EventGroupCount string `json:"eventGroupCount,omitempty" form:"eventGroupCount"`
 
 	Price     string `json:"price,omitempty" form:"price"`
@@ -647,20 +647,12 @@ func (f *FilterDataDto) Validate() error {
 			return nil
 		}))),
 
-		validation.Field(&f.GetNew, validation.When(f.GetNew != "", validation.By(func(value interface{}) error {
-			getNewStr := value.(string)
-			if getNewStr == "" {
-				return nil
+		validation.Field(&f.GetNew, validation.By(func(value interface{}) error {
+			if f.GetNew != nil {
+				f.ParsedGetNew = f.GetNew
 			}
-
-			if getNewStr != "true" && getNewStr != "false" {
-				return validation.NewError("invalid_getNew", "Invalid getNew value: "+getNewStr+". Must be 'true' or 'false'")
-			}
-
-			parsedValue := getNewStr == "true"
-			f.ParsedGetNew = &parsedValue
 			return nil
-		}))),
+		})),
 
 		validation.Field(&f.EventGroupCount, validation.When(f.EventGroupCount != "", validation.By(func(value interface{}) error {
 			eventGroupCountStr := value.(string)
