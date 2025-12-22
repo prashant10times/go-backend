@@ -292,6 +292,9 @@ type FilterDataDto struct {
 	EconomicImpactGte     string `json:"economicImpact.gte,omitempty" form:"economicImpact.gte"`
 	EconomicImpactLte     string `json:"economicImpact.lte,omitempty" form:"economicImpact.lte"`
 
+	UserId     string `json:"userId,omitempty" form:"userId"`
+	UserEntity string `json:"userEntity,omitempty" form:"userEntity"`
+
 	ParsedCategory           []string            `json:"-"`
 	ParsedLocationIds        []string            `json:"-"`
 	ParsedCity               []string            `json:"-"`
@@ -353,6 +356,8 @@ type FilterDataDto struct {
 	ParsedStateIds      []string `json:"-"`
 	ParsedCityIds       []string `json:"-"`
 	ParsedVenueIds      []string `json:"-"`
+	ParsedUserId        []string `json:"-"`
+	ParsedUserEntity    []string `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -1692,6 +1697,81 @@ func (f *FilterDataDto) Validate() error {
 			} else {
 				return validation.NewError("invalid_source", "Invalid source value: "+sourceStr+". Valid options are: geo, gtm")
 			}
+			return nil
+		}))),
+
+		validation.Field(&f.UserId, validation.When(f.UserId != "", validation.By(func(value interface{}) error {
+			userIdStr := value.(string)
+			if userIdStr == "" {
+				return nil
+			}
+
+			// Parse comma-separated user IDs
+			userIds := strings.Split(userIdStr, ",")
+			f.ParsedUserId = make([]string, 0, len(userIds))
+			for _, userId := range userIds {
+				userId = strings.TrimSpace(userId)
+				if userId != "" {
+					f.ParsedUserId = append(f.ParsedUserId, userId)
+				}
+			}
+
+			if len(f.ParsedUserId) == 0 {
+				return validation.NewError("empty_user_id", "userId cannot be empty after parsing")
+			}
+
+			// Validate that userEntity is provided when userId is provided
+			if f.UserEntity == "" {
+				return validation.NewError("user_entity_required", "userEntity is required when userId is provided")
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.UserEntity, validation.When(f.UserEntity != "", validation.By(func(value interface{}) error {
+			userEntityStr := value.(string)
+			if userEntityStr == "" {
+				return nil
+			}
+
+			// Parse comma-separated entity types
+			entities := strings.Split(userEntityStr, ",")
+			f.ParsedUserEntity = make([]string, 0, len(entities))
+			validEntities := map[string]bool{
+				"speaker": true,
+				"visitor": true,
+			}
+
+			var invalidEntities []string
+			for _, entity := range entities {
+				entity = strings.TrimSpace(strings.ToLower(entity))
+				if entity != "" {
+					if validEntities[entity] {
+						// Avoid duplicates
+						exists := false
+						for _, existing := range f.ParsedUserEntity {
+							if existing == entity {
+								exists = true
+								break
+							}
+						}
+						if !exists {
+							f.ParsedUserEntity = append(f.ParsedUserEntity, entity)
+						}
+					} else {
+						invalidEntities = append(invalidEntities, entity)
+					}
+				}
+			}
+
+			if len(invalidEntities) > 0 {
+				return validation.NewError("invalid_user_entity", "Invalid userEntity value(s): "+strings.Join(invalidEntities, ", ")+". Valid options are: speaker, visitor")
+			}
+
+			if len(f.ParsedUserEntity) == 0 {
+				return validation.NewError("empty_user_entity", "userEntity cannot be empty after parsing")
+			}
+
 			return nil
 		}))),
 	)

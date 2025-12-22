@@ -1124,6 +1124,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.NeedsStateIdsJoin,
 		queryResult.NeedsCityIdsJoin,
 		queryResult.NeedsVenueIdsJoin,
+		queryResult.NeedsUserIdUnionCTE,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -1139,6 +1140,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.StateIdsWhereConditions,
 		queryResult.CityIdsWhereConditions,
 		queryResult.VenueIdsWhereConditions,
+		queryResult.UserIdWhereConditions,
 		filterFields,
 	)
 
@@ -2212,6 +2214,7 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		queryResult.NeedsStateIdsJoin,
 		queryResult.NeedsCityIdsJoin,
 		queryResult.NeedsVenueIdsJoin,
+		queryResult.NeedsUserIdUnionCTE,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -2227,6 +2230,7 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		queryResult.StateIdsWhereConditions,
 		queryResult.CityIdsWhereConditions,
 		queryResult.VenueIdsWhereConditions,
+		queryResult.UserIdWhereConditions,
 		filterFields,
 	)
 
@@ -3337,6 +3341,7 @@ func (s *SearchEventService) handleGroupByRequest(
 		queryResult.NeedsStateIdsJoin,
 		queryResult.NeedsCityIdsJoin,
 		queryResult.NeedsVenueIdsJoin,
+		queryResult.NeedsUserIdUnionCTE,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -3352,6 +3357,7 @@ func (s *SearchEventService) handleGroupByRequest(
 		queryResult.StateIdsWhereConditions,
 		queryResult.CityIdsWhereConditions,
 		queryResult.VenueIdsWhereConditions,
+		queryResult.UserIdWhereConditions,
 		filterFields,
 	)
 
