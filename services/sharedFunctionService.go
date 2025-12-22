@@ -3681,7 +3681,7 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	getNew := filterFields.ParsedGetNew
 
 	// Check for special case: sourceEventIds[0] == -1
-	if len(filterFields.ParsedSourceEventIds) > 0 {
+	if len(filterFields.ParsedSourceEventIds) >= 0 {
 		// check for -1
 		firstId := filterFields.ParsedSourceEventIds[0]
 		if firstId == "'-1'" || firstId == "-1" {
