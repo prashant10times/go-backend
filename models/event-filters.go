@@ -249,6 +249,9 @@ type FilterDataDto struct {
 	CompanyCity    string `json:"companyCity,omitempty" form:"companyCity"`
 	CompanyState   string `json:"companyState,omitempty" form:"companyState"`
 
+	CompanyId     string `json:"companyId,omitempty" form:"companyId"`
+	CompanyEntity string `json:"companyEntity,omitempty" form:"companyEntity"`
+
 	View                string `json:"view,omitempty" form:"view"`
 	CalendarType        string `json:"calendar_type,omitempty" form:"calendar_type"`
 	TrackerDates        string `json:"trackerDates,omitempty" form:"trackerDates"`
@@ -358,6 +361,8 @@ type FilterDataDto struct {
 	ParsedVenueIds      []string `json:"-"`
 	ParsedUserId        []string `json:"-"`
 	ParsedUserEntity    []string `json:"-"`
+	ParsedCompanyId     []string `json:"-"`
+	ParsedCompanyEntity []string `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -1770,6 +1775,78 @@ func (f *FilterDataDto) Validate() error {
 
 			if len(f.ParsedUserEntity) == 0 {
 				return validation.NewError("empty_user_entity", "userEntity cannot be empty after parsing")
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.CompanyId, validation.When(f.CompanyId != "", validation.By(func(value interface{}) error {
+			companyIdStr := value.(string)
+			if companyIdStr == "" {
+				return nil
+			}
+
+			companyIds := strings.Split(companyIdStr, ",")
+			f.ParsedCompanyId = make([]string, 0, len(companyIds))
+			for _, companyId := range companyIds {
+				companyId = strings.TrimSpace(companyId)
+				if companyId != "" {
+					f.ParsedCompanyId = append(f.ParsedCompanyId, companyId)
+				}
+			}
+
+			if len(f.ParsedCompanyId) == 0 {
+				return validation.NewError("empty_company_id", "companyId cannot be empty after parsing")
+			}
+
+			if f.CompanyEntity == "" {
+				return validation.NewError("company_entity_required", "companyEntity is required when companyId is provided")
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.CompanyEntity, validation.When(f.CompanyEntity != "", validation.By(func(value interface{}) error {
+			companyEntityStr := value.(string)
+			if companyEntityStr == "" {
+				return nil
+			}
+
+			entities := strings.Split(companyEntityStr, ",")
+			f.ParsedCompanyEntity = make([]string, 0, len(entities))
+			validEntities := map[string]bool{
+				"exhibitor": true,
+				"sponsor":   true,
+				"organizer": true,
+			}
+
+			var invalidEntities []string
+			for _, entity := range entities {
+				entity = strings.TrimSpace(strings.ToLower(entity))
+				if entity != "" {
+					if validEntities[entity] {
+						exists := false
+						for _, existing := range f.ParsedCompanyEntity {
+							if existing == entity {
+								exists = true
+								break
+							}
+						}
+						if !exists {
+							f.ParsedCompanyEntity = append(f.ParsedCompanyEntity, entity)
+						}
+					} else {
+						invalidEntities = append(invalidEntities, entity)
+					}
+				}
+			}
+
+			if len(invalidEntities) > 0 {
+				return validation.NewError("invalid_company_entity", "Invalid companyEntity value(s): "+strings.Join(invalidEntities, ", ")+". Valid options are: exhibitor, sponsor, organizer")
+			}
+
+			if len(f.ParsedCompanyEntity) == 0 {
+				return validation.NewError("empty_company_entity", "companyEntity cannot be empty after parsing")
 			}
 
 			return nil

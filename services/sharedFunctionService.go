@@ -358,11 +358,13 @@ type ClickHouseQueryResult struct {
 	needsAudienceSpreadJoin       bool
 	NeedsRegionsJoin              bool
 	NeedsUserIdUnionCTE           bool
+	NeedsCompanyIdUnionCTE        bool
 	VisitorJoinClause             string
 	SpeakerJoinClause             string
 	VisitorWhereConditions        []string
 	SpeakerWhereConditions        []string
 	UserIdWhereConditions         []string
+	CompanyIdWhereConditions      []string
 	ExhibitorWhereConditions      []string
 	SponsorWhereConditions        []string
 	CategoryWhereConditions       []string
@@ -403,6 +405,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		CityIdsWhereConditions:        make([]string, 0),
 		VenueIdsWhereConditions:       make([]string, 0),
 		UserIdWhereConditions:         make([]string, 0),
+		CompanyIdWhereConditions:      make([]string, 0),
 		HasRegionsFilter:              false,
 		HasCountryFilter:              false,
 		NeedsLocationIdsJoin:          false,
@@ -531,6 +534,48 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			if hasSpeaker {
 				result.NeedsSpeakerJoin = true
 				result.SpeakerWhereConditions = append(result.SpeakerWhereConditions, userIdCondition)
+			}
+		}
+	}
+
+	if len(filterFields.ParsedCompanyId) > 0 && len(filterFields.ParsedCompanyEntity) > 0 {
+		companyIds := make([]string, 0, len(filterFields.ParsedCompanyId))
+		for _, companyId := range filterFields.ParsedCompanyId {
+			companyIds = append(companyIds, escapeSqlValue(companyId))
+		}
+		companyIdCondition := fmt.Sprintf("company_id IN (%s)", strings.Join(companyIds, ","))
+		result.CompanyIdWhereConditions = append(result.CompanyIdWhereConditions, companyIdCondition)
+
+		hasExhibitor := false
+		hasSponsor := false
+		hasOrganizer := false
+		for _, entity := range filterFields.ParsedCompanyEntity {
+			if entity == "exhibitor" {
+				hasExhibitor = true
+			}
+			if entity == "sponsor" {
+				hasSponsor = true
+			}
+			if entity == "organizer" {
+				hasOrganizer = true
+			}
+		}
+
+		if hasOrganizer && (hasExhibitor || hasSponsor) {
+			result.NeedsCompanyIdUnionCTE = true
+		} else if hasExhibitor && hasSponsor {
+			result.NeedsCompanyIdUnionCTE = true
+		} else {
+			if hasExhibitor {
+				result.NeedsExhibitorJoin = true
+				result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, companyIdCondition)
+			}
+			if hasSponsor {
+				result.NeedsSponsorJoin = true
+				result.SponsorWhereConditions = append(result.SponsorWhereConditions, companyIdCondition)
+			}
+			if hasOrganizer {
+				whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_id IN (SELECT DISTINCT edition_id FROM testing_db.allevent_ch WHERE company_id IN (%s))", strings.Join(companyIds, ",")))
 			}
 		}
 	}
@@ -1146,6 +1191,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	cityIdsWhereConditions []string,
 	venueIdsWhereConditions []string,
 	userIdWhereConditions []string,
+	needsCompanyIdUnionCTE bool,
+	companyIdWhereConditions []string,
 	filterFields models.FilterDataDto,
 ) CTEAndJoinResult {
 	result := CTEAndJoinResult{
@@ -1232,16 +1279,16 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 {
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
 
-		visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
+		visitorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
 			FROM testing_db.event_visitors_ch
 			WHERE %s`, userIdCondition)
 
-		speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
+		speakerPart := fmt.Sprintf(`SELECT DISTINCT edition_id
 			FROM testing_db.event_speaker_ch
 			WHERE %s`, userIdCondition)
 
 		unionCTE := fmt.Sprintf(`filtered_user_events AS (
-			SELECT DISTINCT event_id
+			SELECT DISTINCT edition_id
 			FROM (
 				%s
 				UNION ALL
@@ -1251,6 +1298,60 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 		result.CTEClauses = append(result.CTEClauses, unionCTE)
 		previousCTE = "filtered_user_events"
+	}
+
+	if needsCompanyIdUnionCTE && len(companyIdWhereConditions) > 0 {
+		companyIdCondition := strings.Join(companyIdWhereConditions, " AND ")
+
+		hasExhibitor := false
+		hasSponsor := false
+		hasOrganizer := false
+		for _, entity := range filterFields.ParsedCompanyEntity {
+			if entity == "exhibitor" {
+				hasExhibitor = true
+			}
+			if entity == "sponsor" {
+				hasSponsor = true
+			}
+			if entity == "organizer" {
+				hasOrganizer = true
+			}
+		}
+
+		var unionParts []string
+
+		if hasExhibitor {
+			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+			FROM testing_db.event_exhibitor_ch
+			WHERE %s`, companyIdCondition)
+			unionParts = append(unionParts, exhibitorPart)
+		}
+
+		if hasSponsor {
+			sponsorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+			FROM testing_db.event_sponsors_ch
+			WHERE %s`, companyIdCondition)
+			unionParts = append(unionParts, sponsorPart)
+		}
+
+		if hasOrganizer {
+			organizerPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+			FROM testing_db.allevent_ch
+			WHERE %s`, companyIdCondition)
+			unionParts = append(unionParts, organizerPart)
+		}
+
+		if len(unionParts) > 0 {
+			unionCTE := fmt.Sprintf(`filtered_company_events AS (
+			SELECT DISTINCT edition_id
+			FROM (
+				%s
+			)
+		)`, strings.Join(unionParts, "\n\t\t\t\tUNION ALL\n\t\t\t\t"))
+
+			result.CTEClauses = append(result.CTEClauses, unionCTE)
+			previousCTE = "filtered_company_events"
+		}
 	}
 
 	if needsVisitorJoin {
@@ -1586,13 +1687,22 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 	if previousCTE != "" {
 		var selectColumn string
+		var joinColumn string
 		switch previousCTE {
 		case "filtered_categories":
 			selectColumn = "event"
+			joinColumn = "ee.event_id"
+		case "filtered_company_events":
+			selectColumn = "edition_id"
+			joinColumn = "ee.edition_id"
+		case "filtered_user_events":
+			selectColumn = "edition_id"
+			joinColumn = "ee.edition_id"
 		default:
 			selectColumn = "event_id"
+			joinColumn = "ee.event_id"
 		}
-		result.JoinConditions = append(result.JoinConditions, fmt.Sprintf("ee.event_id IN (SELECT %s FROM %s)", selectColumn, previousCTE))
+		result.JoinConditions = append(result.JoinConditions, fmt.Sprintf("%s IN (SELECT %s FROM %s)", joinColumn, selectColumn, previousCTE))
 	}
 
 	return result
@@ -1981,6 +2091,8 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 		queryResult.CityIdsWhereConditions,
 		queryResult.VenueIdsWhereConditions,
 		queryResult.UserIdWhereConditions,
+		queryResult.NeedsCompanyIdUnionCTE,
+		queryResult.CompanyIdWhereConditions,
 		filterFields,
 	)
 
@@ -2587,6 +2699,9 @@ func (s *SharedFunctionService) buildFieldFrom(fields []string, cteClauses []str
 
 	if s.containsCTE(cteClauses, "filtered_user_events") {
 		from += " INNER JOIN filtered_user_events fue ON ee.event_id = fue.event_id"
+	}
+	if s.containsCTE(cteClauses, "filtered_company_events") {
+		from += " INNER JOIN filtered_company_events fce ON ee.edition_id = fce.edition_id"
 	}
 	if s.containsCTE(cteClauses, "filtered_visitors") {
 		from += " INNER JOIN filtered_visitors fv ON ee.event_id = fv.event_id"
@@ -5945,6 +6060,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
 			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
 			queryResult.UserIdWhereConditions,
+			queryResult.NeedsCompanyIdUnionCTE,
+			queryResult.CompanyIdWhereConditions,
 			filterFields,
 		)
 
@@ -6118,6 +6235,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
 			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
 			queryResult.UserIdWhereConditions,
+			queryResult.NeedsCompanyIdUnionCTE,
+			queryResult.CompanyIdWhereConditions,
 			filterFields,
 		)
 
@@ -6260,6 +6379,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
 			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
 			queryResult.UserIdWhereConditions,
+			queryResult.NeedsCompanyIdUnionCTE,
+			queryResult.CompanyIdWhereConditions,
 			filterFields,
 		)
 
@@ -6445,6 +6566,8 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		queryResult.CityIdsWhereConditions,
 		queryResult.VenueIdsWhereConditions,
 		queryResult.UserIdWhereConditions,
+		queryResult.NeedsCompanyIdUnionCTE,
+		queryResult.CompanyIdWhereConditions,
 		filterFields,
 	)
 
@@ -6688,6 +6811,8 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 		queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
 		queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
 		queryResult.UserIdWhereConditions,
+		queryResult.NeedsCompanyIdUnionCTE,
+		queryResult.CompanyIdWhereConditions,
 		filterFields,
 	)
 
