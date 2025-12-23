@@ -249,8 +249,8 @@ type FilterDataDto struct {
 	CompanyCity    string `json:"companyCity,omitempty" form:"companyCity"`
 	CompanyState   string `json:"companyState,omitempty" form:"companyState"`
 
-	CompanyId     string `json:"companyId,omitempty" form:"companyId"`
-	CompanyEntity string `json:"companyEntity,omitempty" form:"companyEntity"`
+	CompanyId   string `json:"companyId,omitempty" form:"companyId"`
+	CompanyName string `json:"companyName,omitempty" form:"companyName"`
 
 	View                string `json:"view,omitempty" form:"view"`
 	CalendarType        string `json:"calendar_type,omitempty" form:"calendar_type"`
@@ -295,8 +295,9 @@ type FilterDataDto struct {
 	EconomicImpactGte     string `json:"economicImpact.gte,omitempty" form:"economicImpact.gte"`
 	EconomicImpactLte     string `json:"economicImpact.lte,omitempty" form:"economicImpact.lte"`
 
-	UserId     string `json:"userId,omitempty" form:"userId"`
-	UserEntity string `json:"userEntity,omitempty" form:"userEntity"`
+	UserId          string `json:"userId,omitempty" form:"userId"`
+	UserName        string `json:"userName,omitempty" form:"userName"`
+	UserCompanyName string `json:"userCompanyName,omitempty" form:"userCompanyName"`
 
 	ParsedCategory           []string            `json:"-"`
 	ParsedLocationIds        []string            `json:"-"`
@@ -349,20 +350,22 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedTrackerDates  []string `json:"-"`
-	ParsedCalendarType  *string  `json:"-"`
-	ParsedDateView      *string  `json:"-"`
-	ParsedColumns       []string `json:"-"`
-	ParsedGroupByTrends *string  `json:"-"`
-	ParsedRegions       []string `json:"-"`
-	ParsedCountryIds    []string `json:"-"`
-	ParsedStateIds      []string `json:"-"`
-	ParsedCityIds       []string `json:"-"`
-	ParsedVenueIds      []string `json:"-"`
-	ParsedUserId        []string `json:"-"`
-	ParsedUserEntity    []string `json:"-"`
-	ParsedCompanyId     []string `json:"-"`
-	ParsedCompanyEntity []string `json:"-"`
+	ParsedTrackerDates    []string `json:"-"`
+	ParsedCalendarType    *string  `json:"-"`
+	ParsedDateView        *string  `json:"-"`
+	ParsedColumns         []string `json:"-"`
+	ParsedGroupByTrends   *string  `json:"-"`
+	ParsedRegions         []string `json:"-"`
+	ParsedCountryIds      []string `json:"-"`
+	ParsedStateIds        []string `json:"-"`
+	ParsedCityIds         []string `json:"-"`
+	ParsedVenueIds        []string `json:"-"`
+	ParsedUserId          []string `json:"-"`
+	ParsedUserName        []string `json:"-"`
+	ParsedUserCompanyName []string `json:"-"`
+	ParsedCompanyId       []string `json:"-"`
+	ParsedCompanyName     []string `json:"-"`
+	ParsedSearchByEntity  []string `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -1725,56 +1728,60 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("empty_user_id", "userId cannot be empty after parsing")
 			}
 
-			// Validate that userEntity is provided when userId is provided
-			if f.UserEntity == "" {
-				return validation.NewError("user_entity_required", "userEntity is required when userId is provided")
+			if f.SearchByEntity == "" {
+				return validation.NewError("entity_required", "searchByEntity is required when userId is provided")
 			}
 
 			return nil
 		}))),
 
-		validation.Field(&f.UserEntity, validation.When(f.UserEntity != "", validation.By(func(value interface{}) error {
-			userEntityStr := value.(string)
-			if userEntityStr == "" {
+		validation.Field(&f.UserName, validation.When(f.UserName != "", validation.By(func(value interface{}) error {
+			userNameStr := value.(string)
+			if userNameStr == "" {
 				return nil
 			}
 
-			// Parse comma-separated entity types
-			entities := strings.Split(userEntityStr, ",")
-			f.ParsedUserEntity = make([]string, 0, len(entities))
-			validEntities := map[string]bool{
-				"speaker": true,
-				"visitor": true,
-			}
-
-			var invalidEntities []string
-			for _, entity := range entities {
-				entity = strings.TrimSpace(strings.ToLower(entity))
-				if entity != "" {
-					if validEntities[entity] {
-						// Avoid duplicates
-						exists := false
-						for _, existing := range f.ParsedUserEntity {
-							if existing == entity {
-								exists = true
-								break
-							}
-						}
-						if !exists {
-							f.ParsedUserEntity = append(f.ParsedUserEntity, entity)
-						}
-					} else {
-						invalidEntities = append(invalidEntities, entity)
-					}
+			userNames := strings.Split(userNameStr, ",")
+			f.ParsedUserName = make([]string, 0, len(userNames))
+			for _, userName := range userNames {
+				userName = strings.TrimSpace(userName)
+				if userName != "" {
+					f.ParsedUserName = append(f.ParsedUserName, userName)
 				}
 			}
 
-			if len(invalidEntities) > 0 {
-				return validation.NewError("invalid_user_entity", "Invalid userEntity value(s): "+strings.Join(invalidEntities, ", ")+". Valid options are: speaker, visitor")
+			if len(f.ParsedUserName) == 0 {
+				return validation.NewError("empty_user_name", "userName cannot be empty after parsing")
 			}
 
-			if len(f.ParsedUserEntity) == 0 {
-				return validation.NewError("empty_user_entity", "userEntity cannot be empty after parsing")
+			if f.SearchByEntity == "" {
+				return validation.NewError("entity_required", "searchByEntity is required when userName is provided")
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.UserCompanyName, validation.When(f.UserCompanyName != "", validation.By(func(value interface{}) error {
+			userCompanyNameStr := value.(string)
+			if userCompanyNameStr == "" {
+				return nil
+			}
+
+			companyNames := strings.Split(userCompanyNameStr, ",")
+			f.ParsedUserCompanyName = make([]string, 0, len(companyNames))
+			for _, companyName := range companyNames {
+				companyName = strings.TrimSpace(companyName)
+				if companyName != "" {
+					f.ParsedUserCompanyName = append(f.ParsedUserCompanyName, companyName)
+				}
+			}
+
+			if len(f.ParsedUserCompanyName) == 0 {
+				return validation.NewError("empty_user_company_name", "userCompanyName cannot be empty after parsing")
+			}
+
+			if f.SearchByEntity == "" {
+				return validation.NewError("entity_required", "searchByEntity is required when userCompanyName is provided")
 			}
 
 			return nil
@@ -1799,25 +1806,54 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("empty_company_id", "companyId cannot be empty after parsing")
 			}
 
-			if f.CompanyEntity == "" {
-				return validation.NewError("company_entity_required", "companyEntity is required when companyId is provided")
+			if f.SearchByEntity == "" {
+				return validation.NewError("entity_required", "searchByEntity is required when companyId is provided")
 			}
 
 			return nil
 		}))),
 
-		validation.Field(&f.CompanyEntity, validation.When(f.CompanyEntity != "", validation.By(func(value interface{}) error {
-			companyEntityStr := value.(string)
-			if companyEntityStr == "" {
+		validation.Field(&f.CompanyName, validation.When(f.CompanyName != "", validation.By(func(value interface{}) error {
+			companyNameStr := value.(string)
+			if companyNameStr == "" {
 				return nil
 			}
 
-			entities := strings.Split(companyEntityStr, ",")
-			f.ParsedCompanyEntity = make([]string, 0, len(entities))
+			companyNames := strings.Split(companyNameStr, ",")
+			f.ParsedCompanyName = make([]string, 0, len(companyNames))
+			for _, companyName := range companyNames {
+				companyName = strings.TrimSpace(companyName)
+				if companyName != "" {
+					f.ParsedCompanyName = append(f.ParsedCompanyName, companyName)
+				}
+			}
+
+			if len(f.ParsedCompanyName) == 0 {
+				return validation.NewError("empty_company_name", "companyName cannot be empty after parsing")
+			}
+
+			if f.SearchByEntity == "" {
+				return validation.NewError("entity_required", "searchByEntity is required when companyName is provided")
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.SearchByEntity, validation.When(f.SearchByEntity != "", validation.By(func(value interface{}) error {
+			searchByEntityStr := value.(string)
+			if searchByEntityStr == "" {
+				return nil
+			}
+
+			entities := strings.Split(searchByEntityStr, ",")
+			f.ParsedSearchByEntity = make([]string, 0, len(entities))
 			validEntities := map[string]bool{
-				"exhibitor": true,
-				"sponsor":   true,
 				"organizer": true,
+				"speaker":   true,
+				"sponsor":   true,
+				"company":   true,
+				"exhibitor": true,
+				"visitor":   true,
 			}
 
 			var invalidEntities []string
@@ -1826,14 +1862,14 @@ func (f *FilterDataDto) Validate() error {
 				if entity != "" {
 					if validEntities[entity] {
 						exists := false
-						for _, existing := range f.ParsedCompanyEntity {
+						for _, existing := range f.ParsedSearchByEntity {
 							if existing == entity {
 								exists = true
 								break
 							}
 						}
 						if !exists {
-							f.ParsedCompanyEntity = append(f.ParsedCompanyEntity, entity)
+							f.ParsedSearchByEntity = append(f.ParsedSearchByEntity, entity)
 						}
 					} else {
 						invalidEntities = append(invalidEntities, entity)
@@ -1842,11 +1878,11 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			if len(invalidEntities) > 0 {
-				return validation.NewError("invalid_company_entity", "Invalid companyEntity value(s): "+strings.Join(invalidEntities, ", ")+". Valid options are: exhibitor, sponsor, organizer")
+				return validation.NewError("invalid_search_by_entity", "Invalid searchByEntity value(s): "+strings.Join(invalidEntities, ", ")+". Valid options are: organizer, speaker, sponsor, company, exhibitor, visitor")
 			}
 
-			if len(f.ParsedCompanyEntity) == 0 {
-				return validation.NewError("empty_company_entity", "companyEntity cannot be empty after parsing")
+			if len(f.ParsedSearchByEntity) == 0 {
+				return validation.NewError("empty_search_by_entity", "searchByEntity cannot be empty after parsing")
 			}
 
 			return nil

@@ -69,6 +69,58 @@ func NewSharedFunctionService(db *gorm.DB, clickhouseService *ClickHouseService,
 	}
 }
 
+func (s *SharedFunctionService) matchPhraseConverter(fieldName string, searchTerm string) string {
+	escapedTerm := strings.TrimSpace(searchTerm)
+	if escapedTerm == "" {
+		return ""
+	}
+
+	words := strings.Fields(strings.ToLower(escapedTerm))
+
+	if len(words) == 0 {
+		return ""
+	}
+	escapeSqlValue := func(word string) string {
+		return strings.ReplaceAll(word, "'", "''")
+	}
+
+	escapeRegex := func(word string) string {
+		word = strings.ReplaceAll(word, "\\", "\\\\")
+		word = strings.ReplaceAll(word, ".", "\\.")
+		word = strings.ReplaceAll(word, "+", "\\+")
+		word = strings.ReplaceAll(word, "*", "\\*")
+		word = strings.ReplaceAll(word, "?", "\\?")
+		word = strings.ReplaceAll(word, "^", "\\^")
+		word = strings.ReplaceAll(word, "$", "\\$")
+		word = strings.ReplaceAll(word, "[", "\\[")
+		word = strings.ReplaceAll(word, "]", "\\]")
+		word = strings.ReplaceAll(word, "{", "\\{")
+		word = strings.ReplaceAll(word, "}", "\\}")
+		word = strings.ReplaceAll(word, "(", "\\(")
+		word = strings.ReplaceAll(word, ")", "\\)")
+		word = strings.ReplaceAll(word, "|", "\\|")
+		return word
+	}
+
+	if len(words) == 1 {
+		word := escapeSqlValue(words[0])
+		return fmt.Sprintf("hasToken(lower(%s), '%s')", fieldName, word)
+	}
+	var conditions []string
+	for _, word := range words {
+		escapedWord := escapeSqlValue(word)
+		conditions = append(conditions, fmt.Sprintf("hasToken(lower(%s), '%s')", fieldName, escapedWord))
+	}
+	escapedWords := make([]string, len(words))
+	for i, word := range words {
+		escapedWords[i] = escapeRegex(word)
+	}
+	regexPattern := `\b` + strings.Join(escapedWords, `\s+`) + `\b`
+	escapedRegex := strings.ReplaceAll(regexPattern, "'", "''")
+	conditions = append(conditions, fmt.Sprintf("match(lower(%s), '%s')", fieldName, escapedRegex))
+	return fmt.Sprintf("(%s)", strings.Join(conditions, " AND "))
+}
+
 func (s *SharedFunctionService) logApiUsage(userId, apiId, endpoint string, responseTime float64, ipAddress string, statusCode int, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, errorMessage *string) error {
 
 	payload := map[string]interface{}{
@@ -505,27 +557,46 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		addUserFilters("SpeakerName", "user_name", &result.SpeakerWhereConditions)
 	}
 
-	if len(filterFields.ParsedUserId) > 0 && len(filterFields.ParsedUserEntity) > 0 {
+	getEntityTypes := func() (hasVisitor bool, hasSpeaker bool, hasExhibitor bool, hasSponsor bool, hasOrganizer bool) {
+		entities := filterFields.ParsedSearchByEntity
+
+		for _, entity := range entities {
+			switch entity {
+			case "visitor":
+				hasVisitor = true
+			case "speaker":
+				hasSpeaker = true
+			case "exhibitor":
+				hasExhibitor = true
+			case "sponsor":
+				hasSponsor = true
+			case "organizer":
+				hasOrganizer = true
+			case "company":
+				hasVisitor = true
+				hasSpeaker = true
+				hasExhibitor = true
+				hasSponsor = true
+				hasOrganizer = true
+			}
+		}
+		return
+	}
+
+	hasVisitor, hasSpeaker, _, _, _ := getEntityTypes()
+
+	if len(filterFields.ParsedUserId) > 0 && len(filterFields.ParsedSearchByEntity) > 0 {
 		userIds := make([]string, 0, len(filterFields.ParsedUserId))
 		for _, userId := range filterFields.ParsedUserId {
 			userIds = append(userIds, escapeSqlValue(userId))
 		}
 		userIdCondition := fmt.Sprintf("user_id IN (%s)", strings.Join(userIds, ","))
-		result.UserIdWhereConditions = append(result.UserIdWhereConditions, userIdCondition)
 
-		hasVisitor := false
-		hasSpeaker := false
-		for _, entity := range filterFields.ParsedUserEntity {
-			if entity == "visitor" {
-				hasVisitor = true
-			}
-			if entity == "speaker" {
-				hasSpeaker = true
-			}
-		}
+		hasVisitor, hasSpeaker, _, _, _ = getEntityTypes()
 
 		if hasVisitor && hasSpeaker {
 			result.NeedsUserIdUnionCTE = true
+			result.UserIdWhereConditions = append(result.UserIdWhereConditions, userIdCondition)
 		} else {
 			if hasVisitor {
 				result.NeedsVisitorJoin = true
@@ -538,7 +609,118 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if len(filterFields.ParsedCompanyId) > 0 && len(filterFields.ParsedCompanyEntity) > 0 {
+	hasUserNameFilter := len(filterFields.ParsedUserName) > 0 && len(filterFields.ParsedSearchByEntity) > 0
+	hasUserCompanyNameFilter := len(filterFields.ParsedUserCompanyName) > 0 && len(filterFields.ParsedSearchByEntity) > 0
+
+	if hasUserNameFilter || hasUserCompanyNameFilter {
+		hasVisitor, hasSpeaker, _, _, _ = getEntityTypes()
+
+		var finalCondition string
+
+		if hasUserNameFilter && hasUserCompanyNameFilter {
+			var allConditions []string
+			minCount := len(filterFields.ParsedUserName)
+			if len(filterFields.ParsedUserCompanyName) < minCount {
+				minCount = len(filterFields.ParsedUserCompanyName)
+			}
+
+			if minCount == 1 && len(filterFields.ParsedUserName) == 1 && len(filterFields.ParsedUserCompanyName) == 1 {
+				nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[0])
+				companyCondition := s.matchPhraseConverter("user_company", filterFields.ParsedUserCompanyName[0])
+				allConditions = append(allConditions, fmt.Sprintf("(%s OR %s)", nameCondition, companyCondition))
+			} else {	
+				for i := 0; i < minCount; i++ {
+					nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[i])
+					companyCondition := s.matchPhraseConverter("user_company", filterFields.ParsedUserCompanyName[i])
+					pairedCondition := fmt.Sprintf("(%s AND %s)", nameCondition, companyCondition)
+					allConditions = append(allConditions, pairedCondition)
+				}
+			}
+
+			if len(filterFields.ParsedUserName) > minCount {
+				for i := minCount; i < len(filterFields.ParsedUserName); i++ {
+					nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[i])
+					allConditions = append(allConditions, nameCondition)
+				}
+			}
+
+			if len(filterFields.ParsedUserCompanyName) > minCount {
+				for i := minCount; i < len(filterFields.ParsedUserCompanyName); i++ {
+					companyCondition := s.matchPhraseConverter("user_company", filterFields.ParsedUserCompanyName[i])
+					allConditions = append(allConditions, companyCondition)
+				}
+			}
+
+			if len(allConditions) > 0 {
+				finalCondition = fmt.Sprintf("(%s)", strings.Join(allConditions, " OR "))
+			}
+		} else {
+			var independentConditions []string
+
+			if hasUserNameFilter {
+				var nameConditions []string
+				for _, userName := range filterFields.ParsedUserName {
+					nameCondition := s.matchPhraseConverter("user_name", userName)
+					if nameCondition != "" {
+						nameConditions = append(nameConditions, nameCondition)
+					}
+				}
+				if len(nameConditions) > 0 {
+					independentConditions = append(independentConditions, fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR ")))
+				}
+			}
+
+			if hasUserCompanyNameFilter {
+				var companyConditions []string
+				for _, companyName := range filterFields.ParsedUserCompanyName {
+					companyCondition := s.matchPhraseConverter("user_company", companyName)
+					if companyCondition != "" {
+						companyConditions = append(companyConditions, companyCondition)
+					}
+				}
+				if len(companyConditions) > 0 {
+					independentConditions = append(independentConditions, fmt.Sprintf("(%s)", strings.Join(companyConditions, " OR ")))
+				}
+			}
+
+			if len(independentConditions) > 0 {
+				finalCondition = strings.Join(independentConditions, " AND ")
+			}
+		}
+
+		if finalCondition != "" {
+			if hasVisitor && hasSpeaker {
+				result.NeedsUserIdUnionCTE = true
+				if len(result.UserIdWhereConditions) > 0 {
+					combinedCondition := fmt.Sprintf("(%s) AND %s", strings.Join(result.UserIdWhereConditions, " AND "), finalCondition)
+					result.UserIdWhereConditions = []string{combinedCondition}
+				} else {
+					result.UserIdWhereConditions = append(result.UserIdWhereConditions, finalCondition)
+				}
+			} else {
+				if hasVisitor {
+					result.NeedsVisitorJoin = true
+					if len(result.VisitorWhereConditions) > 0 {
+						combinedCondition := fmt.Sprintf("(%s) AND %s", strings.Join(result.VisitorWhereConditions, " AND "), finalCondition)
+						result.VisitorWhereConditions = []string{combinedCondition}
+					} else {
+						result.VisitorWhereConditions = append(result.VisitorWhereConditions, finalCondition)
+					}
+				}
+				if hasSpeaker {
+					result.NeedsSpeakerJoin = true
+					if len(result.SpeakerWhereConditions) > 0 {
+						combinedCondition := fmt.Sprintf("(%s) AND %s", strings.Join(result.SpeakerWhereConditions, " AND "), finalCondition)
+						result.SpeakerWhereConditions = []string{combinedCondition}
+					} else {
+						result.SpeakerWhereConditions = append(result.SpeakerWhereConditions, finalCondition)
+					}
+				}
+			}
+		}
+	}
+
+	if len(filterFields.ParsedCompanyId) > 0 && len(filterFields.ParsedSearchByEntity) > 0 {
 		companyIds := make([]string, 0, len(filterFields.ParsedCompanyId))
 		for _, companyId := range filterFields.ParsedCompanyId {
 			companyIds = append(companyIds, escapeSqlValue(companyId))
@@ -546,21 +728,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		companyIdCondition := fmt.Sprintf("company_id IN (%s)", strings.Join(companyIds, ","))
 		result.CompanyIdWhereConditions = append(result.CompanyIdWhereConditions, companyIdCondition)
 
-		hasExhibitor := false
-		hasSponsor := false
-		hasOrganizer := false
-		for _, entity := range filterFields.ParsedCompanyEntity {
-			if entity == "exhibitor" {
-				hasExhibitor = true
-			}
-			if entity == "sponsor" {
-				hasSponsor = true
-			}
-			if entity == "organizer" {
-				hasOrganizer = true
-			}
-		}
-
+		_, _, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
 		if hasOrganizer && (hasExhibitor || hasSponsor) {
 			result.NeedsCompanyIdUnionCTE = true
 		} else if hasExhibitor && hasSponsor {
@@ -576,6 +744,84 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			}
 			if hasOrganizer {
 				whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_id IN (SELECT DISTINCT edition_id FROM testing_db.allevent_ch WHERE company_id IN (%s))", strings.Join(companyIds, ",")))
+			}
+		}
+	}
+
+	if len(filterFields.ParsedCompanyName) > 0 && len(filterFields.ParsedSearchByEntity) > 0 {
+		hasVisitor, hasSpeaker, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
+
+		var companyNameConditions []string
+		for _, companyName := range filterFields.ParsedCompanyName {
+			companyCondition := s.matchPhraseConverter("user_company", companyName)
+			if companyCondition != "" {
+				companyNameConditions = append(companyNameConditions, companyCondition)
+			}
+		}
+
+		if len(companyNameConditions) > 0 {
+			finalCompanyNameCondition := fmt.Sprintf("(%s)", strings.Join(companyNameConditions, " OR "))
+			if hasVisitor || hasSpeaker {
+				if hasVisitor && hasSpeaker {
+					result.NeedsUserIdUnionCTE = true
+					if len(result.UserIdWhereConditions) > 0 {
+						combinedCondition := fmt.Sprintf("(%s) AND %s", strings.Join(result.UserIdWhereConditions, " AND "), finalCompanyNameCondition)
+						result.UserIdWhereConditions = []string{combinedCondition}
+					} else {
+						result.UserIdWhereConditions = append(result.UserIdWhereConditions, finalCompanyNameCondition)
+					}
+				} else {
+					if hasVisitor {
+						result.NeedsVisitorJoin = true
+						if len(result.VisitorWhereConditions) > 0 {
+							combinedCondition := fmt.Sprintf("(%s) AND %s", strings.Join(result.VisitorWhereConditions, " AND "), finalCompanyNameCondition)
+							result.VisitorWhereConditions = []string{combinedCondition}
+						} else {
+							result.VisitorWhereConditions = append(result.VisitorWhereConditions, finalCompanyNameCondition)
+						}
+					}
+					if hasSpeaker {
+						result.NeedsSpeakerJoin = true
+						if len(result.SpeakerWhereConditions) > 0 {
+							combinedCondition := fmt.Sprintf("(%s) AND %s", strings.Join(result.SpeakerWhereConditions, " AND "), finalCompanyNameCondition)
+							result.SpeakerWhereConditions = []string{combinedCondition}
+						} else {
+							result.SpeakerWhereConditions = append(result.SpeakerWhereConditions, finalCompanyNameCondition)
+						}
+					}
+				}
+			}
+
+			if hasExhibitor {
+				result.NeedsExhibitorJoin = true
+				for _, companyName := range filterFields.ParsedCompanyName {
+					exhibitorCondition := s.matchPhraseConverter("company_id_name", companyName)
+					if exhibitorCondition != "" {
+						result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, exhibitorCondition)
+					}
+				}
+			}
+			if hasSponsor {
+				result.NeedsSponsorJoin = true
+				for _, companyName := range filterFields.ParsedCompanyName {
+					sponsorCondition := s.matchPhraseConverter("company_id_name", companyName)
+					if sponsorCondition != "" {
+						result.SponsorWhereConditions = append(result.SponsorWhereConditions, sponsorCondition)
+					}
+				}
+			}
+			if hasOrganizer {
+				var organizerConditions []string
+				for _, companyName := range filterFields.ParsedCompanyName {
+					organizerCondition := s.matchPhraseConverter("company_name", companyName)
+					if organizerCondition != "" {
+						organizerConditions = append(organizerConditions, organizerCondition)
+					}
+				}
+				if len(organizerConditions) > 0 {
+					organizerWhereClause := fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR "))
+					whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_id IN (SELECT DISTINCT edition_id FROM testing_db.allevent_ch WHERE %s)", organizerWhereClause))
+				}
 			}
 		}
 	}
@@ -1303,20 +1549,30 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	if needsCompanyIdUnionCTE && len(companyIdWhereConditions) > 0 {
 		companyIdCondition := strings.Join(companyIdWhereConditions, " AND ")
 
-		hasExhibitor := false
-		hasSponsor := false
-		hasOrganizer := false
-		for _, entity := range filterFields.ParsedCompanyEntity {
-			if entity == "exhibitor" {
-				hasExhibitor = true
+		// Get entity types from SearchByEntity
+		_, _, hasExhibitor, hasSponsor, hasOrganizer := func() (bool, bool, bool, bool, bool) {
+			entities := filterFields.ParsedSearchByEntity
+			hasExhibitor := false
+			hasSponsor := false
+			hasOrganizer := false
+			for _, entity := range entities {
+				switch entity {
+				case "exhibitor":
+					hasExhibitor = true
+				case "sponsor":
+					hasSponsor = true
+				case "organizer":
+					hasOrganizer = true
+				case "company":
+					// "company" is a catch-all that includes all company-related entities
+					// For exhibitor, sponsor, organizer: searches on company_id column
+					hasExhibitor = true
+					hasSponsor = true
+					hasOrganizer = true
+				}
 			}
-			if entity == "sponsor" {
-				hasSponsor = true
-			}
-			if entity == "organizer" {
-				hasOrganizer = true
-			}
-		}
+			return false, false, hasExhibitor, hasSponsor, hasOrganizer
+		}()
 
 		var unionParts []string
 
@@ -1382,10 +1638,17 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			%s`, speakerWhereClause)
 
 		if previousCTE != "" {
+			var joinColumn string
+			if previousCTE == "filtered_user_events" || previousCTE == "filtered_company_events" {
+				joinColumn = "edition_id"
+			} else {
+				joinColumn = "event_id"
+			}
+
 			speakerQuery = fmt.Sprintf(`filtered_speakers AS (
 				SELECT event_id
 				FROM testing_db.event_speaker_ch
-				WHERE event_id IN (SELECT event_id FROM %s)`, previousCTE)
+				WHERE %s IN (SELECT %s FROM %s)`, joinColumn, joinColumn, previousCTE)
 			if len(speakerWhereConditions) > 0 {
 				speakerQuery += fmt.Sprintf(`
 				AND %s`, strings.Join(speakerWhereConditions, " AND "))
@@ -1412,10 +1675,17 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			%s`, exhibitorWhereClause)
 
 		if previousCTE != "" {
+			var joinColumn string
+			if previousCTE == "filtered_user_events" || previousCTE == "filtered_company_events" {
+				joinColumn = "edition_id"
+			} else {
+				joinColumn = "event_id"
+			}
+
 			exhibitorQuery = fmt.Sprintf(`filtered_exhibitors AS (
 				SELECT event_id
 				FROM testing_db.event_exhibitor_ch
-				WHERE event_id IN (SELECT event_id FROM %s)`, previousCTE)
+				WHERE %s IN (SELECT %s FROM %s)`, joinColumn, joinColumn, previousCTE)
 			if len(exhibitorWhereConditions) > 0 {
 				exhibitorQuery += fmt.Sprintf(`
 				AND %s`, strings.Join(exhibitorWhereConditions, " AND "))
@@ -1442,10 +1712,17 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			%s`, sponsorWhereClause)
 
 		if previousCTE != "" {
+			var joinColumn string
+			if previousCTE == "filtered_user_events" || previousCTE == "filtered_company_events" {
+				joinColumn = "edition_id"
+			} else {
+				joinColumn = "event_id"
+			}
+
 			sponsorQuery = fmt.Sprintf(`filtered_sponsors AS (
 				SELECT event_id
 				FROM testing_db.event_sponsors_ch
-				WHERE event_id IN (SELECT event_id FROM %s)`, previousCTE)
+				WHERE %s IN (SELECT %s FROM %s)`, joinColumn, joinColumn, previousCTE)
 			if len(sponsorWhereConditions) > 0 {
 				sponsorQuery += fmt.Sprintf(`
 				AND %s`, strings.Join(sponsorWhereConditions, " AND "))
@@ -2698,7 +2975,7 @@ func (s *SharedFunctionService) buildFieldFrom(fields []string, cteClauses []str
 	}
 
 	if s.containsCTE(cteClauses, "filtered_user_events") {
-		from += " INNER JOIN filtered_user_events fue ON ee.event_id = fue.event_id"
+		from += " INNER JOIN filtered_user_events fue ON ee.edition_id = fue.edition_id"
 	}
 	if s.containsCTE(cteClauses, "filtered_company_events") {
 		from += " INNER JOIN filtered_company_events fce ON ee.edition_id = fce.edition_id"
