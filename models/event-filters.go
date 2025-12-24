@@ -283,6 +283,7 @@ type FilterDataDto struct {
 	EventEstimate  bool   `json:"eventEstimate,omitempty" form:"eventEstimate"`
 	ImpactScore    bool   `json:"impactScore,omitempty" form:"impactScore"`
 	AudienceSpread string `json:"audienceSpread,omitempty" form:"audienceSpread"`
+	EventAudience  string `json:"eventAudience,omitempty" form:"eventAudience"`
 
 	InboundScoreGte       string `json:"inboundScore.gte,omitempty" form:"inboundScore.gte"`
 	InboundScoreLte       string `json:"inboundScore.lte,omitempty" form:"inboundScore.lte"`
@@ -328,6 +329,7 @@ type FilterDataDto struct {
 	ParsedEventRanking       []string            `json:"-"`
 	ParsedAudienceZone       []string            `json:"-"`
 	ParsedAudienceSpread     []string            `json:"-"`
+	ParsedEventAudience      []int               `json:"-"`
 	ParsedPublished          []string            `json:"-"`
 	ParsedVisibility         []string            `json:"-"`
 	ParsedEventTypeGroup     *Groups             `json:"-"`
@@ -741,6 +743,45 @@ func (f *FilterDataDto) Validate() error {
 					f.ParsedAudienceSpread = append(f.ParsedAudienceSpread, audienceSpread)
 				}
 			}
+			return nil
+		}))),
+
+		validation.Field(&f.EventAudience, validation.When(f.EventAudience != "", validation.By(func(value interface{}) error {
+			eventAudienceStr := value.(string)
+			eventAudiences := strings.Split(eventAudienceStr, ",")
+			f.ParsedEventAudience = make([]int, 0)
+
+			validAudiences := map[string]int{
+				"b2b": 11000,
+				"b2c": 10100,
+			}
+
+			var audienceValues []int
+
+			for _, eventAudience := range eventAudiences {
+				eventAudience = strings.TrimSpace(strings.ToLower(eventAudience))
+				if eventAudience == "" {
+					continue
+				}
+
+				if val, exists := validAudiences[eventAudience]; exists {
+					audienceValues = append(audienceValues, val)
+				} else {
+					validOptions := []string{"B2B", "B2C"}
+					return validation.NewError("invalid_event_audience", "Invalid eventAudience value: "+eventAudience+". Valid options are: "+strings.Join(validOptions, ", "))
+				}
+			}
+
+			if len(audienceValues) > 0 {
+				seen := make(map[int]bool)
+				for _, val := range audienceValues {
+					if !seen[val] {
+						f.ParsedEventAudience = append(f.ParsedEventAudience, val)
+						seen[val] = true
+					}
+				}
+			}
+
 			return nil
 		}))),
 

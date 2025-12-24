@@ -1348,6 +1348,14 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
+	if len(filterFields.ParsedEventAudience) > 0 {
+		audienceValues := make([]string, len(filterFields.ParsedEventAudience))
+		for i, val := range filterFields.ParsedEventAudience {
+			audienceValues[i] = fmt.Sprintf("%d", val)
+		}
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.editions_audiance_type IN (%s)", strings.Join(audienceValues, ",")))
+	}
+
 	result.SearchClause = s.buildSearchClause(filterFields)
 
 	if result.HasRegionsFilter {
