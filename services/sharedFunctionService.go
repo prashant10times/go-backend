@@ -628,7 +628,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[0])
 				companyCondition := s.matchPhraseConverter("user_company", filterFields.ParsedUserCompanyName[0])
 				allConditions = append(allConditions, fmt.Sprintf("(%s OR %s)", nameCondition, companyCondition))
-			} else {	
+			} else {
 				for i := 0; i < minCount; i++ {
 					nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[i])
 					companyCondition := s.matchPhraseConverter("user_company", filterFields.ParsedUserCompanyName[i])
@@ -4750,6 +4750,7 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		baseWhereConditions = append(baseWhereConditions, strings.TrimPrefix(joinConditionsFixed, "AND "))
 	}
 	whereClause := strings.Join(baseWhereConditions, " AND ")
+	whereClause = strings.ReplaceAll(whereClause, "ee.", "e.")
 
 	var locationJoinCondition string
 	var locationWhereCondition string
@@ -4885,6 +4886,7 @@ func (s *SharedFunctionService) GetEventCountByDate(
 		baseWhereConditions = append(baseWhereConditions, strings.TrimPrefix(joinConditionsFixed, "AND "))
 	}
 	whereClause := strings.Join(baseWhereConditions, " AND ")
+	whereClause = strings.ReplaceAll(whereClause, "ee.", "e.")
 
 	var dateGroupByExpr string
 	switch groupBy {
@@ -5011,6 +5013,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		preFilterWhereConditions = append(preFilterWhereConditions, whereClauseFixed)
 	}
 	preFilterWhereClause := strings.Join(preFilterWhereConditions, " AND ")
+	preFilterWhereClause = strings.ReplaceAll(preFilterWhereClause, "ee.", "e.")
 
 	filterWhereConditions := []string{}
 	if queryResult.SearchClause != "" {
@@ -5604,6 +5607,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		preFilterWhereConditions = append(preFilterWhereConditions, whereClauseFixed)
 	}
 	preFilterWhereClause := strings.Join(preFilterWhereConditions, " AND ")
+	preFilterWhereClause = strings.ReplaceAll(preFilterWhereClause, "ee.", "e.")
 
 	filterWhereConditions := []string{}
 	if queryResult.SearchClause != "" {
@@ -6879,6 +6883,7 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		baseWhereConditions = append(baseWhereConditions, joinConditionsFixed)
 	}
 	whereClause := strings.Join(baseWhereConditions, " AND ")
+	whereClause = strings.ReplaceAll(whereClause, "ee.", "e.")
 
 	startDateParsed, err := time.Parse("2006-01-02", startDate)
 	if err != nil {
