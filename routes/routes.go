@@ -33,6 +33,10 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	searchEventService := services.NewSearchEventService(dbService.DB, sharedFunctionService, transformDataService, clickhouseService, cfg)
 	searchEventsHandler := handlers.NewSearchEventsHandler(100, searchEventService)
 
+	// ranking module
+	rankingService := services.NewRankingService(clickhouseService)
+	rankingHandler := handlers.NewRankingHandler(rankingService, 10)
+
 	// helper module
 	categoryService := category.NewCategoryService(clickhouseService)
 	categoryController := category.NewCategoryController(categoryService)
@@ -57,6 +61,8 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	app.Get("/locations", locationController.GetLocations)
 	app.Get("/convert/ids", convertController.ConvertIds)
 	app.Get("/event-types", eventTypeController.GetAll)
+
+	api.Get("/events/:eventId/ranking", rankingHandler.Ranking)
 	//protected route
 	api.Use(middleware.JwtAuthMiddleware(dbService.DB))
 	api.Use(middleware.SearchRateLimit(limit, time.Duration(ttl)*time.Millisecond, time.Duration(blockDuration)*time.Millisecond))
