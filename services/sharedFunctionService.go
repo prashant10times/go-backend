@@ -4028,6 +4028,21 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
 	isEventEntity := searchByEntity == "event"
 
+	// Validate: searchByEntity = 'event' requires sourceEventIds
+	if isEventEntity && len(filterFields.ParsedSourceEventIds) == 0 {
+		result := make(map[string]interface{})
+		result["total_event_ids"] = ""
+		result["past"] = 0
+		result["active"] = 0
+		result["past_event_ids"] = ""
+		result["active_event_ids"] = ""
+		if getNew == nil || *getNew {
+			result["new"] = 0
+			result["new_event_ids"] = ""
+		}
+		return result, nil
+	}
+
 	// Check for special case: sourceEventIds[0] == -1 (only when searchByEntity = "event")
 	if isEventEntity && len(filterFields.ParsedSourceEventIds) > 0 {
 		// check for -1
