@@ -1214,15 +1214,9 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			lonStr := fmt.Sprintf("%.9f", geoCoords.Longitude)
 			_, _, radiusInMeters := s.transformDataService.parseCoordinates(latStr, lonStr, radiusStr, unit)
 
-			var latField, lonField string
-			if filterFields.ParsedViewBound.ToEvent {
-				latField = "ee.edition_city_lat"
-				lonField = "ee.edition_city_long"
-				whereConditions = append(whereConditions, "ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL")
-			} else {
-				latField = "ee.venue_lat"
-				lonField = "ee.venue_long"
-			}
+			latField := "COALESCE(ee.venue_lat, ee.edition_city_lat)"
+			lonField := "COALESCE(ee.venue_long, ee.edition_city_long)"
+			whereConditions = append(whereConditions, "(ee.venue_lat IS NOT NULL AND ee.venue_long IS NOT NULL) OR (ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL)")
 
 			whereConditions = append(whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
 				geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters))
@@ -1259,15 +1253,9 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 					lonStr := fmt.Sprintf("%.9f", geoCoords.Longitude)
 					_, _, radiusInMeters := s.transformDataService.parseCoordinates(latStr, lonStr, radiusStr, unit)
 
-					var latField, lonField string
-					if viewBound.ToEvent {
-						latField = "ee.edition_city_lat"
-						lonField = "ee.edition_city_long"
-						whereConditions = append(whereConditions, "ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL")
-					} else {
-						latField = "ee.venue_lat"
-						lonField = "ee.venue_long"
-					}
+					latField := "COALESCE(ee.venue_lat, ee.edition_city_lat)"
+					lonField := "COALESCE(ee.venue_long, ee.edition_city_long)"
+					whereConditions = append(whereConditions, "(ee.venue_lat IS NOT NULL AND ee.venue_long IS NOT NULL) OR (ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL)")
 
 					whereConditions = append(whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
 						geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters))
