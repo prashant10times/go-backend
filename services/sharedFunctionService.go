@@ -6524,8 +6524,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		return &ListResult{
 			StatusCode: 200,
 			Data: fiber.Map{
-				"count":  countRes.count,
-				"events": transformedDayCount,
+				"count": countRes.count,
+				"data":  transformedDayCount,
 			},
 		}, nil
 
@@ -6734,7 +6734,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			StatusCode: 200,
 			Data: fiber.Map{
 				"count":        countRes.count,
-				"events":       transformedDayCount,
+				"data":         transformedDayCount,
 				"countByMonth": transformedMonthCount,
 			},
 		}, nil
@@ -6911,7 +6911,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			StatusCode: 200,
 			Data: fiber.Map{
 				"count":        countRes.count,
-				"events":       transformedDayCount,
+				"data":         transformedDayCount,
 				"countByMonth": transformedMonthCount,
 				"countByYear":  transformedYearCount,
 			},
@@ -7138,7 +7138,7 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 	transformedEvents := s.transformDataService.TransformEventsByWeek(events)
 
 	return fiber.Map{
-		"events": transformedEvents,
+		"data": transformedEvents,
 	}, nil
 }
 
