@@ -475,6 +475,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 			ec.event_name,
 			ec.start_date,
 			ec.end_date,
+			cat.category_uuid,
 			arrayStringConcat(
 			arrayCompact([
 				if(trim(toString(any(ec.edition_country))) != '', 
@@ -515,6 +516,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 		FROM
 			ranking_cte AS er
 			INNER JOIN events_cte AS ec ON er.event_id = ec.event_id
+			LEFT JOIN testing_db.event_category_ch AS cat ON ec.event_id = cat.event AND er.category_name = cat.name AND cat.is_group = 1
 			LEFT JOIN testing_db.location_ch AS country_loc ON ec.edition_country = country_loc.iso AND country_loc.location_type = 'COUNTRY'
 			LEFT JOIN testing_db.location_ch AS city_loc ON ec.venue_city = city_loc.id AND city_loc.location_type = 'CITY'
 			LEFT JOIN testing_db.location_ch AS state_loc ON ec.edition_city_state_id = state_loc.id AND state_loc.location_type = 'STATE'
@@ -530,6 +532,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 				ec.event_name,
 				ec.start_date,
 				ec.end_date,
+				cat.category_uuid,
 				country_loc.id_uuid,
 				city_loc.id_uuid,
 				state_loc.id_uuid,
@@ -557,16 +560,23 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 			var eventName string
 			var startDate time.Time
 			var endDate time.Time
+			var categoryUUID *string
 			var location string
 
-			if err := rows.Scan(&eventRank, &category, &categoryName, &country, &eventID, &eventUUID, &eventName, &startDate, &endDate, &location); err != nil {
+			if err := rows.Scan(&eventRank, &category, &categoryName, &country, &eventID, &eventUUID, &eventName, &startDate, &endDate, &categoryUUID, &location); err != nil {
 				return nil, err
+			}
+
+			categoryUUIDStr := ""
+			if categoryUUID != nil {
+				categoryUUIDStr = *categoryUUID
 			}
 
 			closestRankings = append(closestRankings, map[string]interface{}{
 				"rank":          eventRank,
 				"category":      category,
 				"category_name": categoryName,
+				"category_uuid": categoryUUIDStr,
 				"country":       country,
 				"event_id":      eventID,
 				"event_uuid":    eventUUID,
@@ -593,6 +603,10 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 			startDate := curr["start_date"]
 			endDate := curr["end_date"]
 			locationStr := curr["location"].(string)
+			categoryUUID := ""
+			if curr["category_uuid"] != nil {
+				categoryUUID = curr["category_uuid"].(string)
+			}
 
 			categoryName := categoryNameRaw
 			country := countryRaw
@@ -747,13 +761,14 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 
 			group := groupRankedEventsByRankType[rankType].(map[string]interface{})
 			eventData := map[string]interface{}{
-				"id":         eventID,
-				"event_uuid": eventUUID,
-				"name":       eventName,
-				"rank":       rank,
-				"start_date": startDate,
-				"end_date":   endDate,
-				"location":   eventLocation,
+				"id":            eventID,
+				"event_uuid":    eventUUID,
+				"name":          eventName,
+				"rank":          rank,
+				"start_date":    startDate,
+				"end_date":      endDate,
+				"location":      eventLocation,
+				"category_uuid": categoryUUID,
 			}
 
 			if isPreceding {
