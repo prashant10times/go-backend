@@ -1925,6 +1925,12 @@ func (f *FilterDataDto) Validate() error {
 				"visitor":   true,
 			}
 
+			// Allow "event" when groupBy is used
+			hasGroupBy := f.GroupBy != ""
+			if hasGroupBy {
+				validEntities["event"] = true
+			}
+
 			var invalidEntities []string
 			for _, entity := range entities {
 				entity = strings.TrimSpace(strings.ToLower(entity))
@@ -1947,7 +1953,11 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			if len(invalidEntities) > 0 {
-				return validation.NewError("invalid_search_by_entity", "Invalid searchByEntity value(s): "+strings.Join(invalidEntities, ", ")+". Valid options are: organizer, speaker, sponsor, company, exhibitor, visitor")
+				validOptions := []string{"organizer", "speaker", "sponsor", "company", "exhibitor", "visitor"}
+				if hasGroupBy {
+					validOptions = append(validOptions, "event")
+				}
+				return validation.NewError("invalid_search_by_entity", "Invalid searchByEntity value(s): "+strings.Join(invalidEntities, ", ")+". Valid options are: "+strings.Join(validOptions, ", "))
 			}
 
 			if len(f.ParsedSearchByEntity) == 0 {

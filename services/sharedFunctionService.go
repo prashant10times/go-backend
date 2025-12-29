@@ -4025,23 +4025,21 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	}
 
 	getNew := filterFields.ParsedGetNew
+	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
+	isEventEntity := searchByEntity == "event"
 
-	// Check for special case: sourceEventIds[0] == -1
-	if len(filterFields.ParsedSourceEventIds) >= 0 {
+	// Check for special case: sourceEventIds[0] == -1 (only when searchByEntity = "event")
+	if isEventEntity && len(filterFields.ParsedSourceEventIds) > 0 {
 		// check for -1
 		firstId := filterFields.ParsedSourceEventIds[0]
 		if firstId == "'-1'" || firstId == "-1" {
 			result := make(map[string]interface{})
 			if getNew == nil || *getNew {
-				result["new"] = 0
-				result["new_ids"] = ""
+				result["new_event_ids"] = ""
 			}
-			if getNew == nil || !*getNew {
-				result["past"] = 0
-				result["active"] = 0
-				result["past_ids"] = ""
-				result["active_ids"] = ""
-			}
+			result["total_event_ids"] = ""
+			result["past_event_ids"] = ""
+			result["active_event_ids"] = ""
 			return result, nil
 		}
 	}
@@ -4058,34 +4056,51 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 
 	selectClauses := []string{}
 
-	if getNew == nil || *getNew {
+	if isEventEntity {
+		// For event entity, return only event IDs
 		selectClauses = append(selectClauses,
-			// Count
-			fmt.Sprintf("uniqIf(e.event_id, e.event_created >= '%s') AS new", createdAt),
-			// IDs
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.event_created >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS new_ids", createdAt),
+			"arrayStringConcat(groupArray(DISTINCT toString(e.event_uuid) || '#' || toString(e.event_id)), ',') AS total_event_ids",
 		)
-	}
-
-	if getNew == nil || !*getNew {
+		if getNew == nil || *getNew {
+			selectClauses = append(selectClauses,
+				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.event_created >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS new_event_ids", createdAt),
+			)
+		}
 		selectClauses = append(selectClauses,
-			// Counts
-			fmt.Sprintf("uniqIf(e.event_id, e.end_date < '%s') AS past", today),
-			fmt.Sprintf("uniqIf(e.event_id, e.end_date >= '%s') AS active", today),
-			// IDs
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date < '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS past_ids", today),
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS active_ids", today),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date < '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS past_event_ids", today),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS active_event_ids", today),
 		)
-	}
+	} else {
+		// Normal behavior: return counts and IDs
+		if getNew == nil || *getNew {
+			selectClauses = append(selectClauses,
+				// Count
+				fmt.Sprintf("uniqIf(e.event_id, e.event_created >= '%s') AS new", createdAt),
+				// IDs
+				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.event_created >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS new_ids", createdAt),
+			)
+		}
 
-	if len(selectClauses) == 0 {
-		selectClauses = []string{
-			fmt.Sprintf("uniqIf(e.event_id, e.end_date < '%s') AS past", today),
-			fmt.Sprintf("uniqIf(e.event_id, e.end_date >= '%s') AS active", today),
-			fmt.Sprintf("uniqIf(e.event_id, e.event_created >= '%s') AS new", createdAt),
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date < '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS past_ids", today),
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS active_ids", today),
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.event_created >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS new_ids", createdAt),
+		if getNew == nil || !*getNew {
+			selectClauses = append(selectClauses,
+				// Counts
+				fmt.Sprintf("uniqIf(e.event_id, e.end_date < '%s') AS past", today),
+				fmt.Sprintf("uniqIf(e.event_id, e.end_date >= '%s') AS active", today),
+				// IDs
+				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date < '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS past_ids", today),
+				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS active_ids", today),
+			)
+		}
+
+		if len(selectClauses) == 0 {
+			selectClauses = []string{
+				fmt.Sprintf("uniqIf(e.event_id, e.end_date < '%s') AS past", today),
+				fmt.Sprintf("uniqIf(e.event_id, e.end_date >= '%s') AS active", today),
+				fmt.Sprintf("uniqIf(e.event_id, e.event_created >= '%s') AS new", createdAt),
+				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date < '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS past_ids", today),
+				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS active_ids", today),
+				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.event_created >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS new_ids", createdAt),
+			}
 		}
 	}
 
@@ -4200,16 +4215,26 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	// Initialize result map with default values only for fields that were queried
 	result := make(map[string]interface{})
 
-	// Set defaults for getNew
-	if getNew == nil || *getNew {
-		result["new"] = 0
-		result["new_ids"] = ""
-	}
-	if getNew == nil || !*getNew {
-		result["past"] = 0
-		result["active"] = 0
-		result["past_ids"] = ""
-		result["active_ids"] = ""
+	if isEventEntity {
+		// For event entity, set defaults for event IDs
+		result["total_event_ids"] = ""
+		result["past_event_ids"] = ""
+		result["active_event_ids"] = ""
+		if getNew == nil || *getNew {
+			result["new_event_ids"] = ""
+		}
+	} else {
+		// Normal behavior: set defaults for counts and IDs
+		if getNew == nil || *getNew {
+			result["new"] = 0
+			result["new_ids"] = ""
+		}
+		if getNew == nil || !*getNew {
+			result["past"] = 0
+			result["active"] = 0
+			result["past_ids"] = ""
+			result["active_ids"] = ""
+		}
 	}
 
 	if rows.Next() {
