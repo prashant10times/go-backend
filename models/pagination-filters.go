@@ -60,11 +60,15 @@ func (p *PaginationDto) Validate() error {
 			for _, field := range sortFields {
 				cleanField := strings.TrimSpace(field)
 				cleanField = strings.TrimPrefix(cleanField, "-")
+				if cleanField == "distance" {
+					continue
+				}
 				if _, exists := SortFieldMap[cleanField]; !exists {
-					validFields := make([]string, 0, len(SortFieldMap))
+					validFields := make([]string, 0, len(SortFieldMap)+1)
 					for key := range SortFieldMap {
 						validFields = append(validFields, key)
 					}
+					validFields = append(validFields, "distance")
 					return validation.NewError("invalid_sort_field", "Invalid sort field. Valid fields are: "+strings.Join(validFields, ", "))
 				}
 			}

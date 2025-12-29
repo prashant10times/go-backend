@@ -425,7 +425,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 	requiredFields = append(requiredFields, basicKeys...)
 	requiredFields = append(requiredFields, selectedAdvancedKeys...)
 
-	sortClause, err := s.transformDataService.ParseSortFields(pagination.Sort, filterFields)
+	sortClause, err := s.transformDataService.ParseSortFields(pagination.Sort, &filterFields)
 	if err != nil {
 		log.Printf("Error parsing sort fields: %v", err)
 		statusCode = http.StatusBadRequest

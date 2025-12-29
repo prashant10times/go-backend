@@ -75,8 +75,8 @@ type PrioritizedRank struct {
 	CountryID  *string
 }
 
-func (s *TransformDataService) ParseSortFields(sort string, filterFields models.FilterDataDto) ([]SortClause, error) {
-	if sort == "" && filterFields.Q == "" {
+func (s *TransformDataService) ParseSortFields(sort string, filterFields *models.FilterDataDto) ([]SortClause, error) {
+	if sort == "" && filterFields != nil && filterFields.Q == "" {
 		return []SortClause{
 			{
 				Field: models.SortFieldMap["score"],
@@ -96,6 +96,17 @@ func (s *TransformDataService) ParseSortFields(sort string, filterFields models.
 
 		isDescending := strings.HasPrefix(field, "-")
 		cleanField := strings.TrimPrefix(field, "-")
+
+		if cleanField == "distance" {
+			if filterFields != nil {
+				if isDescending {
+					filterFields.EventDistanceOrder = "farthest"
+				} else {
+					filterFields.EventDistanceOrder = "closest"
+				}
+			}
+			continue
+		}
 
 		dbField, exists := models.SortFieldMap[cleanField]
 		if !exists {

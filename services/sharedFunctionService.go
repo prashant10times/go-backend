@@ -1232,14 +1232,13 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			whereConditions = append(whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
 				geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters))
 
-			if filterFields.EventDistanceOrder != "" {
-				orderDirection := "ASC"
-				if filterFields.EventDistanceOrder == "farthest" {
-					orderDirection = "DESC"
-				}
-				result.DistanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, %s, %s) %s",
-					geoCoords.Latitude, geoCoords.Longitude, orderByLatField, orderByLonField, orderDirection)
+			orderDirection := "ASC"
+			if filterFields.EventDistanceOrder == "farthest" {
+				orderDirection = "DESC"
 			}
+			log.Printf("viewBound distance sorting: EventDistanceOrder=%s, orderDirection=%s", filterFields.EventDistanceOrder, orderDirection)
+			result.DistanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, %s, %s) %s",
+				geoCoords.Latitude, geoCoords.Longitude, orderByLatField, orderByLonField, orderDirection)
 		}
 	}
 
