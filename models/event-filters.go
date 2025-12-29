@@ -267,6 +267,7 @@ type FilterDataDto struct {
 	EstimatedVisitors   string `json:"estimatedVisitors,omitempty" form:"estimatedVisitors"`
 	EstimatedExhibitors string `json:"estimatedExhibitors,omitempty" form:"estimatedExhibitors"`
 	IsBranded           string `json:"isBranded,omitempty" form:"isBranded"`
+	IsSeries            string `json:"isSeries,omitempty" form:"isSeries"`
 	Maturity            string `json:"maturity,omitempty" form:"maturity"`
 	Status              string `json:"status,omitempty" form:"status"`
 	Published           string `json:"published,omitempty" form:"published"`
@@ -314,6 +315,7 @@ type FilterDataDto struct {
 	ParsedToAggregate        []string            `json:"-"`
 	ParsedKeywords           *Keywords           `json:"-"`
 	ParsedIsBranded          *bool               `json:"-"`
+	ParsedIsSeries           *bool               `json:"-"`
 	ParsedMode               *string             `json:"-"`
 	ParsedStatus             []string            `json:"-"`
 	ParsedState              []string            `json:"-"`
@@ -1176,6 +1178,16 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("invalid_bool", "IsBranded must be a valid boolean value")
 			}
 			f.ParsedIsBranded = &val
+			return nil
+		}))),
+
+		validation.Field(&f.IsSeries, validation.When(f.IsSeries != "", validation.By(func(value interface{}) error {
+			isSeriesStr := value.(string)
+			val, err := strconv.ParseBool(isSeriesStr)
+			if err != nil {
+				return validation.NewError("invalid_bool", "IsSeries must be a valid boolean value")
+			}
+			f.ParsedIsSeries = &val
 			return nil
 		}))),
 

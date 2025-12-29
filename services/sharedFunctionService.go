@@ -1392,9 +1392,17 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	if filterFields.ParsedIsBranded != nil {
 		if *filterFields.ParsedIsBranded {
-			whereConditions = append(whereConditions, "ee.isBranded = 1")
+			whereConditions = append(whereConditions, "ee.eventBrandId IS NOT NULL")
 		} else {
-			whereConditions = append(whereConditions, "ee.isBranded = 0")
+			whereConditions = append(whereConditions, "ee.eventBrandId IS NULL")
+		}
+	}
+
+	if filterFields.ParsedIsSeries != nil {
+		if *filterFields.ParsedIsSeries {
+			whereConditions = append(whereConditions, "ee.eventSeriesId IS NOT NULL")
+		} else {
+			whereConditions = append(whereConditions, "ee.eventSeriesId IS NULL")
 		}
 	}
 
