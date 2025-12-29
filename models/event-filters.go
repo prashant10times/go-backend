@@ -381,9 +381,6 @@ func (f *FilterDataDto) SetDefaultValues() {
 	if f.Unit == "" {
 		f.Unit = "km"
 	}
-	if f.EventDistanceOrder == "" {
-		f.EventDistanceOrder = "closest"
-	}
 	if f.Published == "" {
 		f.Published = "1"
 	}

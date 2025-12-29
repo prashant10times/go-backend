@@ -1215,30 +1215,27 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			_, _, radiusInMeters := s.transformDataService.parseCoordinates(latStr, lonStr, radiusStr, unit)
 
 			var latField, lonField string
-			var orderByLatField, orderByLonField string
 			if filterFields.ParsedViewBound.ToEvent {
 				latField = "ee.edition_city_lat"
 				lonField = "ee.edition_city_long"
-				orderByLatField = "lat"
-				orderByLonField = "lon"
 				whereConditions = append(whereConditions, "ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL")
 			} else {
 				latField = "ee.venue_lat"
 				lonField = "ee.venue_long"
-				orderByLatField = "venueLat"
-				orderByLonField = "venueLon"
 			}
 
 			whereConditions = append(whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
 				geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters))
 
-			orderDirection := "ASC"
-			if filterFields.EventDistanceOrder == "farthest" {
-				orderDirection = "DESC"
+			if filterFields.EventDistanceOrder != "" {
+				orderDirection := "ASC"
+				if filterFields.EventDistanceOrder == "farthest" {
+					orderDirection = "DESC"
+				}
+				log.Printf("viewBound distance sorting: EventDistanceOrder=%s, orderDirection=%s", filterFields.EventDistanceOrder, orderDirection)
+				result.DistanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, %s, %s) %s",
+					geoCoords.Latitude, geoCoords.Longitude, latField, lonField, orderDirection)
 			}
-			log.Printf("viewBound distance sorting: EventDistanceOrder=%s, orderDirection=%s", filterFields.EventDistanceOrder, orderDirection)
-			result.DistanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, %s, %s) %s",
-				geoCoords.Latitude, geoCoords.Longitude, orderByLatField, orderByLonField, orderDirection)
 		}
 	}
 
@@ -2257,17 +2254,19 @@ func (s *SharedFunctionService) addGeographicFilters(whereConditions *[]string, 
 	if filterFields.Lat != "" && filterFields.Lon != "" && filterFields.Radius != "" && filterFields.Unit != "" {
 		lat, lon, radiusInMeters := s.transformDataService.parseCoordinates(filterFields.Lat, filterFields.Lon, filterFields.Radius, filterFields.Unit)
 		*whereConditions = append(*whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f", lat, lon, addTableAlias("edition_city_lat"), addTableAlias("edition_city_long"), radiusInMeters))
-		orderDirection := "ASC"
-		if filterFields.EventDistanceOrder == "farthest" {
-			orderDirection = "DESC"
+		if filterFields.EventDistanceOrder != "" {
+			orderDirection := "ASC"
+			if filterFields.EventDistanceOrder == "farthest" {
+				orderDirection = "DESC"
+			}
+			distanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, lat, lon) %s", lat, lon, orderDirection)
 		}
-		distanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, lat, lon) %s", lat, lon, orderDirection)
 	}
 
 	if filterFields.VenueLatitude != "" && filterFields.VenueLongitude != "" && filterFields.Radius != "" && filterFields.Unit != "" {
 		lat, lon, radiusInMeters := s.transformDataService.parseCoordinates(filterFields.VenueLatitude, filterFields.VenueLongitude, filterFields.Radius, filterFields.Unit)
 		*whereConditions = append(*whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f", lat, lon, addTableAlias("venue_lat"), addTableAlias("venue_long"), radiusInMeters))
-		if distanceOrderClause == "" {
+		if distanceOrderClause == "" && filterFields.EventDistanceOrder != "" {
 			orderDirection := "ASC"
 			if filterFields.EventDistanceOrder == "farthest" {
 				orderDirection = "DESC"

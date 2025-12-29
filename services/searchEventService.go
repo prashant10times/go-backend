@@ -1005,7 +1005,8 @@ func (s *SearchEventService) buildEventFilterFields(
 
 	eventFilterOrderBy := ""
 	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
-		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
+		if (strings.Contains(queryResult.DistanceOrderClause, "edition_city_lat") && strings.Contains(queryResult.DistanceOrderClause, "edition_city_long")) ||
+			(strings.Contains(queryResult.DistanceOrderClause, " lat") && strings.Contains(queryResult.DistanceOrderClause, " lon")) {
 			latAdded := false
 			lonAdded := false
 			for _, field := range eventFilterSelectFields {
@@ -1027,7 +1028,8 @@ func (s *SearchEventService) buildEventFilterFields(
 			conditionalFields = append(conditionalFields, "ee.edition_city_lat as lat")
 			conditionalFields = append(conditionalFields, "ee.edition_city_long as lon")
 		}
-		if strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon") {
+		if (strings.Contains(queryResult.DistanceOrderClause, "venue_lat") && strings.Contains(queryResult.DistanceOrderClause, "venue_long")) ||
+			(strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon")) {
 			venueLatAdded := false
 			venueLonAdded := false
 			for _, field := range eventFilterSelectFields {
@@ -1099,13 +1101,52 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	eventFilterSelectStr := strings.Join(eventFilterFields.SelectFields, ", ")
 	eventFilterGroupByStr := strings.Join(eventFilterFields.GroupByFields, ", ")
 
-	if queryResult.DistanceOrderClause != "" {
-		eventFilterOrderBy = queryResult.DistanceOrderClause
+	convertDistanceOrderForEventFilter := func(distanceClause string) string {
+		if distanceClause == "" {
+			return ""
+		}
+		converted := strings.ReplaceAll(distanceClause, "ee.edition_city_lat", "lat")
+		converted = strings.ReplaceAll(converted, "ee.edition_city_long", "lon")
+		converted = strings.ReplaceAll(converted, "ee.venue_lat", "venueLat")
+		converted = strings.ReplaceAll(converted, "ee.venue_long", "venueLon")
+		return converted
 	}
 
-	finalOrderClause := queryResult.DistanceOrderClause
-	if finalOrderClause == "" {
-		finalOrderClause = orderByClause
+	finalOrderClause := orderByClause
+	if queryResult.DistanceOrderClause != "" {
+		if orderByClause != "" {
+			distanceOrder := strings.TrimPrefix(queryResult.DistanceOrderClause, "ORDER BY ")
+			otherOrder := strings.TrimPrefix(orderByClause, "ORDER BY ")
+			finalOrderClause = fmt.Sprintf("ORDER BY %s, %s", distanceOrder, otherOrder)
+		} else {
+			finalOrderClause = queryResult.DistanceOrderClause
+		}
+		if eventFilterOrderBy == "" || eventFilterOrderBy == "ORDER BY event_score ASC" {
+			eventFilterOrderBy = convertDistanceOrderForEventFilter(queryResult.DistanceOrderClause)
+		} else {
+			distanceOrder := strings.TrimPrefix(convertDistanceOrderForEventFilter(queryResult.DistanceOrderClause), "ORDER BY ")
+			eventOrder := strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
+			combinedOrder := fmt.Sprintf("ORDER BY %s, %s", distanceOrder, eventOrder)
+			eventFilterOrderBy = fieldCtx.FieldsSelector.FixOrderByForFields(combinedOrder, eventFilterFields.SelectFields)
+			if eventFilterOrderBy == "" {
+				eventFilterOrderBy = convertDistanceOrderForEventFilter(queryResult.DistanceOrderClause)
+			}
+		}
+	} else {
+		if eventFilterOrderBy != "" && eventFilterOrderBy != "ORDER BY event_score ASC" {
+			eventFilterOrderBy = fieldCtx.FieldsSelector.FixOrderByForFields(eventFilterOrderBy, eventFilterFields.SelectFields)
+		} else if eventFilterOrderBy == "ORDER BY event_score ASC" {
+			hasEventScore := false
+			for _, field := range eventFilterFields.SelectFields {
+				if strings.Contains(field, "event_score") || strings.Contains(field, "score") {
+					hasEventScore = true
+					break
+				}
+			}
+			if !hasEventScore {
+				eventFilterOrderBy = ""
+			}
+		}
 	}
 
 	cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
@@ -2178,15 +2219,27 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	}
 
 	if queryResult.DistanceOrderClause != "" {
-		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
+		if (strings.Contains(queryResult.DistanceOrderClause, "edition_city_lat") && strings.Contains(queryResult.DistanceOrderClause, "edition_city_long")) ||
+			(strings.Contains(queryResult.DistanceOrderClause, " lat") && strings.Contains(queryResult.DistanceOrderClause, " lon")) {
 			eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_lat as lat", "ee.edition_city_long as lon")
 			eventFilterGroupByFields = append(eventFilterGroupByFields, "lat", "lon")
 		}
-		if strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon") {
+		if (strings.Contains(queryResult.DistanceOrderClause, "venue_lat") && strings.Contains(queryResult.DistanceOrderClause, "venue_long")) ||
+			(strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon")) {
 			eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_lat as venueLat", "ee.venue_long as venueLon")
 			eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLat", "venueLon")
 		}
-		eventFilterOrderBy = queryResult.DistanceOrderClause
+		convertedDistanceOrder := strings.ReplaceAll(queryResult.DistanceOrderClause, "ee.edition_city_lat", "lat")
+		convertedDistanceOrder = strings.ReplaceAll(convertedDistanceOrder, "ee.edition_city_long", "lon")
+		convertedDistanceOrder = strings.ReplaceAll(convertedDistanceOrder, "ee.venue_lat", "venueLat")
+		convertedDistanceOrder = strings.ReplaceAll(convertedDistanceOrder, "ee.venue_long", "venueLon")
+		if eventFilterOrderBy != "" && eventFilterOrderBy != "ORDER BY event_score ASC" {
+			distanceOrder := strings.TrimPrefix(convertedDistanceOrder, "ORDER BY ")
+			eventOrder := strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
+			eventFilterOrderBy = fmt.Sprintf("ORDER BY %s, %s", distanceOrder, eventOrder)
+		} else {
+			eventFilterOrderBy = convertedDistanceOrder
+		}
 	}
 
 	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
