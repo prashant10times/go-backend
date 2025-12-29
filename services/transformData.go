@@ -9,10 +9,11 @@ import (
 	"strconv"
 	"strings"
 
+	"time"
+
+	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/elliotchance/orderedmap"
 	"github.com/gofiber/fiber/v2"
-	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
-	"time"
 )
 
 type TransformDataService struct{}
@@ -173,8 +174,8 @@ func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[s
 
 func (s *TransformDataService) BuildClickhouseMapViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx) (interface{}, error) {
 	response := fiber.Map{
-		"count":  totalCount,
-		"events": eventData,
+		"count": totalCount,
+		"data":  eventData,
 	}
 	return response, nil
 }
