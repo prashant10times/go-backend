@@ -5435,6 +5435,7 @@ func (s *SharedFunctionService) GetTrendsCountByLongDurations(
 		preFilterWhereConditions = append(preFilterWhereConditions, whereClauseFixed)
 	}
 	preFilterWhereClause := strings.Join(preFilterWhereConditions, " AND ")
+	preFilterWhereClause = strings.ReplaceAll(preFilterWhereClause, "ee.", "e.")
 
 	filterWhereConditions := []string{}
 	if queryResult.SearchClause != "" {
