@@ -121,6 +121,23 @@ func (s *SharedFunctionService) matchPhraseConverter(fieldName string, searchTer
 	return fmt.Sprintf("(%s)", strings.Join(conditions, " AND "))
 }
 
+func (s *SharedFunctionService) matchWebsiteConverter(fieldName string, searchTerm string) string {
+	escapedTerm := strings.TrimSpace(searchTerm)
+	if escapedTerm == "" {
+		return ""
+	}
+
+	escapeSqlValue := func(value string) string {
+		value = strings.ReplaceAll(value, "'", "''")
+		value = strings.ReplaceAll(value, "%", "\\%")
+		value = strings.ReplaceAll(value, "_", "\\_")
+		return value
+	}
+
+	escapedValue := escapeSqlValue(escapedTerm)
+	return fmt.Sprintf("lower(%s) LIKE '%%%s%%'", fieldName, strings.ToLower(escapedValue))
+}
+
 func (s *SharedFunctionService) logApiUsage(userId, apiId, endpoint string, responseTime float64, ipAddress string, statusCode int, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, errorMessage *string) error {
 
 	payload := map[string]interface{}{
@@ -822,6 +839,50 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 					organizerWhereClause := fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR "))
 					whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_id IN (SELECT DISTINCT edition_id FROM testing_db.allevent_ch WHERE %s)", organizerWhereClause))
 				}
+			}
+		}
+	}
+
+	if len(filterFields.ParsedCompanyWebsite) > 0 && len(filterFields.ParsedSearchByEntity) > 0 {
+		_, _, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
+
+		if hasExhibitor {
+			result.NeedsExhibitorJoin = true
+			var exhibitorConditions []string
+			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
+				exhibitorCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+				if exhibitorCondition != "" {
+					exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
+				}
+			}
+			if len(exhibitorConditions) > 0 {
+				result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, fmt.Sprintf("(%s)", strings.Join(exhibitorConditions, " OR ")))
+			}
+		}
+		if hasSponsor {
+			result.NeedsSponsorJoin = true
+			var sponsorConditions []string
+			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
+				sponsorCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+				if sponsorCondition != "" {
+					sponsorConditions = append(sponsorConditions, sponsorCondition)
+				}
+			}
+			if len(sponsorConditions) > 0 {
+				result.SponsorWhereConditions = append(result.SponsorWhereConditions, fmt.Sprintf("(%s)", strings.Join(sponsorConditions, " OR ")))
+			}
+		}
+		if hasOrganizer {
+			var organizerConditions []string
+			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
+				organizerCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+				if organizerCondition != "" {
+					organizerConditions = append(organizerConditions, organizerCondition)
+				}
+			}
+			if len(organizerConditions) > 0 {
+				organizerWhereClause := fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR "))
+				whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_id IN (SELECT DISTINCT edition_id FROM testing_db.allevent_ch WHERE %s)", organizerWhereClause))
 			}
 		}
 	}

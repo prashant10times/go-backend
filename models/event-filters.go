@@ -249,8 +249,9 @@ type FilterDataDto struct {
 	CompanyCity    string `json:"companyCity,omitempty" form:"companyCity"`
 	CompanyState   string `json:"companyState,omitempty" form:"companyState"`
 
-	CompanyId   string `json:"companyId,omitempty" form:"companyId"`
-	CompanyName string `json:"companyName,omitempty" form:"companyName"`
+	CompanyId      string `json:"companyId,omitempty" form:"companyId"`
+	CompanyName    string `json:"companyName,omitempty" form:"companyName"`
+	CompanyWebsite string `json:"companyWebsite,omitempty" form:"companyWebsite"`
 
 	View                string `json:"view,omitempty" form:"view"`
 	CalendarType        string `json:"calendar_type,omitempty" form:"calendar_type"`
@@ -367,6 +368,7 @@ type FilterDataDto struct {
 	ParsedUserCompanyName []string `json:"-"`
 	ParsedCompanyId       []string `json:"-"`
 	ParsedCompanyName     []string `json:"-"`
+	ParsedCompanyWebsite  []string `json:"-"`
 	ParsedSearchByEntity  []string `json:"-"`
 }
 
@@ -1875,6 +1877,32 @@ func (f *FilterDataDto) Validate() error {
 
 			if f.SearchByEntity == "" {
 				return validation.NewError("entity_required", "searchByEntity is required when companyName is provided")
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.CompanyWebsite, validation.When(f.CompanyWebsite != "", validation.By(func(value interface{}) error {
+			companyWebsiteStr := value.(string)
+			if companyWebsiteStr == "" {
+				return nil
+			}
+
+			companyWebsites := strings.Split(companyWebsiteStr, ",")
+			f.ParsedCompanyWebsite = make([]string, 0, len(companyWebsites))
+			for _, companyWebsite := range companyWebsites {
+				companyWebsite = strings.TrimSpace(companyWebsite)
+				if companyWebsite != "" {
+					f.ParsedCompanyWebsite = append(f.ParsedCompanyWebsite, companyWebsite)
+				}
+			}
+
+			if len(f.ParsedCompanyWebsite) == 0 {
+				return validation.NewError("empty_company_website", "companyWebsite cannot be empty after parsing")
+			}
+
+			if f.SearchByEntity == "" {
+				return validation.NewError("entity_required", "searchByEntity is required when companyWebsite is provided")
 			}
 
 			return nil
