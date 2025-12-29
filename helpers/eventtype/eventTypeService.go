@@ -19,12 +19,13 @@ func NewEventTypeService(clickhouseService *services.ClickHouseService) *EventTy
 }
 
 type EventType struct {
-	ID       string   `json:"id"`
-	ID10x    uint32   `json:"id_10x"`
-	Priority int8     `json:"priority"`
-	Name     string   `json:"name"`
-	Slug     string   `json:"slug,omitempty"`
-	Groups   []string `json:"groups,omitempty"`
+	ID             string   `json:"id"`
+	ID10x          uint32   `json:"id_10x"`
+	Priority       int8     `json:"priority"`
+	Name           string   `json:"name"`
+	Slug           string   `json:"slug,omitempty"`
+	EventGroupType string   `json:"eventGroupType,omitempty"`
+	Groups         []string `json:"groups,omitempty"`
 }
 
 func (s *EventTypeService) GetAll(query models.SearchEventTypeDto) (interface{}, error) {
@@ -127,7 +128,7 @@ func (s *EventTypeService) GetAll(query models.SearchEventTypeDto) (interface{},
 		return result, nil
 	}
 
-	selectClause := "DISTINCT et.eventtype_uuid, et.eventtype_id, et.priority, et.name, et.slug, toString(et.groups) as groups"
+	selectClause := "DISTINCT et.eventtype_uuid, et.eventtype_id, et.priority, et.name, et.slug, et.eventGroupType, toString(et.groups) as groups"
 	selectQuery := fmt.Sprintf(`
 		SELECT %s
 		FROM testing_db.event_type_ch AS et
@@ -152,7 +153,7 @@ func (s *EventTypeService) GetAll(query models.SearchEventTypeDto) (interface{},
 	for rows.Next() {
 		var eventType EventType
 		var groupsStr string
-		if err := rows.Scan(&eventType.ID, &eventType.ID10x, &eventType.Priority, &eventType.Name, &eventType.Slug, &groupsStr); err != nil {
+		if err := rows.Scan(&eventType.ID, &eventType.ID10x, &eventType.Priority, &eventType.Name, &eventType.Slug, &eventType.EventGroupType, &groupsStr); err != nil {
 			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
 		}
 
