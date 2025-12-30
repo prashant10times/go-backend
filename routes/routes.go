@@ -8,6 +8,7 @@ import (
 	"search-event-go/helpers/designation"
 	"search-event-go/helpers/eventtype"
 	"search-event-go/helpers/location"
+	locationpolygon "search-event-go/helpers/locationPolygon"
 	"search-event-go/middleware"
 	"search-event-go/services"
 	"strconv"
@@ -44,6 +45,8 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	designationController := designation.NewDesignationController(designationService)
 	locationService := location.NewLocationService(clickhouseService)
 	locationController := location.NewLocationController(locationService)
+	locationPolygonService := locationpolygon.NewLocationPolygonService(clickhouseService)
+	locationPolygonController := locationpolygon.NewLocationPolygonController(locationPolygonService)
 	eventTypeService := eventtype.NewEventTypeService(clickhouseService)
 	eventTypeController := eventtype.NewEventTypeController(eventTypeService)
 
@@ -61,6 +64,7 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	app.Get("/locations", locationController.GetLocations)
 	app.Get("/convert/ids", convertController.ConvertIds)
 	app.Get("/event-types", eventTypeController.GetAll)
+	app.Get("/events/:eventId/polygons", locationPolygonController.GetLocationPolygons)
 
 	api.Get("/events/:eventId/ranking", rankingHandler.Ranking)
 	//protected route
