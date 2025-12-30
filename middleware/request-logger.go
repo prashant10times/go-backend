@@ -30,7 +30,13 @@ func RequestLoggerMiddleware() fiber.Handler {
 			queryStr = fmt.Sprintf("?%s", string(queryParams))
 		}
 
+		// Debug: Print IP-related values
+		xForwardedFor := c.Get("X-Forwarded-For", "N/A")
+		xRealIP := c.Get("X-Real-IP", "N/A")
+		remoteAddr := c.Context().RemoteAddr().String()
 		remoteIP := c.IP()
+		log.Printf("IP Debug - X-Forwarded-For: %s | X-Real-IP: %s | RemoteAddr: %s | Final IP: %s", xForwardedFor, xRealIP, remoteAddr, remoteIP)
+
 		userAgent := c.Get("User-Agent", "N/A")
 		contentType := c.Get("Content-Type", "N/A")
 		contentLength := len(requestBody)
