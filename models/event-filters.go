@@ -413,10 +413,107 @@ func validateAndNormalizeDate(dateStr *string, fieldName string) validation.Rule
 	}))
 }
 
+func getEventTypeGroupsFromIDs(eventTypeIDs []string) map[string]bool {
+	eventTypeById := map[string]string{
+		"e5283caa-f655-504b-8e44-49ae0edb3faa": "festival",
+		"bffa5040-c654-5991-a1c5-0610e2c0ec74": "sport",
+		"69cf1329-0c71-5dae-b7a9-838c5712bce0": "concert",
+		"94fcb56e-2838-5d74-9092-e582d873a03e": "stage-performance",
+		"3a3609e5-56df-5a8b-ad47-c9e168eb4f59": "community-group",
+		"9b5524b4-60f5-5478-b3f0-38e2e12e3981": "tradeshows",
+		"4de48054-46fb-5452-a23f-8aac6c00592e": "conferences",
+		"ad7c83a5-b8fc-5109-a159-9306848de22c": "workshops",
+		"5b37e581-53f7-5dcf-8177-c6a43774b168": "holiday",
+	}
+
+	eventTypeGroups := map[string]string{
+		"festival":          "social",
+		"sport":             "social",
+		"concert":           "social",
+		"stage-performance": "social",
+		"community-group":   "social",
+		"tradeshows":        "business",
+		"conferences":       "business",
+		"workshops":         "business",
+		"holiday":           "unattended",
+	}
+
+	groups := make(map[string]bool)
+	for _, eventTypeID := range eventTypeIDs {
+		if slug, exists := eventTypeById[eventTypeID]; exists {
+			if group, exists := eventTypeGroups[slug]; exists {
+				groups[group] = true
+			}
+		}
+	}
+	return groups
+}
+
+func (f *FilterDataDto) applyEventTypeBasedMappings(wasPublishedExplicitlyProvided, wasEventAudienceExplicitlyProvided bool) {
+	if len(f.ParsedEventTypes) == 0 {
+		return
+	}
+
+	groups := getEventTypeGroupsFromIDs(f.ParsedEventTypes)
+	hasHoliday := groups["unattended"]
+	hasSocial := groups["social"]
+	hasBusiness := groups["business"]
+
+	if !wasPublishedExplicitlyProvided {
+		publishedSet := make(map[string]bool)
+
+		if hasHoliday {
+			publishedSet["4"] = true
+		}
+		if hasSocial || hasBusiness {
+			publishedSet["1"] = true
+			publishedSet["2"] = true
+		}
+		if hasHoliday && (hasSocial || hasBusiness) {
+			publishedSet["1"] = true
+			publishedSet["2"] = true
+			publishedSet["4"] = true
+		}
+
+		if len(publishedSet) > 0 {
+			f.ParsedPublished = make([]string, 0, len(publishedSet))
+			for pub := range publishedSet {
+				f.ParsedPublished = append(f.ParsedPublished, pub)
+			}
+		}
+	}
+
+	// Apply eventAudience mapping only if eventAudience is not explicitly provided
+	if !wasEventAudienceExplicitlyProvided {
+		audienceSet := make(map[int]bool)
+
+		if hasSocial {
+			audienceSet[10100] = true // B2C
+		}
+		if hasBusiness {
+			audienceSet[11000] = true // B2B
+		}
+		if hasSocial && hasBusiness {
+			audienceSet[10100] = true // B2C
+			audienceSet[11000] = true // B2B
+		}
+
+		if len(audienceSet) > 0 {
+			f.ParsedEventAudience = make([]int, 0, len(audienceSet))
+			for aud := range audienceSet {
+				f.ParsedEventAudience = append(f.ParsedEventAudience, aud)
+			}
+		}
+	}
+}
+
 func (f *FilterDataDto) Validate() error {
+	wasPublishedExplicitlyProvided := f.Published != ""
+	wasEventAudienceExplicitlyProvided := f.EventAudience != ""
+
 	f.SetDefaultValues()
 
-	return validation.ValidateStruct(f,
+	err := validation.ValidateStruct(f,
 		validation.Field(&f.Price, validation.When(f.Price != "", validation.In("free", "paid", "not_available", "free-paid"))),    // Price validation
 		validation.Field(&f.AvgRating, validation.When(f.AvgRating != "", validation.In("1", "2", "3", "4", "5"))),                 // AvgRating validation
 		validation.Field(&f.Unit, validation.When(f.Unit != "", validation.In("km", "mi", "ft"))),                                  // Unit validation
@@ -1977,6 +2074,14 @@ func (f *FilterDataDto) Validate() error {
 			return nil
 		}))),
 	)
+
+	if err != nil {
+		return err
+	}
+
+	f.applyEventTypeBasedMappings(wasPublishedExplicitlyProvided, wasEventAudienceExplicitlyProvided)
+
+	return nil
 }
 
 type SearchEventsRequest struct {
