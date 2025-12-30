@@ -381,8 +381,9 @@ func (f *FilterDataDto) SetDefaultValues() {
 	if f.Unit == "" {
 		f.Unit = "km"
 	}
+	// changes made due to GEO/GTM requests
 	if f.Published == "" {
-		f.Published = "1"
+		f.Published = "1,2,4"
 	}
 }
 

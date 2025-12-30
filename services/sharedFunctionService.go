@@ -2282,8 +2282,9 @@ func (s *SharedFunctionService) buildPublishedCondition(filterFields models.Filt
 	if filterFields.GroupBy != "" && filterFields.GroupBy == "eventTypeGroup" {
 		return "ee.published in (1, 2, 4)"
 	}
+	// changes made due to GEO/GTM requests
 	if len(filterFields.ParsedPublished) == 0 {
-		return "ee.published = '1'"
+		return "ee.published IN ('1', '2', '4')"
 	}
 	if len(filterFields.ParsedPublished) == 1 {
 		return fmt.Sprintf("ee.published = '%s'", filterFields.ParsedPublished[0])
