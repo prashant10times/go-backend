@@ -1462,12 +1462,13 @@ func (f *FilterDataDto) Validate() error {
 			validPublishedValues := map[string]bool{
 				"1": true,
 				"2": true,
+				"4": true,
 			}
 			for _, published := range publishedValues {
 				published = strings.TrimSpace(published)
 				if published != "" {
 					if !validPublishedValues[published] {
-						return validation.NewError("invalid_published", "Invalid published value: "+published+". Valid values are: 1, 2")
+						return validation.NewError("invalid_published", "Invalid published value: "+published+". Valid values are: 1, 2, 4")
 					}
 					f.ParsedPublished = append(f.ParsedPublished, published)
 				}
