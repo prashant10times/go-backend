@@ -69,55 +69,111 @@ func NewSharedFunctionService(db *gorm.DB, clickhouseService *ClickHouseService,
 	}
 }
 
+// OLD IMPLEMENTATION - Commented out due to ClickHouse hasToken() separator issue
+// hasToken() doesn't accept separators (periods, hyphens, etc.) in the needle parameter
+// This caused errors with company names like "raonark.inc", "co.", "electro-jet", etc.
+// func (s *SharedFunctionService) matchPhraseConverter(fieldName string, searchTerm string) string {
+// 	escapedTerm := strings.TrimSpace(searchTerm)
+// 	if escapedTerm == "" {
+// 		return ""
+// 	}
+//
+// 	words := strings.Fields(strings.ToLower(escapedTerm))
+//
+// 	if len(words) == 0 {
+// 		return ""
+// 	}
+// 	escapeSqlValue := func(word string) string {
+// 		return strings.ReplaceAll(word, "'", "''")
+// 	}
+//
+// 	escapeRegex := func(word string) string {
+// 		word = strings.ReplaceAll(word, "\\", "\\\\")
+// 		word = strings.ReplaceAll(word, ".", "\\.")
+// 		word = strings.ReplaceAll(word, "+", "\\+")
+// 		word = strings.ReplaceAll(word, "*", "\\*")
+// 		word = strings.ReplaceAll(word, "?", "\\?")
+// 		word = strings.ReplaceAll(word, "^", "\\^")
+// 		word = strings.ReplaceAll(word, "$", "\\$")
+// 		word = strings.ReplaceAll(word, "[", "\\[")
+// 		word = strings.ReplaceAll(word, "]", "\\]")
+// 		word = strings.ReplaceAll(word, "{", "\\{")
+// 		word = strings.ReplaceAll(word, "}", "\\}")
+// 		word = strings.ReplaceAll(word, "(", "\\(")
+// 		word = strings.ReplaceAll(word, ")", "\\)")
+// 		word = strings.ReplaceAll(word, "|", "\\|")
+// 		return word
+// 	}
+//
+// 	if len(words) == 1 {
+// 		word := escapeSqlValue(words[0])
+// 		return fmt.Sprintf("hasToken(lower(%s), '%s')", fieldName, word)
+// 	}
+// 	var conditions []string
+// 	for _, word := range words {
+// 		escapedWord := escapeSqlValue(word)
+// 		conditions = append(conditions, fmt.Sprintf("hasToken(lower(%s), '%s')", fieldName, escapedWord))
+// 	}
+// 	escapedWords := make([]string, len(words))
+// 	for i, word := range words {
+// 		escapedWords[i] = escapeRegex(word)
+// 	}
+// 	regexPattern := `\b` + strings.Join(escapedWords, `\s+`) + `\b`
+// 	escapedRegex := strings.ReplaceAll(regexPattern, "'", "''")
+// 	conditions = append(conditions, fmt.Sprintf("match(lower(%s), '%s')", fieldName, escapedRegex))
+// 	return fmt.Sprintf("(%s)", strings.Join(conditions, " AND "))
+// }
+
 func (s *SharedFunctionService) matchPhraseConverter(fieldName string, searchTerm string) string {
 	escapedTerm := strings.TrimSpace(searchTerm)
 	if escapedTerm == "" {
 		return ""
 	}
 
-	words := strings.Fields(strings.ToLower(escapedTerm))
-
-	if len(words) == 0 {
-		return ""
-	}
 	escapeSqlValue := func(word string) string {
 		return strings.ReplaceAll(word, "'", "''")
 	}
 
-	escapeRegex := func(word string) string {
-		word = strings.ReplaceAll(word, "\\", "\\\\")
-		word = strings.ReplaceAll(word, ".", "\\.")
-		word = strings.ReplaceAll(word, "+", "\\+")
-		word = strings.ReplaceAll(word, "*", "\\*")
-		word = strings.ReplaceAll(word, "?", "\\?")
-		word = strings.ReplaceAll(word, "^", "\\^")
-		word = strings.ReplaceAll(word, "$", "\\$")
-		word = strings.ReplaceAll(word, "[", "\\[")
-		word = strings.ReplaceAll(word, "]", "\\]")
-		word = strings.ReplaceAll(word, "{", "\\{")
-		word = strings.ReplaceAll(word, "}", "\\}")
-		word = strings.ReplaceAll(word, "(", "\\(")
-		word = strings.ReplaceAll(word, ")", "\\)")
-		word = strings.ReplaceAll(word, "|", "\\|")
-		return word
+	extractTokens := func(text string) []string {
+		text = strings.ToLower(text)
+		var tokens []string
+		var currentToken strings.Builder
+
+		for _, char := range text {
+			if (char >= 'a' && char <= 'z') || (char >= '0' && char <= '9') {
+				currentToken.WriteRune(char)
+			} else {
+				if currentToken.Len() > 0 {
+					token := currentToken.String()
+					if token != "" {
+						tokens = append(tokens, token)
+					}
+					currentToken.Reset()
+				}
+			}
+		}
+		if currentToken.Len() > 0 {
+			token := currentToken.String()
+			if token != "" {
+				tokens = append(tokens, token)
+			}
+		}
+
+		return tokens
 	}
 
-	if len(words) == 1 {
-		word := escapeSqlValue(words[0])
-		return fmt.Sprintf("hasToken(lower(%s), '%s')", fieldName, word)
+	tokens := extractTokens(escapedTerm)
+
+	if len(tokens) == 0 {
+		return ""
 	}
+
 	var conditions []string
-	for _, word := range words {
-		escapedWord := escapeSqlValue(word)
-		conditions = append(conditions, fmt.Sprintf("hasToken(lower(%s), '%s')", fieldName, escapedWord))
+	for _, token := range tokens {
+		escapedToken := escapeSqlValue(token)
+		conditions = append(conditions, fmt.Sprintf("hasToken(lower(%s), '%s')", fieldName, escapedToken))
 	}
-	escapedWords := make([]string, len(words))
-	for i, word := range words {
-		escapedWords[i] = escapeRegex(word)
-	}
-	regexPattern := `\b` + strings.Join(escapedWords, `\s+`) + `\b`
-	escapedRegex := strings.ReplaceAll(regexPattern, "'", "''")
-	conditions = append(conditions, fmt.Sprintf("match(lower(%s), '%s')", fieldName, escapedRegex))
+
 	return fmt.Sprintf("(%s)", strings.Join(conditions, " AND "))
 }
 
@@ -760,7 +816,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				result.SponsorWhereConditions = append(result.SponsorWhereConditions, companyIdCondition)
 			}
 			if hasOrganizer {
-				whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_id IN (SELECT DISTINCT edition_id FROM testing_db.allevent_ch WHERE company_id IN (%s))", strings.Join(companyIds, ",")))
+				whereConditions = append(whereConditions, fmt.Sprintf("ee.company_id IN (%s)", strings.Join(companyIds, ",")))
 			}
 		}
 	}
@@ -830,14 +886,14 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			if hasOrganizer {
 				var organizerConditions []string
 				for _, companyName := range filterFields.ParsedCompanyName {
-					organizerCondition := s.matchPhraseConverter("company_name", companyName)
+					organizerCondition := s.matchPhraseConverter("ee.company_name", companyName)
 					if organizerCondition != "" {
 						organizerConditions = append(organizerConditions, organizerCondition)
 					}
 				}
 				if len(organizerConditions) > 0 {
 					organizerWhereClause := fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR "))
-					whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_id IN (SELECT DISTINCT edition_id FROM testing_db.allevent_ch WHERE %s)", organizerWhereClause))
+					whereConditions = append(whereConditions, organizerWhereClause)
 				}
 			}
 		}
@@ -875,14 +931,14 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		if hasOrganizer {
 			var organizerConditions []string
 			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				organizerCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+				organizerCondition := s.matchWebsiteConverter("ee.company_website", companyWebsite)
 				if organizerCondition != "" {
 					organizerConditions = append(organizerConditions, organizerCondition)
 				}
 			}
 			if len(organizerConditions) > 0 {
 				organizerWhereClause := fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR "))
-				whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_id IN (SELECT DISTINCT edition_id FROM testing_db.allevent_ch WHERE %s)", organizerWhereClause))
+				whereConditions = append(whereConditions, organizerWhereClause)
 			}
 		}
 	}
