@@ -53,7 +53,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	ctx := context.Background()
 
 	whereConditions := []string{}
-	orderByConditions := []string{}
+	var rankCase string
 
 	if query.Slug != "" {
 		slugParts := strings.Split(query.Slug, ",")
@@ -94,20 +94,19 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 				whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR ")))
 			}
 
-			orderByCase := "CASE\n"
+			rankCase = "CASE\n"
 			escapedQueryLower := strings.ReplaceAll(queryLower, "'", "''")
-			orderByCase += fmt.Sprintf("  WHEN lower(name) LIKE '%s%%' THEN 1\n", escapedQueryLower)
+			rankCase += fmt.Sprintf("  WHEN lower(name) LIKE '%s%%' THEN 1\n", escapedQueryLower)
 
 			for i, keyword := range keywords {
 				keyword = strings.TrimSpace(keyword)
 				if keyword != "" {
 					escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
-					orderByCase += fmt.Sprintf("  WHEN lower(name) LIKE '%%%s%%' OR lower(alias) LIKE '%%%s%%' THEN %d\n", escapedKeyword, escapedKeyword, i+2)
+					rankCase += fmt.Sprintf("  WHEN lower(name) LIKE '%%%s%%' OR lower(alias) LIKE '%%%s%%' THEN %d\n", escapedKeyword, escapedKeyword, i+2)
 				}
 			}
-			orderByCase += fmt.Sprintf("  ELSE %d\n", len(keywords)+2)
-			orderByCase += "END"
-			orderByConditions = append(orderByConditions, orderByCase)
+			rankCase += fmt.Sprintf("  ELSE %d\n", len(keywords)+2)
+			rankCase += "END AS RANK"
 		}
 
 		if query.ParsedLocationType != nil {
@@ -139,25 +138,34 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		whereClause = "1=1"
 	}
 
-	orderByClause := ""
-	if len(orderByConditions) > 0 {
-		orderByClause = strings.Join(orderByConditions, ", ") + ", "
-	}
-	orderByClause += "length(name) ASC, location_type DESC"
-
 	take := query.ParsedTake
 	if take == 0 {
 		take = 10
 	}
 	offset := query.ParsedOffset
 
+	// Build CTE SELECT with optional RANK column
+	cteSelectFields := "id_uuid,\n\t\t\tname,\n\t\t\talias,\n\t\t\tlocation_type"
+	if rankCase != "" {
+		cteSelectFields += ",\n\t\t\t" + rankCase
+	}
+
+	// Build ORDER BY clause for CTE
+	cteOrderBy := "length(name) ASC, location_type DESC"
+	if rankCase != "" {
+		cteOrderBy = "RANK,\n\t\t\t" + cteOrderBy
+	}
+
+	// Build final ORDER BY clause
+	finalOrderBy := ""
+	if rankCase != "" {
+		finalOrderBy = " ORDER BY RANK"
+	}
+
 	selectQuery := fmt.Sprintf(`
 		WITH location_ids AS (
 			SELECT 
-				id_uuid,
-				name,
-				alias,
-				location_type
+				%s
 			FROM testing_db.location_ch
 			WHERE %s
 			ORDER BY %s
@@ -190,19 +198,23 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			state.slug AS state_slug,
 			state.country_uuid AS state_country_id
 		FROM location_ids
-		LEFT JOIN testing_db.location_ch location ON location_ids.id_uuid = location.id_uuid 
+		LEFT JOIN testing_db.location_ch AS location
+			ON location_ids.id_uuid = location.id_uuid 
 			AND location.location_type IN ('VENUE', 'CITY', 'COUNTRY', 'STATE') 
 			AND location.published = 1
-		LEFT JOIN testing_db.location_ch city ON location.city_uuid = city.id_uuid 
+		LEFT JOIN testing_db.location_ch AS city
+			ON location.city_uuid = city.id_uuid 
 			AND city.location_type = 'CITY' 
 			AND city.published = 1
-		LEFT JOIN testing_db.location_ch country ON location.country_uuid = country.id_uuid 
+		LEFT JOIN testing_db.location_ch AS country
+			ON location.country_uuid = country.id_uuid 
 			AND country.location_type = 'COUNTRY' 
 			AND country.published = 1
-		LEFT JOIN testing_db.location_ch state ON location.state_uuid = state.id_uuid 
+		LEFT JOIN testing_db.location_ch AS state
+			ON location.state_uuid = state.id_uuid 
 			AND state.location_type = 'STATE' 
-			AND state.published = 1
-	`, whereClause, orderByClause, take, offset)
+			AND state.published = 1%s
+	`, cteSelectFields, whereClause, cteOrderBy, take, offset, finalOrderBy)
 
 	log.Printf("Location query: %s", selectQuery)
 
