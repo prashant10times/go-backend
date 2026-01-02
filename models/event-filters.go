@@ -2047,6 +2047,10 @@ func (f *FilterDataDto) Validate() error {
 				"company":   true,
 				"exhibitor": true,
 				"visitor":   true,
+				"event":     true,
+				"keywords":  true,
+				"eventEstimateCount": true,
+				"economicImpactBreakdownCount": true,
 			}
 
 			// Allow "event" when groupBy is used
@@ -2077,7 +2081,7 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			if len(invalidEntities) > 0 {
-				validOptions := []string{"organizer", "speaker", "sponsor", "company", "exhibitor", "visitor"}
+				validOptions := []string{"organizer", "speaker", "sponsor", "company", "exhibitor", "visitor", "event", "keywords", "eventEstimateCount", "economicImpactBreakdownCount"}
 				if hasGroupBy {
 					validOptions = append(validOptions, "event")
 				}
