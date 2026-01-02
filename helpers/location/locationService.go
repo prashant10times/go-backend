@@ -54,6 +54,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 
 	whereConditions := []string{}
 	var rankCase string
+	isVenueQuery := query.ParsedLocationType != nil && *query.ParsedLocationType == models.LocationTypeVenue
 
 	if query.Slug != "" {
 		slugParts := strings.Split(query.Slug, ",")
@@ -68,6 +69,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			whereConditions = append(whereConditions, fmt.Sprintf("slug IN (%s)", strings.Join(escapedSlugs, ",")))
 			cityType := models.LocationTypeCity
 			query.ParsedLocationType = &cityType
+			isVenueQuery = false
 		}
 	}
 
@@ -76,44 +78,113 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		for i, id := range query.ParsedLocationIds {
 			escapedIDs[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(id, "'", "''"))
 		}
-		whereConditions = append(whereConditions, fmt.Sprintf("id_uuid IN (%s)", strings.Join(escapedIDs, ",")))
+		if isVenueQuery {
+			whereConditions = append(whereConditions, fmt.Sprintf("l.id_uuid IN (%s)", strings.Join(escapedIDs, ",")))
+		} else {
+			whereConditions = append(whereConditions, fmt.Sprintf("id_uuid IN (%s)", strings.Join(escapedIDs, ",")))
+		}
 	} else {
 		if query.ParsedQuery != nil && *query.ParsedQuery != "" {
 			queryLower := strings.ToLower(*query.ParsedQuery)
 			keywords := strings.Fields(queryLower)
 
-			nameConditions := make([]string, 0, len(keywords))
-			for _, keyword := range keywords {
-				keyword = strings.TrimSpace(keyword)
-				if keyword != "" {
-					escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
-					nameConditions = append(nameConditions, fmt.Sprintf("(lower(name) LIKE '%%%s%%' OR lower(alias) LIKE '%%%s%%')", escapedKeyword, escapedKeyword))
-				}
-			}
-			if len(nameConditions) > 0 {
-				whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR ")))
-			}
+			if isVenueQuery {
+				// VENUE-specific query with concatenated string matching
+				// Build concatenated string: name + stateName + city.name
+				// Using state_name field (denormalized) instead of state.name from JOIN
+				concatenatedStr := "concat(coalesce(l.name, ''), ' ', coalesce(l.state_name, ''), ' ', coalesce(city.name, ''))"
 
-			rankCase = "CASE\n"
-			escapedQueryLower := strings.ReplaceAll(queryLower, "'", "''")
-			rankCase += fmt.Sprintf("  WHEN lower(name) LIKE '%s%%' THEN 1\n", escapedQueryLower)
+				// Build WHERE conditions with concatenated string
+				// Pattern: '%keyword1%keyword2%' (keywords separated by %)
+				queryPattern := strings.ReplaceAll(queryLower, " ", "%")
+				escapedQueryPattern := strings.ReplaceAll(queryPattern, "'", "''")
 
-			for i, keyword := range keywords {
-				keyword = strings.TrimSpace(keyword)
-				if keyword != "" {
-					escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
-					rankCase += fmt.Sprintf("  WHEN lower(name) LIKE '%%%s%%' OR lower(alias) LIKE '%%%s%%' THEN %d\n", escapedKeyword, escapedKeyword, i+2)
+				nameConditions := make([]string, 0, len(keywords))
+				for _, keyword := range keywords {
+					keyword = strings.TrimSpace(keyword)
+					if keyword != "" {
+						escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
+						nameConditions = append(nameConditions, fmt.Sprintf("(lower(l.name) LIKE '%%%s%%' OR lower(l.alias) LIKE '%%%s%%' OR lower(%s) LIKE '%%%s%%')", escapedKeyword, escapedKeyword, concatenatedStr, escapedKeyword))
+					}
 				}
+				// Also add pattern with all keywords: '%taj%hyderabad%'
+				if len(nameConditions) > 0 {
+					nameConditions = append(nameConditions, fmt.Sprintf("lower(%s) LIKE '%%%s%%'", concatenatedStr, escapedQueryPattern))
+					whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR ")))
+				}
+
+				// Build RANK CASE for VENUE
+				escapedQueryLower := strings.ReplaceAll(queryLower, "'", "''")
+				escapedQueryPattern = strings.ReplaceAll(queryPattern, "'", "''")
+
+				rankCase = "CASE\n"
+				// Priority 1: Concatenated string contains all keywords with % pattern: '%taj%hyderabad%'
+				rankCase += fmt.Sprintf("  WHEN lower(%s) LIKE '%%%s%%' THEN 1\n", concatenatedStr, escapedQueryPattern)
+				// Priority 2: Name starts with full query
+				rankCase += fmt.Sprintf("  WHEN lower(l.name) LIKE '%s%%' THEN 2\n", escapedQueryLower)
+
+				// Priority 3: First keyword in name/alias OR concatenated string
+				if len(keywords) > 0 {
+					firstKeyword := strings.TrimSpace(keywords[0])
+					if firstKeyword != "" {
+						escapedFirstKeyword := strings.ReplaceAll(firstKeyword, "'", "''")
+						rankCase += fmt.Sprintf("  WHEN lower(l.name) LIKE '%%%s%%' OR lower(l.alias) LIKE '%%%s%%' OR lower(%s) LIKE '%%%s%%' THEN 3\n", escapedFirstKeyword, escapedFirstKeyword, concatenatedStr, escapedFirstKeyword)
+					}
+				}
+
+				// Priority 4: Other keywords in name/alias OR concatenated string
+				for i := 1; i < len(keywords); i++ {
+					keyword := strings.TrimSpace(keywords[i])
+					if keyword != "" {
+						escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
+						rankCase += fmt.Sprintf("  WHEN lower(l.name) LIKE '%%%s%%' OR lower(l.alias) LIKE '%%%s%%' OR lower(%s) LIKE '%%%s%%' THEN 4\n", escapedKeyword, escapedKeyword, concatenatedStr, escapedKeyword)
+					}
+				}
+				rankCase += "  ELSE 4\n"
+				rankCase += "END AS RANK"
+			} else {
+				// Normal query for non-VENUE types
+				nameConditions := make([]string, 0, len(keywords))
+				for _, keyword := range keywords {
+					keyword = strings.TrimSpace(keyword)
+					if keyword != "" {
+						escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
+						nameConditions = append(nameConditions, fmt.Sprintf("(lower(name) LIKE '%%%s%%' OR lower(alias) LIKE '%%%s%%')", escapedKeyword, escapedKeyword))
+					}
+				}
+				if len(nameConditions) > 0 {
+					whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR ")))
+				}
+
+				rankCase = "CASE\n"
+				escapedQueryLower := strings.ReplaceAll(queryLower, "'", "''")
+				rankCase += fmt.Sprintf("  WHEN lower(name) LIKE '%s%%' THEN 1\n", escapedQueryLower)
+
+				for i, keyword := range keywords {
+					keyword = strings.TrimSpace(keyword)
+					if keyword != "" {
+						escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
+						rankCase += fmt.Sprintf("  WHEN lower(name) LIKE '%%%s%%' OR lower(alias) LIKE '%%%s%%' THEN %d\n", escapedKeyword, escapedKeyword, i+2)
+					}
+				}
+				rankCase += fmt.Sprintf("  ELSE %d\n", len(keywords)+2)
+				rankCase += "END AS RANK"
 			}
-			rankCase += fmt.Sprintf("  ELSE %d\n", len(keywords)+2)
-			rankCase += "END AS RANK"
 		}
 
 		if query.ParsedLocationType != nil {
 			locationType := string(*query.ParsedLocationType)
-			whereConditions = append(whereConditions, fmt.Sprintf("location_type = '%s'", locationType))
+			if isVenueQuery {
+				whereConditions = append(whereConditions, fmt.Sprintf("l.location_type = '%s'", locationType))
+			} else {
+				whereConditions = append(whereConditions, fmt.Sprintf("location_type = '%s'", locationType))
+			}
 		} else {
-			whereConditions = append(whereConditions, "location_type IN ('CITY', 'COUNTRY', 'STATE')")
+			if isVenueQuery {
+				whereConditions = append(whereConditions, "l.location_type = 'VENUE'")
+			} else {
+				whereConditions = append(whereConditions, "location_type IN ('CITY', 'COUNTRY', 'STATE')")
+			}
 		}
 
 		if query.ID10x != "" {
@@ -126,12 +197,20 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 				}
 			}
 			if len(escapedID10x) > 0 {
-				whereConditions = append(whereConditions, fmt.Sprintf("id_10x IN (%s)", strings.Join(escapedID10x, ",")))
+				if isVenueQuery {
+					whereConditions = append(whereConditions, fmt.Sprintf("l.id_10x IN (%s)", strings.Join(escapedID10x, ",")))
+				} else {
+					whereConditions = append(whereConditions, fmt.Sprintf("id_10x IN (%s)", strings.Join(escapedID10x, ",")))
+				}
 			}
 		}
 	}
 
-	whereConditions = append(whereConditions, "published = 1")
+	if isVenueQuery {
+		whereConditions = append(whereConditions, "l.published = 1")
+	} else {
+		whereConditions = append(whereConditions, "published = 1")
+	}
 
 	whereClause := strings.Join(whereConditions, " AND ")
 	if whereClause == "" {
@@ -144,25 +223,104 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	}
 	offset := query.ParsedOffset
 
-	// Build CTE SELECT with optional RANK column
-	cteSelectFields := "id_uuid,\n\t\t\tname,\n\t\t\talias,\n\t\t\tlocation_type"
-	if rankCase != "" {
-		cteSelectFields += ",\n\t\t\t" + rankCase
-	}
+	var selectQuery string
 
-	// Build ORDER BY clause for CTE
-	cteOrderBy := "length(name) ASC, location_type DESC"
-	if rankCase != "" {
-		cteOrderBy = "RANK,\n\t\t\t" + cteOrderBy
-	}
+	if isVenueQuery && query.ParsedQuery != nil && *query.ParsedQuery != "" {
+		// VENUE query with city and state JOIN in CTE
+		cteSelectFields := "l.id_uuid AS id,\n\t\t\tl.name,\n\t\t\tl.alias,\n\t\t\tl.location_type"
+		if rankCase != "" {
+			cteSelectFields += ",\n\t\t\t" + rankCase
+		}
 
-	// Build final ORDER BY clause
-	finalOrderBy := ""
-	if rankCase != "" {
-		finalOrderBy = " ORDER BY RANK"
-	}
+		cteOrderBy := "RANK,\n\t\t\tlength(l.name) ASC,\n\t\t\tl.location_type DESC,\n\t\t\tl.name"
+		if rankCase == "" {
+			cteOrderBy = "length(l.name) ASC, l.location_type DESC, l.name"
+		}
 
-	selectQuery := fmt.Sprintf(`
+		finalOrderBy := ""
+		if rankCase != "" {
+			finalOrderBy = " ORDER BY RANK"
+		}
+
+		selectQuery = fmt.Sprintf(`
+		WITH location_ids AS (
+			SELECT 
+				%s
+			FROM testing_db.location_ch AS l
+			LEFT JOIN testing_db.location_ch AS state
+				ON l.state_uuid = state.id_uuid 
+				AND state.location_type = 'STATE' 
+				AND state.published = 1
+			LEFT JOIN testing_db.location_ch AS city
+				ON l.city_uuid = city.id_uuid 
+				AND city.location_type = 'CITY' 
+				AND city.published = 1
+			WHERE %s
+			ORDER BY %s
+			LIMIT %d
+			OFFSET %d
+		)
+		SELECT 
+			location.id_uuid AS id,
+			location.name,
+			location.slug AS location_slug,
+			location.location_type,
+			location.latitude,
+			location.longitude,
+			replace(location.id_10x, 'country-', '') AS location_iso,
+			city.id_uuid AS city_id,
+			city.name AS city_name,
+			city.latitude AS city_latitude,
+			city.longitude AS city_longitude,
+			city.slug AS city_slug,
+			country.id_uuid AS country_id,
+			country.name AS country_name,
+			country.latitude AS country_latitude,
+			country.longitude AS country_longitude,
+			country.slug AS country_slug,
+			replace(country.id_10x, 'country-', '') AS country_iso,
+			state.id_uuid AS state_id,
+			state.name AS state_name,
+			state.latitude AS state_latitude,
+			state.longitude AS state_longitude,
+			state.slug AS state_slug,
+			state.country_uuid AS state_country_id
+		FROM location_ids
+		LEFT JOIN testing_db.location_ch AS location
+			ON location_ids.id = location.id_uuid 
+			AND location.location_type IN ('VENUE', 'CITY', 'COUNTRY', 'STATE') 
+			AND location.published = 1
+		LEFT JOIN testing_db.location_ch AS city
+			ON location.city_uuid = city.id_uuid 
+			AND city.location_type = 'CITY' 
+			AND city.published = 1
+		LEFT JOIN testing_db.location_ch AS country
+			ON location.country_uuid = country.id_uuid 
+			AND country.location_type = 'COUNTRY' 
+			AND country.published = 1
+		LEFT JOIN testing_db.location_ch AS state
+			ON location.state_uuid = state.id_uuid 
+			AND state.location_type = 'STATE' 
+			AND state.published = 1%s
+		`, cteSelectFields, whereClause, cteOrderBy, take, offset, finalOrderBy)
+	} else {
+		// Normal query for non-VENUE types
+		cteSelectFields := "id_uuid,\n\t\t\tname,\n\t\t\talias,\n\t\t\tlocation_type"
+		if rankCase != "" {
+			cteSelectFields += ",\n\t\t\t" + rankCase
+		}
+
+		cteOrderBy := "length(name) ASC, location_type DESC"
+		if rankCase != "" {
+			cteOrderBy = "RANK,\n\t\t\t" + cteOrderBy
+		}
+
+		finalOrderBy := ""
+		if rankCase != "" {
+			finalOrderBy = " ORDER BY RANK"
+		}
+
+		selectQuery = fmt.Sprintf(`
 		WITH location_ids AS (
 			SELECT 
 				%s
@@ -214,7 +372,8 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			ON location.state_uuid = state.id_uuid 
 			AND state.location_type = 'STATE' 
 			AND state.published = 1%s
-	`, cteSelectFields, whereClause, cteOrderBy, take, offset, finalOrderBy)
+		`, cteSelectFields, whereClause, cteOrderBy, take, offset, finalOrderBy)
+	}
 
 	log.Printf("Location query: %s", selectQuery)
 
