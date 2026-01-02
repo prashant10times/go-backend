@@ -4919,17 +4919,30 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 
 	var locationJoinCondition string
 	var locationWhereCondition string
+	var selectFields string
 
 	switch groupBy {
 	case "city":
+		selectFields = `e.event_id,
+				e.edition_id,
+				any(e.venue_id)      AS venue_id,
+				any(e.edition_city)  AS venue_city`
 		locationJoinCondition = `LEFT JOIN testing_db.location_ch l ON e.venue_id = l.id AND l.location_type IN ('CITY', 'VENUE', 'COUNTRY')
         LEFT JOIN testing_db.location_ch loc ON (e.venue_city = loc.id AND loc.location_type = 'CITY')`
 		locationWhereCondition = "e.venue_city IS NOT NULL AND e.venue_city != 0 AND loc.id_uuid IS NOT NULL AND loc.id IS NOT NULL"
 	case "state":
+		selectFields = `e.event_id,
+				e.edition_id,
+				any(e.venue_id)      AS venue_id,
+				any(e.edition_city_state_id) AS edition_city_state_id`
 		locationJoinCondition = `LEFT JOIN testing_db.location_ch l ON e.venue_id = l.id AND l.location_type IN ('CITY', 'VENUE', 'COUNTRY')
         LEFT JOIN testing_db.location_ch loc ON e.edition_city_state_id = loc.id AND loc.location_type = 'STATE'`
 		locationWhereCondition = "e.edition_city_state_id IS NOT NULL AND e.edition_city_state_id != 0 AND loc.id_uuid IS NOT NULL AND loc.id IS NOT NULL"
 	case "country":
+		selectFields = `e.event_id,
+				e.edition_id,
+				any(e.venue_id)      AS venue_id,
+				any(e.edition_country) AS edition_country`
 		locationJoinCondition = `LEFT JOIN testing_db.location_ch l ON e.venue_id = l.id AND l.location_type IN ('CITY', 'VENUE', 'COUNTRY')
         LEFT JOIN testing_db.location_ch loc ON e.edition_country = loc.iso AND loc.location_type = 'COUNTRY'`
 		locationWhereCondition = "e.edition_country IS NOT NULL AND loc.id_uuid IS NOT NULL AND loc.id IS NOT NULL"
@@ -4940,9 +4953,12 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
-				e.*
+				%s
 			FROM testing_db.allevent_ch AS e
 			WHERE %s
+			GROUP BY
+				e.event_id,
+				e.edition_id
 		)
 		SELECT
 			COUNT(DISTINCT e.event_id) AS count,
@@ -4957,6 +4973,7 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		ORDER BY count DESC
 		`,
 		cteClausesStr,
+		selectFields,
 		whereClause,
 		locationJoinCondition,
 		locationWhereCondition,
