@@ -1197,6 +1197,11 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		result.VenueIdsWhereConditions = append(result.VenueIdsWhereConditions, fmt.Sprintf("location_type = 'VENUE' AND id_uuid IN (%s)", strings.Join(filterFields.ParsedVenueIds, ",")))
 	}
 
+	if len(filterFields.ParsedCategoryIds) > 0 {
+		result.NeedsCategoryJoin = true
+		result.CategoryWhereConditions = append(result.CategoryWhereConditions, fmt.Sprintf("category_uuid IN (%s)", strings.Join(filterFields.ParsedCategoryIds, ",")))
+	}
+
 	result.NeedsAnyJoin = result.NeedsVisitorJoin || result.NeedsSpeakerJoin || result.NeedsExhibitorJoin || result.NeedsSponsorJoin || result.NeedsCategoryJoin || result.NeedsTypeJoin || result.NeedsEventRankingJoin || result.needsDesignationJoin || result.needsAudienceSpreadJoin || result.NeedsRegionsJoin || result.NeedsLocationIdsJoin || result.NeedsCountryIdsJoin || result.NeedsStateIdsJoin || result.NeedsCityIdsJoin || result.NeedsVenueIdsJoin
 
 	s.addRangeFilters("following", "event_followers", &whereConditions, filterFields, false)
@@ -1907,7 +1912,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			prefixedConditions := make([]string, len(categoryWhereConditions))
 			for i, condition := range categoryWhereConditions {
 				prefixedCondition := condition
-				categoryFields := []string{"name", "is_group"}
+				categoryFields := []string{"name", "is_group", "category_uuid"}
 				for _, field := range categoryFields {
 					fieldPattern := fmt.Sprintf("\\b%s\\b", field)
 					re := regexp.MustCompile(fieldPattern)

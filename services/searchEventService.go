@@ -3503,9 +3503,10 @@ func (s *SearchEventService) validateEventTypeGroupSearchByEntity(filterFields m
 		"keywords":                     true,
 		"eventestimatecount":           true,
 		"economicimpactbreakdowncount": true,
+		"company":                      true,
 	}
 	if searchByEntity != "" && !validValues[searchByEntity] {
-		return fmt.Errorf("eventTypeGroup groupBy is only supported when searchByEntity is empty, 'event', 'keywords', 'eventEstimateCount', or 'economicImpactBreakdownCount'")
+		return fmt.Errorf("eventTypeGroup groupBy is only supported when searchByEntity is empty, 'event', 'keywords', 'eventEstimateCount', 'economicImpactBreakdownCount', or 'company'")
 	}
 	return nil
 }

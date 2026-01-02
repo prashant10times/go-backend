@@ -144,10 +144,11 @@ type FilterDataDto struct {
 	Products       string `json:"products,omitempty" form:"products"`
 	LocationIds    string `json:"locationIds,omitempty" form:"locationIds"`
 
-	CountryIds string `json:"countryIds,omitempty" form:"countryIds"`
-	StateIds   string `json:"stateIds,omitempty" form:"stateIds"`
-	CityIds    string `json:"cityIds,omitempty" form:"cityIds"`
-	VenueIds   string `json:"venueIds,omitempty" form:"venueIds"`
+	CountryIds  string `json:"countryIds,omitempty" form:"countryIds"`
+	StateIds    string `json:"stateIds,omitempty" form:"stateIds"`
+	CityIds     string `json:"cityIds,omitempty" form:"cityIds"`
+	VenueIds    string `json:"venueIds,omitempty" form:"venueIds"`
+	CategoryIds string `json:"categoryIds,omitempty" form:"categoryIds"`
 
 	SearchByEntity  string `json:"searchByEntity,omitempty" form:"searchByEntity"`
 	GroupBy         string `json:"groupBy,omitempty" form:"groupBy"`
@@ -365,6 +366,7 @@ type FilterDataDto struct {
 	ParsedStateIds        []string `json:"-"`
 	ParsedCityIds         []string `json:"-"`
 	ParsedVenueIds        []string `json:"-"`
+	ParsedCategoryIds     []string `json:"-"`
 	ParsedUserId          []string `json:"-"`
 	ParsedUserName        []string `json:"-"`
 	ParsedUserCompanyName []string `json:"-"`
@@ -627,6 +629,20 @@ func (f *FilterDataDto) Validate() error {
 				if venueId != "" {
 					quotedIds := fmt.Sprintf("'%s'", venueId)
 					f.ParsedVenueIds = append(f.ParsedVenueIds, quotedIds)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.CategoryIds, validation.When(f.CategoryIds != "", validation.By(func(value interface{}) error {
+			categoryIdsStr := value.(string)
+			categoryIds := strings.Split(categoryIdsStr, ",")
+			f.ParsedCategoryIds = make([]string, 0, len(categoryIds))
+			for _, categoryId := range categoryIds {
+				categoryId = strings.TrimSpace(categoryId)
+				if categoryId != "" {
+					quotedIds := fmt.Sprintf("'%s'", categoryId)
+					f.ParsedCategoryIds = append(f.ParsedCategoryIds, quotedIds)
 				}
 			}
 			return nil
