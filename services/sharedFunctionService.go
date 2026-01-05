@@ -492,6 +492,7 @@ type ClickHouseQueryResult struct {
 	CompanyIdWhereConditions      []string
 	ExhibitorWhereConditions      []string
 	SponsorWhereConditions        []string
+	OrganizerWhereConditions      []string
 	CategoryWhereConditions       []string
 	TypeWhereConditions           []string
 	EventRankingWhereConditions   []string
@@ -518,6 +519,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		SpeakerWhereConditions:        make([]string, 0),
 		ExhibitorWhereConditions:      make([]string, 0),
 		SponsorWhereConditions:        make([]string, 0),
+		OrganizerWhereConditions:      make([]string, 0),
 		CategoryWhereConditions:       make([]string, 0),
 		TypeWhereConditions:           make([]string, 0),
 		EventRankingWhereConditions:   make([]string, 0),
@@ -816,7 +818,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				result.SponsorWhereConditions = append(result.SponsorWhereConditions, companyIdCondition)
 			}
 			if hasOrganizer {
-				whereConditions = append(whereConditions, fmt.Sprintf("ee.company_id IN (%s)", strings.Join(companyIds, ",")))
+				result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, fmt.Sprintf("company_id IN (%s)", strings.Join(companyIds, ",")))
 			}
 		}
 	}
@@ -867,33 +869,40 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 			if hasExhibitor {
 				result.NeedsExhibitorJoin = true
+				var exhibitorConditions []string
 				for _, companyName := range filterFields.ParsedCompanyName {
 					exhibitorCondition := s.matchPhraseConverter("company_id_name", companyName)
 					if exhibitorCondition != "" {
-						result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, exhibitorCondition)
+						exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
 					}
+				}
+				if len(exhibitorConditions) > 0 {
+					result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, fmt.Sprintf("(%s)", strings.Join(exhibitorConditions, " OR ")))
 				}
 			}
 			if hasSponsor {
 				result.NeedsSponsorJoin = true
+				var sponsorConditions []string
 				for _, companyName := range filterFields.ParsedCompanyName {
 					sponsorCondition := s.matchPhraseConverter("company_id_name", companyName)
 					if sponsorCondition != "" {
-						result.SponsorWhereConditions = append(result.SponsorWhereConditions, sponsorCondition)
+						sponsorConditions = append(sponsorConditions, sponsorCondition)
 					}
+				}
+				if len(sponsorConditions) > 0 {
+					result.SponsorWhereConditions = append(result.SponsorWhereConditions, fmt.Sprintf("(%s)", strings.Join(sponsorConditions, " OR ")))
 				}
 			}
 			if hasOrganizer {
 				var organizerConditions []string
 				for _, companyName := range filterFields.ParsedCompanyName {
-					organizerCondition := s.matchPhraseConverter("ee.company_name", companyName)
+					organizerCondition := s.matchPhraseConverter("company_name", companyName)
 					if organizerCondition != "" {
 						organizerConditions = append(organizerConditions, organizerCondition)
 					}
 				}
 				if len(organizerConditions) > 0 {
-					organizerWhereClause := fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR "))
-					whereConditions = append(whereConditions, organizerWhereClause)
+					result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR ")))
 				}
 			}
 		}
@@ -931,14 +940,13 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		if hasOrganizer {
 			var organizerConditions []string
 			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				organizerCondition := s.matchWebsiteConverter("ee.company_website", companyWebsite)
+				organizerCondition := s.matchWebsiteConverter("company_website", companyWebsite)
 				if organizerCondition != "" {
 					organizerConditions = append(organizerConditions, organizerCondition)
 				}
 			}
 			if len(organizerConditions) > 0 {
-				organizerWhereClause := fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR "))
-				whereConditions = append(whereConditions, organizerWhereClause)
+				result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR ")))
 			}
 		}
 	}
@@ -1210,7 +1218,10 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addRangeFilters("editions", "event_editions", &whereConditions, filterFields, false)
 	s.addRangeFilters("start", "start_date", &whereConditions, filterFields, true)
 	s.addRangeFilters("end", "end_date", &whereConditions, filterFields, true)
-	s.addRangeFilters("createdAt", "event_created", &whereConditions, filterFields, true)
+	// Only add createdAt range filters if getNew is not false
+	if filterFields.ParsedGetNew == nil || *filterFields.ParsedGetNew {
+		s.addRangeFilters("createdAt", "event_created", &whereConditions, filterFields, true)
+	}
 	s.addRangeFilters("inboundScore", "inboundScore", &whereConditions, filterFields, false)
 	s.addRangeFilters("internationalScore", "internationalScore", &whereConditions, filterFields, false)
 	s.addRangeFilters("trustScore", "repeatSentimentChangePercentage", &whereConditions, filterFields, false)
@@ -1343,7 +1354,8 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if len(filterFields.CreatedAt) > 0 {
+	// Only add createdAt condition if getNew is not false
+	if len(filterFields.CreatedAt) > 0 && (filterFields.ParsedGetNew == nil || *filterFields.ParsedGetNew) {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_created >= '%s'", filterFields.CreatedAt))
 	}
 
@@ -1547,6 +1559,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	speakerWhereConditions []string,
 	exhibitorWhereConditions []string,
 	sponsorWhereConditions []string,
+	organizerWhereConditions []string,
 	categoryWhereConditions []string,
 	typeWhereConditions []string,
 	eventRankingWhereConditions []string,
@@ -1663,7 +1676,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	}
 
 	if needsExhibitorJoin && len(exhibitorWhereConditions) > 0 {
-		exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " AND ")
+		exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " OR ")
 		exhibitorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
 			FROM testing_db.event_exhibitor_ch
 			WHERE %s`, exhibitorWhereClause)
@@ -1671,16 +1684,24 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	}
 
 	if needsSponsorJoin && len(sponsorWhereConditions) > 0 {
-		sponsorWhereClause := strings.Join(sponsorWhereConditions, " AND ")
+		sponsorWhereClause := strings.Join(sponsorWhereConditions, " OR ")
 		sponsorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
 			FROM testing_db.event_sponsors_ch
 			WHERE %s`, sponsorWhereClause)
 		unifiedUnionParts = append(unifiedUnionParts, sponsorPart)
 	}
 
+	if len(organizerWhereConditions) > 0 {
+		organizerWhereClause := strings.Join(organizerWhereConditions, " OR ")
+		organizerPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+			FROM testing_db.allevent_ch
+			WHERE %s`, organizerWhereClause)
+		unifiedUnionParts = append(unifiedUnionParts, organizerPart)
+	}
+
 	if len(unifiedUnionParts) > 0 {
 		cteName := "filtered_company_events_by_name"
-		if !needsExhibitorJoin && !needsSponsorJoin {
+		if !needsExhibitorJoin && !needsSponsorJoin && len(organizerWhereConditions) == 0 {
 			cteName = "filtered_user_events"
 		}
 
@@ -2562,6 +2583,7 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
 		queryResult.SponsorWhereConditions,
+		queryResult.OrganizerWhereConditions,
 		queryResult.CategoryWhereConditions,
 		queryResult.TypeWhereConditions,
 		queryResult.EventRankingWhereConditions,
@@ -6603,7 +6625,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 			queryResult.NeedsUserIdUnionCTE,
 			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
-			queryResult.SponsorWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+			queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
 			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
 			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
@@ -6778,7 +6800,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 			queryResult.NeedsUserIdUnionCTE,
 			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
-			queryResult.SponsorWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+			queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
 			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
 			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
@@ -6922,7 +6944,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 			queryResult.NeedsUserIdUnionCTE,
 			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
-			queryResult.SponsorWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+			queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
 			queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
 			queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
@@ -7102,6 +7124,7 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
 		queryResult.SponsorWhereConditions,
+		queryResult.OrganizerWhereConditions,
 		queryResult.CategoryWhereConditions,
 		queryResult.TypeWhereConditions,
 		queryResult.EventRankingWhereConditions,
@@ -7355,7 +7378,7 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 		queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
 		queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
-		queryResult.SponsorWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+		queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 		queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
 		queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
 		queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
