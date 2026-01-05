@@ -44,12 +44,7 @@ func RequestLoggerMiddleware() fiber.Handler {
 		bodyPreview := ""
 		if len(requestBody) > 0 {
 			bodyStr := string(requestBody)
-			maxBodyLength := 500
-			if len(bodyStr) > maxBodyLength {
-				bodyPreview = bodyStr[:maxBodyLength] + "... (truncated)"
-			} else {
-				bodyPreview = bodyStr
-			}
+			bodyPreview = bodyStr
 		} else {
 			bodyPreview = ""
 		}

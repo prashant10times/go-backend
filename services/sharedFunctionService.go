@@ -1644,34 +1644,60 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		result.CTEClauses = append(result.CTEClauses, venueIdsCTE)
 	}
 
+	var unifiedUnionParts []string
+
 	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 {
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
-
 		visitorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
 			FROM testing_db.event_visitors_ch
 			WHERE %s`, userIdCondition)
+		unifiedUnionParts = append(unifiedUnionParts, visitorPart)
+	}
 
+	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 {
+		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
 		speakerPart := fmt.Sprintf(`SELECT DISTINCT edition_id
 			FROM testing_db.event_speaker_ch
 			WHERE %s`, userIdCondition)
+		unifiedUnionParts = append(unifiedUnionParts, speakerPart)
+	}
 
-		unionCTE := fmt.Sprintf(`filtered_user_events AS (
+	if needsExhibitorJoin && len(exhibitorWhereConditions) > 0 {
+		exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " AND ")
+		exhibitorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+			FROM testing_db.event_exhibitor_ch
+			WHERE %s`, exhibitorWhereClause)
+		unifiedUnionParts = append(unifiedUnionParts, exhibitorPart)
+	}
+
+	if needsSponsorJoin && len(sponsorWhereConditions) > 0 {
+		sponsorWhereClause := strings.Join(sponsorWhereConditions, " AND ")
+		sponsorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+			FROM testing_db.event_sponsors_ch
+			WHERE %s`, sponsorWhereClause)
+		unifiedUnionParts = append(unifiedUnionParts, sponsorPart)
+	}
+
+	if len(unifiedUnionParts) > 0 {
+		cteName := "filtered_company_events_by_name"
+		if !needsExhibitorJoin && !needsSponsorJoin {
+			cteName = "filtered_user_events"
+		}
+
+		unionCTE := fmt.Sprintf(`%s AS (
 			SELECT DISTINCT edition_id
 			FROM (
 				%s
-				UNION ALL
-				%s
 			)
-		)`, visitorPart, speakerPart)
+		)`, cteName, strings.Join(unifiedUnionParts, "\n\t\t\t\tUNION ALL\n\t\t\t\t"))
 
 		result.CTEClauses = append(result.CTEClauses, unionCTE)
-		previousCTE = "filtered_user_events"
+		previousCTE = cteName
 	}
 
 	if needsCompanyIdUnionCTE && len(companyIdWhereConditions) > 0 {
 		companyIdCondition := strings.Join(companyIdWhereConditions, " AND ")
 
-		// Get entity types from SearchByEntity
 		_, _, hasExhibitor, hasSponsor, hasOrganizer := func() (bool, bool, bool, bool, bool) {
 			entities := filterFields.ParsedSearchByEntity
 			hasExhibitor := false
@@ -1761,9 +1787,12 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 		if previousCTE != "" {
 			var joinColumn string
-			if previousCTE == "filtered_user_events" || previousCTE == "filtered_company_events" {
+			switch previousCTE {
+			case "filtered_user_events", "filtered_company_events":
 				joinColumn = "edition_id"
-			} else {
+			case "filtered_company_events_by_name":
+				joinColumn = "event_id"
+			default:
 				joinColumn = "event_id"
 			}
 
@@ -1785,78 +1814,127 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		previousCTE = "filtered_speakers"
 	}
 
-	if needsExhibitorJoin {
-		exhibitorWhereClause := ""
-		if len(exhibitorWhereConditions) > 0 {
-			exhibitorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(exhibitorWhereConditions, " AND "))
-		}
+	companyAddedToUnified := (needsExhibitorJoin && len(exhibitorWhereConditions) > 0) ||
+		(needsSponsorJoin && len(sponsorWhereConditions) > 0)
 
-		exhibitorQuery := fmt.Sprintf(`filtered_exhibitors AS (
-			SELECT event_id
-			FROM testing_db.event_exhibitor_ch
-			%s`, exhibitorWhereClause)
+	if !companyAddedToUnified && (needsExhibitorJoin || needsSponsorJoin) {
+		shouldUseCompanyUnion := needsExhibitorJoin && needsSponsorJoin &&
+			len(exhibitorWhereConditions) > 0 && len(sponsorWhereConditions) > 0 &&
+			(previousCTE == "" || previousCTE == "filtered_user_events" || previousCTE == "filtered_company_events" || previousCTE == "filtered_company_events_by_name")
 
-		if previousCTE != "" {
+		if shouldUseCompanyUnion {
+			var unionParts []string
 			var joinColumn string
-			if previousCTE == "filtered_user_events" || previousCTE == "filtered_company_events" {
-				joinColumn = "edition_id"
-			} else {
-				joinColumn = "event_id"
+			var joinCondition string
+
+			if previousCTE != "" {
+				switch previousCTE {
+				case "filtered_user_events", "filtered_company_events", "filtered_company_events_by_name":
+					joinColumn = "edition_id"
+				default:
+					joinColumn = "event_id"
+				}
+				joinCondition = fmt.Sprintf("%s IN (SELECT %s FROM %s) AND ", joinColumn, joinColumn, previousCTE)
 			}
 
-			exhibitorQuery = fmt.Sprintf(`filtered_exhibitors AS (
-				SELECT event_id
+			exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " AND ")
+			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_exhibitor_ch
-				WHERE %s IN (SELECT %s FROM %s)`, joinColumn, joinColumn, previousCTE)
-			if len(exhibitorWhereConditions) > 0 {
-				exhibitorQuery += fmt.Sprintf(`
-				AND %s`, strings.Join(exhibitorWhereConditions, " AND "))
-			}
-		}
+				WHERE %s%s`, joinCondition, exhibitorWhereClause)
+			unionParts = append(unionParts, exhibitorPart)
 
-		exhibitorQuery += `
-			GROUP BY event_id
-		)`
-
-		result.CTEClauses = append(result.CTEClauses, exhibitorQuery)
-		previousCTE = "filtered_exhibitors"
-	}
-
-	if needsSponsorJoin {
-		sponsorWhereClause := ""
-		if len(sponsorWhereConditions) > 0 {
-			sponsorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(sponsorWhereConditions, " AND "))
-		}
-
-		sponsorQuery := fmt.Sprintf(`filtered_sponsors AS (
-			SELECT event_id
-			FROM testing_db.event_sponsors_ch
-			%s`, sponsorWhereClause)
-
-		if previousCTE != "" {
-			var joinColumn string
-			if previousCTE == "filtered_user_events" || previousCTE == "filtered_company_events" {
-				joinColumn = "edition_id"
-			} else {
-				joinColumn = "event_id"
-			}
-
-			sponsorQuery = fmt.Sprintf(`filtered_sponsors AS (
-				SELECT event_id
+			sponsorWhereClause := strings.Join(sponsorWhereConditions, " AND ")
+			sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_sponsors_ch
-				WHERE %s IN (SELECT %s FROM %s)`, joinColumn, joinColumn, previousCTE)
-			if len(sponsorWhereConditions) > 0 {
-				sponsorQuery += fmt.Sprintf(`
-				AND %s`, strings.Join(sponsorWhereConditions, " AND "))
+				WHERE %s%s`, joinCondition, sponsorWhereClause)
+			unionParts = append(unionParts, sponsorPart)
+
+			unionCTE := fmt.Sprintf(`filtered_company_events_by_name AS (
+				SELECT DISTINCT event_id
+				FROM (
+					%s
+				)
+			)`, strings.Join(unionParts, "\n\t\t\t\tUNION ALL\n\t\t\t\t"))
+
+			result.CTEClauses = append(result.CTEClauses, unionCTE)
+			previousCTE = "filtered_company_events_by_name"
+		} else {
+			if needsExhibitorJoin {
+				exhibitorWhereClause := ""
+				if len(exhibitorWhereConditions) > 0 {
+					exhibitorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(exhibitorWhereConditions, " AND "))
+				}
+
+				exhibitorQuery := fmt.Sprintf(`filtered_exhibitors AS (
+					SELECT event_id
+					FROM testing_db.event_exhibitor_ch
+					%s`, exhibitorWhereClause)
+
+				if previousCTE != "" {
+					var joinColumn string
+					switch previousCTE {
+					case "filtered_user_events", "filtered_company_events":
+						joinColumn = "edition_id"
+					default:
+						joinColumn = "event_id"
+					}
+
+					exhibitorQuery = fmt.Sprintf(`filtered_exhibitors AS (
+						SELECT event_id
+						FROM testing_db.event_exhibitor_ch
+						WHERE %s IN (SELECT %s FROM %s)`, joinColumn, joinColumn, previousCTE)
+					if len(exhibitorWhereConditions) > 0 {
+						exhibitorQuery += fmt.Sprintf(`
+						AND %s`, strings.Join(exhibitorWhereConditions, " AND "))
+					}
+				}
+
+				exhibitorQuery += `
+					GROUP BY event_id
+				)`
+
+				result.CTEClauses = append(result.CTEClauses, exhibitorQuery)
+				previousCTE = "filtered_exhibitors"
+			}
+
+			if needsSponsorJoin {
+				sponsorWhereClause := ""
+				if len(sponsorWhereConditions) > 0 {
+					sponsorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(sponsorWhereConditions, " AND "))
+				}
+
+				sponsorQuery := fmt.Sprintf(`filtered_sponsors AS (
+					SELECT event_id
+					FROM testing_db.event_sponsors_ch
+					%s`, sponsorWhereClause)
+
+				if previousCTE != "" {
+					var joinColumn string
+					switch previousCTE {
+					case "filtered_user_events", "filtered_company_events":
+						joinColumn = "edition_id"
+					default:
+						joinColumn = "event_id"
+					}
+
+					sponsorQuery = fmt.Sprintf(`filtered_sponsors AS (
+						SELECT event_id
+						FROM testing_db.event_sponsors_ch
+						WHERE %s IN (SELECT %s FROM %s)`, joinColumn, joinColumn, previousCTE)
+					if len(sponsorWhereConditions) > 0 {
+						sponsorQuery += fmt.Sprintf(`
+						AND %s`, strings.Join(sponsorWhereConditions, " AND "))
+					}
+				}
+
+				sponsorQuery += `
+					GROUP BY event_id
+				)`
+
+				result.CTEClauses = append(result.CTEClauses, sponsorQuery)
+				previousCTE = "filtered_sponsors"
 			}
 		}
-
-		sponsorQuery += `
-			GROUP BY event_id
-		)`
-
-		result.CTEClauses = append(result.CTEClauses, sponsorQuery)
-		previousCTE = "filtered_sponsors"
 	}
 
 	if needsTypeJoin {
@@ -2092,6 +2170,9 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			selectColumn = "event"
 			joinColumn = "ee.event_id"
 		case "filtered_company_events":
+			selectColumn = "edition_id"
+			joinColumn = "ee.edition_id"
+		case "filtered_company_events_by_name":
 			selectColumn = "edition_id"
 			joinColumn = "ee.edition_id"
 		case "filtered_user_events":
@@ -3104,6 +3185,9 @@ func (s *SharedFunctionService) buildFieldFrom(fields []string, cteClauses []str
 	}
 	if s.containsCTE(cteClauses, "filtered_company_events") {
 		from += " INNER JOIN filtered_company_events fce ON ee.edition_id = fce.edition_id"
+	}
+	if s.containsCTE(cteClauses, "filtered_company_events_by_name") {
+		from += " INNER JOIN filtered_company_events_by_name fcebn ON ee.edition_id = fcebn.edition_id"
 	}
 	if s.containsCTE(cteClauses, "filtered_visitors") {
 		from += " INNER JOIN filtered_visitors fv ON ee.event_id = fv.event_id"
