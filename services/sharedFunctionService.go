@@ -4534,18 +4534,26 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 
 	// !eventTypeGroup && !eventGroupCount - Group by all groups using arrayJoin
 	if eventTypeGroup == nil && (eventGroupCount == nil || !*eventGroupCount) && searchByEntity != "eventestimatecount" && searchByEntity != "economicimpactbreakdowncount" {
+		// preFilterEvent - only select required columns
+		preFilterSelectFields := []string{"ee.event_id"}
+		if createdAt != "" && (getNew == nil || *getNew) {
+			preFilterSelectFields = append(preFilterSelectFields, "ee.event_created")
+		}
+		preFilterSelectStr := strings.Join(preFilterSelectFields, ", ")
+
 		query := fmt.Sprintf(`
 			WITH %spreFilterEvent AS (
 				SELECT
-					ee.*
+					%s
 				FROM testing_db.allevent_ch AS ee
+				%s
 				WHERE %s
 			),
 			grouped_counts AS (
 				SELECT
 					group_name%s
-				FROM preFilterEvent e
-				INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+				FROM preFilterEvent AS ee
+				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id
 				ARRAY JOIN et.groups AS group_name
 				WHERE group_name IN ('business', 'social', 'unattended')
 				GROUP BY group_name
@@ -4553,8 +4561,15 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			SELECT * FROM grouped_counts
 		`,
 			cteClausesStr,
+			preFilterSelectStr,
+			func() string {
+				if joinClausesStr != "" {
+					return "\t\t" + joinClausesStr
+				}
+				return ""
+			}(),
 			whereClause,
-			selectStr,
+			strings.ReplaceAll(selectStr, "e.", "ee."),
 		)
 
 		log.Printf("Event count by event type group query (scenario 1): %s", query)
