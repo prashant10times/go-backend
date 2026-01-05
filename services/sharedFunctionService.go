@@ -4478,6 +4478,11 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
 	}
 
+	joinClausesStr := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClausesStr = cteAndJoinResult.JoinClausesStr
+	}
+
 	selectClauses := []string{}
 
 	if createdAt != "" && (getNew == nil || *getNew) {
@@ -4621,11 +4626,50 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 
 	// eventGroupCount = true - Special filtering with published status
 	if eventGroupCount != nil && *eventGroupCount && searchByEntity != "eventestimatecount" && searchByEntity != "economicimpactbreakdowncount" {
-		eventGroupCountConditions := []string{
-			"(e.published = '4' AND has(et.groups, 'unattended'))",
-			"(e.published = '1' AND has(et.groups, 'business'))",
-			"(e.published = '1' AND has(et.groups, 'social'))",
+		publishedValues := filterFields.ParsedPublished
+		if len(publishedValues) == 0 {
+			publishedValues = []string{"1", "2", "4"}
 		}
+
+		publishedMap := make(map[string]bool)
+		for _, pub := range publishedValues {
+			publishedMap[pub] = true
+		}
+
+		eventGroupCountConditions := []string{}
+
+		if publishedMap["4"] {
+			eventGroupCountConditions = append(eventGroupCountConditions, "(e.published = '4' AND has(et.groups, 'unattended'))")
+		}
+
+		businessSocialPublished := []string{}
+		if publishedMap["1"] {
+			businessSocialPublished = append(businessSocialPublished, "'1'")
+		}
+		if publishedMap["2"] {
+			businessSocialPublished = append(businessSocialPublished, "'2'")
+		}
+
+		if len(businessSocialPublished) > 0 {
+			publishedCondition := ""
+			if len(businessSocialPublished) == 1 {
+				publishedCondition = fmt.Sprintf("e.published = %s", businessSocialPublished[0])
+			} else {
+				publishedCondition = fmt.Sprintf("e.published IN (%s)", strings.Join(businessSocialPublished, ", "))
+			}
+
+			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'business'))", publishedCondition))
+			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'social'))", publishedCondition))
+		}
+
+		if len(eventGroupCountConditions) == 0 {
+			eventGroupCountConditions = []string{
+				"(e.published = '4' AND has(et.groups, 'unattended'))",
+				"(e.published = '1' AND has(et.groups, 'business'))",
+				"(e.published = '1' AND has(et.groups, 'social'))",
+			}
+		}
+
 		eventGroupCountWhere := fmt.Sprintf("(%s)", strings.Join(eventGroupCountConditions, " OR "))
 
 		groupedSelectClauses := []string{
@@ -4653,11 +4697,22 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		}
 		finalSelectStr := strings.Join(finalSelectClauses, ", ")
 
+		// preFilterEvent - only select required columns
+		preFilterSelectFields := []string{"ee.event_id", "ee.published"}
+		if isEventEntity {
+			preFilterSelectFields = append(preFilterSelectFields, "ee.event_uuid")
+		}
+		if createdAt != "" && (getNew == nil || *getNew) {
+			preFilterSelectFields = append(preFilterSelectFields, "ee.event_created")
+		}
+		preFilterSelectStr := strings.Join(preFilterSelectFields, ", ")
+
 		query := fmt.Sprintf(`
 			WITH %spreFilterEvent AS (
 				SELECT
-					ee.*
+					%s
 				FROM testing_db.allevent_ch AS ee
+				%s
 				WHERE %s
 			),
 			grouped AS (
@@ -4678,6 +4733,13 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			LEFT JOIN grouped gr ON g.group_name = gr.group_name
 		`,
 			cteClausesStr,
+			preFilterSelectStr,
+			func() string {
+				if joinClausesStr != "" {
+					return "\t\t" + joinClausesStr
+				}
+				return ""
+			}(),
 			whereClause,
 			groupedSelectStr,
 			eventGroupCountWhere,
@@ -4906,21 +4968,45 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 
 	// eventTypeGroup is provided - Filter to specific group
 	groupValue := string(*eventTypeGroup)
+	// preFilterEvent - only select required columns
+	preFilterSelectFields := []string{"ee.event_id"}
+	if isEventEntity {
+		preFilterSelectFields = append(preFilterSelectFields, "ee.event_uuid")
+	}
+	if createdAt != "" && (getNew == nil || *getNew) {
+		preFilterSelectFields = append(preFilterSelectFields, "ee.event_created")
+	}
+	preFilterSelectStr := strings.Join(preFilterSelectFields, ", ")
+
+	finalSelectClauses := []string{"uniq(e.event_id) AS count"}
+	if selectStr != "" {
+		finalSelectClauses = append(finalSelectClauses, strings.TrimPrefix(selectStr, ", "))
+	}
+	finalSelectStr := strings.Join(finalSelectClauses, ", ")
+
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
-				ee.*
+				%s
 			FROM testing_db.allevent_ch AS ee
+			%s
 			WHERE %s
 		)
-		SELECT%s
+		SELECT %s
 		FROM preFilterEvent e
 		INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
 		WHERE has(et.groups, '%s')
-	`,
+		`,
 		cteClausesStr,
+		preFilterSelectStr,
+		func() string {
+			if joinClausesStr != "" {
+				return "\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
 		whereClause,
-		selectStr,
+		finalSelectStr,
 		groupValue,
 	)
 
