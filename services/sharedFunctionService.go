@@ -5110,6 +5110,11 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
 	}
 
+	joinClausesStr := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClausesStr = strings.ReplaceAll(cteAndJoinResult.JoinClausesStr, "ee.", "e.")
+	}
+
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
@@ -5168,6 +5173,7 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 			SELECT
 				%s
 			FROM testing_db.allevent_ch AS e
+			%s
 			WHERE %s
 			GROUP BY
 				e.event_id,
@@ -5187,6 +5193,12 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		`,
 		cteClausesStr,
 		selectFields,
+		func() string {
+			if joinClausesStr != "" {
+				return "\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
 		whereClause,
 		locationJoinCondition,
 		locationWhereCondition,
