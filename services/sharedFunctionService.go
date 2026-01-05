@@ -4837,20 +4837,20 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 					ee.end_date,
 					ee.published
 				FROM testing_db.allevent_ch AS ee
+				%s
 				WHERE %s
-				AND ee.published = '1'
 			),
 			classified AS (
 				SELECT
-					e.event_id,
-					e.estimatedVisitorsMean,
+					ee.event_id,
+					ee.estimatedVisitorsMean,
 					CASE
 						WHEN has(et.groups, 'business') THEN 'business'
 						WHEN has(et.groups, 'social') THEN 'social'
 					END AS group_name,
-					if(e.end_date < today(), 'past', 'upcoming') AS time_state
-				FROM preFilterEvent e
-				INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+					if(ee.end_date < today(), 'past', 'upcoming') AS time_state
+				FROM preFilterEvent AS ee
+				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id
 				WHERE has(et.groups, 'business') OR has(et.groups, 'social')
 			),
 			grouped AS (
@@ -4878,6 +4878,12 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			-- ORDER BY g.group_name
 		`,
 			cteClausesStr,
+			func() string {
+				if joinClausesStr != "" {
+					return "\t\t" + joinClausesStr
+				}
+				return ""
+			}(),
 			whereClause,
 		)
 

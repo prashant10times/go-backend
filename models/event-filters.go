@@ -2041,16 +2041,16 @@ func (f *FilterDataDto) Validate() error {
 			entities := strings.Split(searchByEntityStr, ",")
 			f.ParsedSearchByEntity = make([]string, 0, len(entities))
 			validEntities := map[string]bool{
-				"organizer": true,
-				"speaker":   true,
-				"sponsor":   true,
-				"company":   true,
-				"exhibitor": true,
-				"visitor":   true,
-				"event":     true,
-				"keywords":  true,
-				"eventEstimateCount": true,
-				"economicImpactBreakdownCount": true,
+				"organizer":                    true,
+				"speaker":                      true,
+				"sponsor":                      true,
+				"company":                      true,
+				"exhibitor":                    true,
+				"visitor":                      true,
+				"event":                        true,
+				"keywords":                     true,
+				"eventestimatecount":           true,
+				"economicimpactbreakdowncount": true,
 			}
 
 			// Allow "event" when groupBy is used
