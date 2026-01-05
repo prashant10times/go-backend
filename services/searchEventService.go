@@ -291,7 +291,7 @@ func (s *SearchEventService) validateAndProcessParameterAccess(
 
 func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, showValues string, c *fiber.Ctx) (any, error) {
 	startTime := time.Now()
-	ipAddress := c.IP()
+	ipAddress := c.Get("X-Real-IP", "N/A")
 	statusCode := 200
 	var errorMessage *string
 
