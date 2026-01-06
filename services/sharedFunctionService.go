@@ -5772,6 +5772,11 @@ func (s *SharedFunctionService) GetTrendsCountByLongDurations(
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
 	}
 
+	joinClausesStr := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClausesStr = strings.ReplaceAll(cteAndJoinResult.JoinClausesStr, "ee.", "e.")
+	}
+
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
@@ -5808,6 +5813,7 @@ func (s *SharedFunctionService) GetTrendsCountByLongDurations(
 		preFilterWhereClause,
 		filterWhereClause,
 		groupBy,
+		joinClausesStr,
 	)
 }
 
@@ -5819,6 +5825,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	preFilterWhereClause string,
 	filterWhereClause string,
 	groupBy []models.CountGroup,
+	joinClausesStr string,
 ) (interface{}, error) {
 	if len(groupBy) < 2 {
 		return nil, fmt.Errorf("groupBy must have at least 2 elements: [dateView, column, ...secondaryGroups]")
@@ -5981,6 +5988,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 			SELECT
 				%s
 			FROM testing_db.allevent_ch AS e
+			%s
 			WHERE %s
 		)
 		SELECT
@@ -5997,6 +6005,12 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		startDate, startDate, intervalUnit, intervalUnit, endDate,
 		intervalUnit, endDate, startDate,
 		preFilterSelect,
+		func() string {
+			if joinClausesStr != "" {
+				return "\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
 		preFilterWhereClause,
 		selectStr,
 		func() string {
