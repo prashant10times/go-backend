@@ -633,7 +633,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	}
 
 	getEntityTypes := func() (hasVisitor bool, hasSpeaker bool, hasExhibitor bool, hasSponsor bool, hasOrganizer bool) {
-		entities := filterFields.ParsedSearchByEntity
+		entities := filterFields.ParsedAdvancedSearchBy
 
 		for _, entity := range entities {
 			switch entity {
@@ -647,12 +647,6 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				hasSponsor = true
 			case "organizer":
 				hasOrganizer = true
-			case "company":
-				hasVisitor = true
-				hasSpeaker = true
-				hasExhibitor = true
-				hasSponsor = true
-				hasOrganizer = true
 			}
 		}
 		return
@@ -660,7 +654,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	hasVisitor, hasSpeaker, _, _, _ := getEntityTypes()
 
-	if len(filterFields.ParsedUserId) > 0 && len(filterFields.ParsedSearchByEntity) > 0 {
+	if len(filterFields.ParsedUserId) > 0 {
 		userIds := make([]string, 0, len(filterFields.ParsedUserId))
 		for _, userId := range filterFields.ParsedUserId {
 			userIds = append(userIds, escapeSqlValue(userId))
@@ -684,8 +678,8 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	hasUserNameFilter := len(filterFields.ParsedUserName) > 0 && len(filterFields.ParsedSearchByEntity) > 0
-	hasUserCompanyNameFilter := len(filterFields.ParsedUserCompanyName) > 0 && len(filterFields.ParsedSearchByEntity) > 0
+	hasUserNameFilter := len(filterFields.ParsedUserName) > 0 && len(filterFields.ParsedAdvancedSearchBy) > 0
+	hasUserCompanyNameFilter := len(filterFields.ParsedUserCompanyName) > 0 && len(filterFields.ParsedAdvancedSearchBy) > 0
 
 	if hasUserNameFilter || hasUserCompanyNameFilter {
 		hasVisitor, hasSpeaker, _, _, _ = getEntityTypes()
@@ -795,7 +789,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if len(filterFields.ParsedCompanyId) > 0 && len(filterFields.ParsedSearchByEntity) > 0 {
+	if len(filterFields.ParsedCompanyId) > 0 {
 		companyIds := make([]string, 0, len(filterFields.ParsedCompanyId))
 		for _, companyId := range filterFields.ParsedCompanyId {
 			companyIds = append(companyIds, escapeSqlValue(companyId))
@@ -804,6 +798,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		result.CompanyIdWhereConditions = append(result.CompanyIdWhereConditions, companyIdCondition)
 
 		_, _, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
+
 		if hasOrganizer && (hasExhibitor || hasSponsor) {
 			result.NeedsCompanyIdUnionCTE = true
 		} else if hasExhibitor && hasSponsor {
@@ -823,7 +818,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if len(filterFields.ParsedCompanyName) > 0 && len(filterFields.ParsedSearchByEntity) > 0 {
+	if len(filterFields.ParsedCompanyName) > 0 && len(filterFields.ParsedAdvancedSearchBy) > 0 {
 		hasVisitor, hasSpeaker, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
 
 		var companyNameConditions []string
@@ -908,7 +903,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if len(filterFields.ParsedCompanyWebsite) > 0 && len(filterFields.ParsedSearchByEntity) > 0 {
+	if len(filterFields.ParsedCompanyWebsite) > 0 && len(filterFields.ParsedAdvancedSearchBy) > 0 {
 		_, _, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
 
 		if hasExhibitor {
@@ -1720,7 +1715,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		companyIdCondition := strings.Join(companyIdWhereConditions, " AND ")
 
 		_, _, hasExhibitor, hasSponsor, hasOrganizer := func() (bool, bool, bool, bool, bool) {
-			entities := filterFields.ParsedSearchByEntity
+			entities := filterFields.ParsedAdvancedSearchBy
 			hasExhibitor := false
 			hasSponsor := false
 			hasOrganizer := false
@@ -1731,12 +1726,6 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 				case "sponsor":
 					hasSponsor = true
 				case "organizer":
-					hasOrganizer = true
-				case "company":
-					// "company" is a catch-all that includes all company-related entities
-					// For exhibitor, sponsor, organizer: searches on company_id column
-					hasExhibitor = true
-					hasSponsor = true
 					hasOrganizer = true
 				}
 			}
@@ -5199,11 +5188,12 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 			toUUIDOrNull(toString(loc.id_uuid)) AS id,
 			loc.name AS name,
 			loc.latitude AS latitude,
-			loc.longitude AS longitude
+			loc.longitude AS longitude,
+			loc.iso AS code
 		FROM preFilterEvent e
 		%s
 		WHERE %s
-		GROUP BY loc.id_uuid, loc.name, loc.latitude, loc.longitude
+		GROUP BY loc.id_uuid, loc.name, loc.latitude, loc.longitude, loc.iso
 		ORDER BY count DESC
 		`,
 		cteClausesStr,
@@ -5232,10 +5222,10 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 	for rows.Next() {
 		var count uint64
 		var idUUID uuid.UUID
-		var name *string
+		var name, code *string
 		var latitude, longitude *float64
 
-		if err := rows.Scan(&count, &idUUID, &name, &latitude, &longitude); err != nil {
+		if err := rows.Scan(&count, &idUUID, &name, &latitude, &longitude, &code); err != nil {
 			log.Printf("Error scanning result: %v", err)
 			continue
 		}
@@ -5266,6 +5256,12 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 			item["longitude"] = *longitude
 		} else {
 			item["longitude"] = nil
+		}
+
+		if code != nil {
+			item["code"] = *code
+		} else {
+			item["code"] = nil
 		}
 
 		result = append(result, item)

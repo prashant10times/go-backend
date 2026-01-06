@@ -150,10 +150,11 @@ type FilterDataDto struct {
 	VenueIds    string `json:"venueIds,omitempty" form:"venueIds"`
 	CategoryIds string `json:"categoryIds,omitempty" form:"categoryIds"`
 
-	SearchByEntity  string `json:"searchByEntity,omitempty" form:"searchByEntity"`
-	GroupBy         string `json:"groupBy,omitempty" form:"groupBy"`
-	GetNew          *bool  `json:"getNew,omitempty" form:"getNew"`
-	EventGroupCount string `json:"eventGroupCount,omitempty" form:"eventGroupCount"`
+	SearchByEntity   string `json:"searchByEntity,omitempty" form:"searchByEntity"`
+	AdvancedSearchBy string `json:"advancedSearchBy,omitempty" form:"advancedSearchBy"` // Can be set directly or from searchByEntity mapping
+	GroupBy          string `json:"groupBy,omitempty" form:"groupBy"`
+	GetNew           *bool  `json:"getNew,omitempty" form:"getNew"`
+	EventGroupCount  string `json:"eventGroupCount,omitempty" form:"eventGroupCount"`
 
 	Price     string `json:"price,omitempty" form:"price"`
 	AvgRating string `json:"avgRating,omitempty" form:"avgRating"`
@@ -356,24 +357,25 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedTrackerDates    []string `json:"-"`
-	ParsedCalendarType    *string  `json:"-"`
-	ParsedDateView        *string  `json:"-"`
-	ParsedColumns         []string `json:"-"`
-	ParsedGroupByTrends   *string  `json:"-"`
-	ParsedRegions         []string `json:"-"`
-	ParsedCountryIds      []string `json:"-"`
-	ParsedStateIds        []string `json:"-"`
-	ParsedCityIds         []string `json:"-"`
-	ParsedVenueIds        []string `json:"-"`
-	ParsedCategoryIds     []string `json:"-"`
-	ParsedUserId          []string `json:"-"`
-	ParsedUserName        []string `json:"-"`
-	ParsedUserCompanyName []string `json:"-"`
-	ParsedCompanyId       []string `json:"-"`
-	ParsedCompanyName     []string `json:"-"`
-	ParsedCompanyWebsite  []string `json:"-"`
-	ParsedSearchByEntity  []string `json:"-"`
+	ParsedTrackerDates     []string `json:"-"`
+	ParsedCalendarType     *string  `json:"-"`
+	ParsedDateView         *string  `json:"-"`
+	ParsedColumns          []string `json:"-"`
+	ParsedGroupByTrends    *string  `json:"-"`
+	ParsedRegions          []string `json:"-"`
+	ParsedCountryIds       []string `json:"-"`
+	ParsedStateIds         []string `json:"-"`
+	ParsedCityIds          []string `json:"-"`
+	ParsedVenueIds         []string `json:"-"`
+	ParsedCategoryIds      []string `json:"-"`
+	ParsedUserId           []string `json:"-"`
+	ParsedUserName         []string `json:"-"`
+	ParsedUserCompanyName  []string `json:"-"`
+	ParsedCompanyId        []string `json:"-"`
+	ParsedCompanyName      []string `json:"-"`
+	ParsedCompanyWebsite   []string `json:"-"`
+	ParsedSearchByEntity   []string `json:"-"`
+	ParsedAdvancedSearchBy []string `json:"-"` // Parsed version of AdvancedSearchBy
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -1895,10 +1897,6 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("empty_user_id", "userId cannot be empty after parsing")
 			}
 
-			if f.SearchByEntity == "" {
-				return validation.NewError("entity_required", "searchByEntity is required when userId is provided")
-			}
-
 			return nil
 		}))),
 
@@ -1921,8 +1919,14 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("empty_user_name", "userName cannot be empty after parsing")
 			}
 
+			// searchByEntity is required for userName
 			if f.SearchByEntity == "" {
 				return validation.NewError("entity_required", "searchByEntity is required when userName is provided")
+			}
+
+			searchByEntityLower := strings.ToLower(strings.TrimSpace(f.SearchByEntity))
+			if searchByEntityLower != "user" && searchByEntityLower != "speaker" {
+				return validation.NewError("invalid_entity_for_user_name", "searchByEntity must be 'user' or 'speaker' when userName is provided")
 			}
 
 			return nil
@@ -1947,8 +1951,14 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("empty_user_company_name", "userCompanyName cannot be empty after parsing")
 			}
 
+			// searchByEntity is required for userCompanyName
 			if f.SearchByEntity == "" {
 				return validation.NewError("entity_required", "searchByEntity is required when userCompanyName is provided")
+			}
+
+			searchByEntityLower := strings.ToLower(strings.TrimSpace(f.SearchByEntity))
+			if searchByEntityLower != "user" && searchByEntityLower != "speaker" {
+				return validation.NewError("invalid_entity_for_user_company_name", "searchByEntity must be 'user' or 'speaker' when userCompanyName is provided")
 			}
 
 			return nil
@@ -1973,10 +1983,6 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("empty_company_id", "companyId cannot be empty after parsing")
 			}
 
-			if f.SearchByEntity == "" {
-				return validation.NewError("entity_required", "searchByEntity is required when companyId is provided")
-			}
-
 			return nil
 		}))),
 
@@ -1999,8 +2005,14 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("empty_company_name", "companyName cannot be empty after parsing")
 			}
 
+			// searchByEntity is required for companyName
 			if f.SearchByEntity == "" {
 				return validation.NewError("entity_required", "searchByEntity is required when companyName is provided")
+			}
+
+			searchByEntityLower := strings.ToLower(strings.TrimSpace(f.SearchByEntity))
+			if searchByEntityLower != "company" {
+				return validation.NewError("invalid_entity_for_company_name", "searchByEntity must be 'company' when companyName is provided")
 			}
 
 			return nil
@@ -2025,8 +2037,14 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("empty_company_website", "companyWebsite cannot be empty after parsing")
 			}
 
+			// searchByEntity is required for companyWebsite
 			if f.SearchByEntity == "" {
 				return validation.NewError("entity_required", "searchByEntity is required when companyWebsite is provided")
+			}
+
+			searchByEntityLower := strings.ToLower(strings.TrimSpace(f.SearchByEntity))
+			if searchByEntityLower != "company" {
+				return validation.NewError("invalid_entity_for_company_website", "searchByEntity must be 'company' when companyWebsite is provided")
 			}
 
 			return nil
@@ -2038,15 +2056,12 @@ func (f *FilterDataDto) Validate() error {
 				return nil
 			}
 
-			entities := strings.Split(searchByEntityStr, ",")
-			f.ParsedSearchByEntity = make([]string, 0, len(entities))
+			// Only allow single value (no comma-separated)
+			searchByEntityLower := strings.ToLower(strings.TrimSpace(searchByEntityStr))
 			validEntities := map[string]bool{
-				"organizer":                    true,
-				"speaker":                      true,
-				"sponsor":                      true,
 				"company":                      true,
-				"exhibitor":                    true,
-				"visitor":                      true,
+				"user":                         true,
+				"speaker":                      true,
 				"event":                        true,
 				"keywords":                     true,
 				"eventestimatecount":           true,
@@ -2059,20 +2074,84 @@ func (f *FilterDataDto) Validate() error {
 				validEntities["event"] = true
 			}
 
+			if !validEntities[searchByEntityLower] {
+				validOptions := []string{"company", "user", "speaker", "event", "keywords", "eventEstimateCount", "economicImpactBreakdownCount"}
+				if hasGroupBy {
+					validOptions = append(validOptions, "event")
+				}
+				return validation.NewError("invalid_search_by_entity", "Invalid searchByEntity value: "+searchByEntityStr+". Valid options are: "+strings.Join(validOptions, ", "))
+			}
+			f.ParsedSearchByEntity = []string{searchByEntityLower}
+			if f.AdvancedSearchBy == "" {
+				switch searchByEntityLower {
+				case "company":
+					f.AdvancedSearchBy = "exhibitor,sponsor,organizer"
+				case "user":
+					f.AdvancedSearchBy = "speaker,visitor"
+				case "speaker":
+					f.AdvancedSearchBy = "speaker"
+				case "event", "keywords", "eventestimatecount", "economicimpactbreakdowncount":
+					f.AdvancedSearchBy = ""
+				default:
+					f.AdvancedSearchBy = ""
+				}
+
+				if f.AdvancedSearchBy != "" {
+					entities := strings.Split(f.AdvancedSearchBy, ",")
+					f.ParsedAdvancedSearchBy = make([]string, 0, len(entities))
+					for _, entity := range entities {
+						entity = strings.TrimSpace(strings.ToLower(entity))
+						if entity != "" {
+							exists := false
+							for _, existing := range f.ParsedAdvancedSearchBy {
+								if existing == entity {
+									exists = true
+									break
+								}
+							}
+							if !exists {
+								f.ParsedAdvancedSearchBy = append(f.ParsedAdvancedSearchBy, entity)
+							}
+						}
+					}
+				} else {
+					f.ParsedAdvancedSearchBy = []string{}
+				}
+			}
+
+			return nil
+		}))),
+
+		validation.Field(&f.AdvancedSearchBy, validation.When(f.AdvancedSearchBy != "", validation.By(func(value interface{}) error {
+			advancedSearchByStr := value.(string)
+			if advancedSearchByStr == "" {
+				return nil
+			}
+
+			entities := strings.Split(advancedSearchByStr, ",")
+			f.ParsedAdvancedSearchBy = make([]string, 0, len(entities))
+			validEntities := map[string]bool{
+				"visitor":   true,
+				"speaker":   true,
+				"exhibitor": true,
+				"sponsor":   true,
+				"organizer": true,
+			}
+
 			var invalidEntities []string
 			for _, entity := range entities {
 				entity = strings.TrimSpace(strings.ToLower(entity))
 				if entity != "" {
 					if validEntities[entity] {
 						exists := false
-						for _, existing := range f.ParsedSearchByEntity {
+						for _, existing := range f.ParsedAdvancedSearchBy {
 							if existing == entity {
 								exists = true
 								break
 							}
 						}
 						if !exists {
-							f.ParsedSearchByEntity = append(f.ParsedSearchByEntity, entity)
+							f.ParsedAdvancedSearchBy = append(f.ParsedAdvancedSearchBy, entity)
 						}
 					} else {
 						invalidEntities = append(invalidEntities, entity)
@@ -2081,16 +2160,16 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			if len(invalidEntities) > 0 {
-				validOptions := []string{"organizer", "speaker", "sponsor", "company", "exhibitor", "visitor", "event", "keywords", "eventEstimateCount", "economicImpactBreakdownCount"}
-				if hasGroupBy {
-					validOptions = append(validOptions, "event")
-				}
-				return validation.NewError("invalid_search_by_entity", "Invalid searchByEntity value(s): "+strings.Join(invalidEntities, ", ")+". Valid options are: "+strings.Join(validOptions, ", "))
+				validOptions := []string{"visitor", "speaker", "exhibitor", "sponsor", "organizer"}
+				return validation.NewError("invalid_advanced_search_by", "Invalid advancedSearchBy value(s): "+strings.Join(invalidEntities, ", ")+". Valid options are: "+strings.Join(validOptions, ", "))
 			}
 
-			if len(f.ParsedSearchByEntity) == 0 {
-				return validation.NewError("empty_search_by_entity", "searchByEntity cannot be empty after parsing")
+			if len(f.ParsedAdvancedSearchBy) == 0 {
+				return validation.NewError("empty_advanced_search_by", "advancedSearchBy cannot be empty after parsing")
 			}
+
+			// Normalize AdvancedSearchBy to lowercase
+			f.AdvancedSearchBy = strings.ToLower(strings.TrimSpace(advancedSearchByStr))
 
 			return nil
 		}))),
@@ -2098,6 +2177,48 @@ func (f *FilterDataDto) Validate() error {
 
 	if err != nil {
 		return err
+	}
+
+	if len(f.ParsedUserId) > 0 && f.AdvancedSearchBy == "" && f.SearchByEntity == "" {
+		f.AdvancedSearchBy = "speaker,visitor"
+		entities := strings.Split(f.AdvancedSearchBy, ",")
+		f.ParsedAdvancedSearchBy = make([]string, 0, len(entities))
+		for _, entity := range entities {
+			entity = strings.TrimSpace(strings.ToLower(entity))
+			if entity != "" {
+				exists := false
+				for _, existing := range f.ParsedAdvancedSearchBy {
+					if existing == entity {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					f.ParsedAdvancedSearchBy = append(f.ParsedAdvancedSearchBy, entity)
+				}
+			}
+		}
+	}
+
+	if len(f.ParsedCompanyId) > 0 && f.AdvancedSearchBy == "" && f.SearchByEntity == "" {
+		f.AdvancedSearchBy = "exhibitor,sponsor,organizer"
+		entities := strings.Split(f.AdvancedSearchBy, ",")
+		f.ParsedAdvancedSearchBy = make([]string, 0, len(entities))
+		for _, entity := range entities {
+			entity = strings.TrimSpace(strings.ToLower(entity))
+			if entity != "" {
+				exists := false
+				for _, existing := range f.ParsedAdvancedSearchBy {
+					if existing == entity {
+						exists = true
+						break
+					}
+				}
+				if !exists {
+					f.ParsedAdvancedSearchBy = append(f.ParsedAdvancedSearchBy, entity)
+				}
+			}
+		}
 	}
 
 	f.applyEventTypeBasedMappings(wasPublishedExplicitlyProvided, wasEventAudienceExplicitlyProvided)
