@@ -2447,7 +2447,7 @@ func (s *SharedFunctionService) buildPublishedCondition(filterFields models.Filt
 	}
 	// changes made due to GEO/GTM requests
 	if len(filterFields.ParsedPublished) == 0 {
-		return "ee.published IN ('1', '2', '4')"
+		return "ee.published IN ('1', '2')"
 	}
 	if len(filterFields.ParsedPublished) == 1 {
 		return fmt.Sprintf("ee.published = '%s'", filterFields.ParsedPublished[0])
@@ -4643,7 +4643,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	if eventGroupCount != nil && *eventGroupCount && searchByEntity != "eventestimatecount" && searchByEntity != "economicimpactbreakdowncount" {
 		publishedValues := filterFields.ParsedPublished
 		if len(publishedValues) == 0 {
-			publishedValues = []string{"1", "2", "4"}
+			publishedValues = []string{"1", "2"}
 		}
 
 		publishedMap := make(map[string]bool)
@@ -5275,6 +5275,11 @@ func (s *SharedFunctionService) GetEventCountByDate(
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
 	}
 
+	joinClausesStr := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClausesStr = strings.ReplaceAll(cteAndJoinResult.JoinClausesStr, "ee.", "e.")
+	}
+
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
@@ -5310,22 +5315,29 @@ func (s *SharedFunctionService) GetEventCountByDate(
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
-				e.*
+				e.event_id,
+				e.start_date,
+				e.end_date
 			FROM testing_db.allevent_ch AS e
+			%s
 			WHERE %s
 		)
 		SELECT
 			%s AS date_key,
 			uniq(e.event_id) AS count
 		FROM preFilterEvent e
-		WHERE %s
 		GROUP BY date_key
 		ORDER BY date_key ASC
 	`,
 		cteClausesStr,
+		func() string {
+			if joinClausesStr != "" {
+				return "\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
 		whereClause,
 		dateGroupByExpr,
-		whereClause,
 	)
 
 	log.Printf("Event count by %s query: %s", groupBy, query)
@@ -5398,6 +5410,11 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
 	}
 
+	joinClausesStr := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClausesStr = strings.ReplaceAll(cteAndJoinResult.JoinClausesStr, "ee.", "e.")
+	}
+
 	startDateParsed, err := time.Parse("2006-01-02", startDate)
 	if err != nil {
 		return nil, fmt.Errorf("invalid startDate format: %w", err)
@@ -5444,6 +5461,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 			preFilterWhereClause,
 			filterWhereClause,
 			groupBy,
+			joinClausesStr,
 		)
 	}
 
@@ -5454,8 +5472,12 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		),
 		preFilterEvent AS (
 			SELECT
-				e.*
+				e.event_id,
+				e.start_date,
+				e.end_date,
+				e.impactScore
 			FROM testing_db.allevent_ch AS e
+			%s
 			WHERE %s
 		),
 		grouped_counts AS (
@@ -5480,6 +5502,12 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		cteClausesStr,
 		startDate,
 		daysDiff,
+		func() string {
+			if joinClausesStr != "" {
+				return "\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
 		preFilterWhereClause,
 		func() string {
 			conditions := []string{}
@@ -5540,6 +5568,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	preFilterWhereClause string,
 	filterWhereClause string,
 	groupBy []models.CountGroup,
+	joinClausesStr string,
 ) (interface{}, error) {
 	if len(groupBy) < 2 {
 		return nil, fmt.Errorf("groupBy must have at least 2 elements: [dateView, column, ...secondaryGroups]")
@@ -5678,6 +5707,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			SELECT
 				%s
 			FROM testing_db.allevent_ch AS e
+			%s
 			WHERE %s
 				AND e.start_date <= '%s'
 				AND e.end_date >= '%s'
@@ -5690,11 +5720,17 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		WHERE %s
 		GROUP BY %s
 		ORDER BY ds.date
-	`,
+		`,
 		cteClausesStr,
 		startDate,
 		daysDiff,
 		preFilterSelect,
+		func() string {
+			if joinClausesStr != "" {
+				return "\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
 		preFilterWhereClause,
 		endDate,
 		startDate,
@@ -7799,7 +7835,7 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 			if col == "date" {
 				scanArgs[i] = new(time.Time)
 			} else if col == columnStr {
-				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" {
+				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
 					scanArgs[i] = new(uint64)
 				} else {
 					scanArgs[i] = new(float64)
@@ -7825,7 +7861,7 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 		}
 
 		var columnValue interface{}
-		if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" {
+		if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
 			if valPtr, ok := scanArgs[columnIdx].(*uint64); ok && valPtr != nil {
 				columnValue = float64(*valPtr)
 			} else {
@@ -7933,7 +7969,7 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 			if col == "start_date" {
 				scanArgs[i] = new(string)
 			} else if col == columnStr {
-				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" {
+				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
 					scanArgs[i] = new(uint64)
 				} else {
 					scanArgs[i] = new(float64)
@@ -7971,7 +8007,7 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 		}
 
 		var columnValue interface{}
-		if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" {
+		if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
 			if valPtr, ok := scanArgs[columnIdx].(*uint64); ok && valPtr != nil {
 				columnValue = float64(*valPtr)
 			} else {

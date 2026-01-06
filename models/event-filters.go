@@ -385,7 +385,7 @@ func (f *FilterDataDto) SetDefaultValues() {
 	}
 	// changes made due to GEO/GTM requests
 	if f.Published == "" {
-		f.Published = "1,2,4"
+		f.Published = "1,2"
 	}
 }
 
