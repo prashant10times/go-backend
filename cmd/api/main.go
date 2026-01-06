@@ -2,6 +2,7 @@ package main
 
 import (
 	"log"
+	"net/http"
 	"search-event-go/config"
 	"search-event-go/health"
 	"search-event-go/middleware"
@@ -10,6 +11,7 @@ import (
 	"search-event-go/services"
 	"strings"
 
+	"github.com/gofiber/adaptor/v2"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/logger"
@@ -59,6 +61,12 @@ func main() {
 
 	go health.DatabaseHealthMonitor(dbService, clickhouseService)
 
+	server := &http.Server{
+		Addr:           ":" + cfg.Port,
+		Handler:        adaptor.FiberApp(app),
+		MaxHeaderBytes: 8 << 20, // 8MB (8 * 1024 * 1024 bytes)
+	}
+
 	log.Printf("Server starting on port %s", cfg.Port)
-	log.Fatal(app.Listen(":" + cfg.Port))
+	log.Fatal(server.ListenAndServe())
 }
