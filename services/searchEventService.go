@@ -2352,9 +2352,10 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		"ee.venue_long as venueLon",
 		"ee.edition_city_lat as cityLat",
 		"ee.edition_city_long as cityLon",
+		"ee.edition_country as code",
 	}
 	mapFieldsStr := strings.Join(mapFields, ", ")
-	mapGroupByClause := strings.Join([]string{"id", "impactScore", "PrimaryEventType", "venueLat", "venueLon", "cityLat", "cityLon"}, ", ")
+	mapGroupByClause := strings.Join([]string{"id", "impactScore", "PrimaryEventType", "venueLat", "venueLon", "cityLat", "cityLon", "code"}, ", ")
 
 	today := time.Now().Format("2006-01-02")
 
@@ -2542,6 +2543,14 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 			case "cityLon":
 				if lon, ok := val.(*float64); ok && lon != nil {
 					cityLon = lon
+				}
+			default:
+				if ptr, ok := val.(*string); ok && ptr != nil {
+					if strings.TrimSpace(*ptr) == "" {
+						rowData[col] = nil
+					} else {
+						rowData[col] = *ptr
+					}
 				}
 			}
 		}
