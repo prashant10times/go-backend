@@ -389,6 +389,9 @@ func (f *FilterDataDto) SetDefaultValues() {
 	if f.Published == "" {
 		f.Published = "1,2"
 	}
+	if strings.ToLower(f.View) == "calendar" && f.CalendarType == "" {
+		f.CalendarType = "month"
+	}
 }
 
 func validateAndNormalizeDate(dateStr *string, fieldName string) validation.Rule {
