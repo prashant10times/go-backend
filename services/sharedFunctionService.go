@@ -6144,7 +6144,8 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 				e.event_id,
 				e.start_date,
 				e.end_date
-			FROM testing_db.allevent_ch AS e%s
+			FROM testing_db.allevent_ch AS e
+			%s
 			WHERE %s
 		)
 		SELECT
@@ -6160,7 +6161,12 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
 		startDate, startDate, intervalUnit, intervalUnit, endDate,
 		intervalUnit, endDate, startDate,
-		joinClausesStr,
+		func() string {
+			if joinClausesStr != "" {
+				return "\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
 		preFilterWhereClause,
 		dateFormat,
 		func() string {
