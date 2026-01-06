@@ -559,9 +559,12 @@ func (f *FilterDataDto) Validate() error {
 			sourceEventIdsStr := value.(string)
 			sourceEventIds := strings.Split(sourceEventIdsStr, ",")
 			f.ParsedSourceEventIds = make([]string, 0, len(sourceEventIds))
-			for _, sourceEventId := range sourceEventIds {
+			for i, sourceEventId := range sourceEventIds {
 				sourceEventId = strings.TrimSpace(sourceEventId)
 				if sourceEventId != "" {
+					if i == 0 && sourceEventId == "-1" {
+						sourceEventId = "0"
+					}
 					quotedIds := fmt.Sprintf("'%s'", sourceEventId)
 					f.ParsedSourceEventIds = append(f.ParsedSourceEventIds, quotedIds)
 				}
