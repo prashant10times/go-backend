@@ -4229,9 +4229,9 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
 	}
 
-	joinConditionsStr := ""
-	if len(cteAndJoinResult.JoinConditions) > 0 {
-		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
+	joinClausesStr := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClausesStr = strings.ReplaceAll(cteAndJoinResult.JoinClausesStr, "ee.", "ee.")
 	}
 
 	selectClauses := []string{}
@@ -4239,67 +4239,83 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	if isEventEntity {
 		// For event entity, return both counts and event IDs
 		selectClauses = append(selectClauses,
-			"arrayStringConcat(groupArray(DISTINCT toString(e.event_uuid) || '#' || toString(e.event_id)), ',') AS total_event_ids",
+			"arrayStringConcat(groupArray(DISTINCT toString(ee.event_uuid) || '#' || toString(ee.event_id)), ',') AS total_event_ids",
 		)
 		if getNew == nil || *getNew {
 			selectClauses = append(selectClauses,
 				// Count
-				fmt.Sprintf("uniqIf(e.event_id, e.event_created >= '%s') AS new", createdAt),
+				fmt.Sprintf("uniqIf(ee.event_id, ee.event_created >= '%s') AS new", createdAt),
 				// IDs
-				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.event_created >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS new_event_ids", createdAt),
+				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.event_created >= '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS new_event_ids", createdAt),
 			)
 		}
 		selectClauses = append(selectClauses,
 			// Counts
-			fmt.Sprintf("uniqIf(e.event_id, e.end_date < '%s') AS past", today),
-			fmt.Sprintf("uniqIf(e.event_id, e.end_date >= '%s') AS active", today),
+			fmt.Sprintf("uniqIf(ee.event_id, ee.end_date < '%s') AS past", today),
+			fmt.Sprintf("uniqIf(ee.event_id, ee.end_date >= '%s') AS active", today),
 			// IDs
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date < '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS past_event_ids", today),
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN e.end_date >= '%s' THEN toString(e.event_uuid) || '#' || toString(e.event_id) END), ',') AS active_event_ids", today),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.end_date < '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS past_event_ids", today),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.end_date >= '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS active_event_ids", today),
 		)
 	} else {
 		// Normal behavior: return only counts (no IDs)
 		if getNew == nil || *getNew {
 			selectClauses = append(selectClauses,
-				fmt.Sprintf("uniqIf(e.event_id, e.event_created >= '%s') AS new", createdAt),
+				fmt.Sprintf("uniqIf(ee.event_id, ee.event_created >= '%s') AS new", createdAt),
 			)
 		}
 
 		if getNew == nil || !*getNew {
 			selectClauses = append(selectClauses,
-				fmt.Sprintf("uniqIf(e.event_id, e.end_date < '%s') AS past", today),
-				fmt.Sprintf("uniqIf(e.event_id, e.end_date >= '%s') AS active", today),
+				fmt.Sprintf("uniqIf(ee.event_id, ee.end_date < '%s') AS past", today),
+				fmt.Sprintf("uniqIf(ee.event_id, ee.end_date >= '%s') AS active", today),
 			)
 		}
 
 		if len(selectClauses) == 0 {
 			selectClauses = []string{
-				fmt.Sprintf("uniqIf(e.event_id, e.end_date < '%s') AS past", today),
-				fmt.Sprintf("uniqIf(e.event_id, e.end_date >= '%s') AS active", today),
-				fmt.Sprintf("uniqIf(e.event_id, e.event_created >= '%s') AS new", createdAt),
+				fmt.Sprintf("uniqIf(ee.event_id, ee.end_date < '%s') AS past", today),
+				fmt.Sprintf("uniqIf(ee.event_id, ee.end_date >= '%s') AS active", today),
+				fmt.Sprintf("uniqIf(ee.event_id, ee.event_created >= '%s') AS new", createdAt),
 			}
 		}
 	}
 
 	selectStr := strings.Join(selectClauses, ", ")
 
+	// Determine which columns to select in preFilterEvent CTE
+	preFilterSelectFields := []string{"ee.event_id", "ee.end_date"}
+	if getNew == nil || *getNew || isEventEntity {
+		preFilterSelectFields = append(preFilterSelectFields, "ee.event_created")
+	}
+	if isEventEntity {
+		preFilterSelectFields = append(preFilterSelectFields, "ee.event_uuid")
+	}
+	preFilterSelectStr := strings.Join(preFilterSelectFields, ", ")
+
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
-				ee.*
-			FROM testing_db.allevent_ch AS ee
+				%s
+			FROM testing_db.allevent_ch AS ee%s
 			WHERE %s 
 			AND %s
 			AND ee.edition_type = 'current_edition'
 			%s
 			%s
-			%s
 		)
 		SELECT
 			%s
-		FROM preFilterEvent e
+		FROM preFilterEvent ee
 	`,
 		cteClausesStr,
+		preFilterSelectStr,
+		func() string {
+			if joinClausesStr != "" {
+				return "\n\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
 		func() string {
@@ -4314,7 +4330,6 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 			}
 			return ""
 		}(),
-		joinConditionsStr,
 		selectStr,
 	)
 
@@ -6053,6 +6068,11 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
 	}
 
+	joinClausesStr := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClausesStr = strings.ReplaceAll(cteAndJoinResult.JoinClausesStr, "ee.", "e.")
+	}
+
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
@@ -6121,8 +6141,10 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		),
 		preFilterEvent AS (
 			SELECT
-				e.*
-			FROM testing_db.allevent_ch AS e
+				e.event_id,
+				e.start_date,
+				e.end_date
+			FROM testing_db.allevent_ch AS e%s
 			WHERE %s
 		)
 		SELECT
@@ -6138,6 +6160,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
 		startDate, startDate, intervalUnit, intervalUnit, endDate,
 		intervalUnit, endDate, startDate,
+		joinClausesStr,
 		preFilterWhereClause,
 		dateFormat,
 		func() string {
