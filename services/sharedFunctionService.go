@@ -4193,14 +4193,14 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	// Validate: searchByEntity = 'event' requires sourceEventIds
 	if isEventEntity && len(filterFields.ParsedSourceEventIds) == 0 {
 		result := make(map[string]interface{})
-		result["total_event_ids"] = ""
+		result["total_ids"] = ""
 		result["past"] = 0
 		result["active"] = 0
-		result["past_event_ids"] = ""
-		result["active_event_ids"] = ""
+		result["past_ids"] = ""
+		result["active_ids"] = ""
 		if getNew == nil || *getNew {
 			result["new"] = 0
-			result["new_event_ids"] = ""
+			result["new_ids"] = ""
 		}
 		return result, nil
 	}
@@ -4211,14 +4211,14 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 		firstId := filterFields.ParsedSourceEventIds[0]
 		if firstId == "'-1'" || firstId == "-1" {
 			result := make(map[string]interface{})
-			result["total_event_ids"] = ""
+			result["total_ids"] = ""
 			result["past"] = 0
 			result["active"] = 0
-			result["past_event_ids"] = ""
-			result["active_event_ids"] = ""
+			result["past_ids"] = ""
+			result["active_ids"] = ""
 			if getNew == nil || *getNew {
 				result["new"] = 0
-				result["new_event_ids"] = ""
+				result["new_ids"] = ""
 			}
 			return result, nil
 		}
@@ -4239,14 +4239,14 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	if isEventEntity {
 		// For event entity, return both counts and event IDs
 		selectClauses = append(selectClauses,
-			"arrayStringConcat(groupArray(DISTINCT toString(ee.event_uuid) || '#' || toString(ee.event_id)), ',') AS total_event_ids",
+			"arrayStringConcat(groupArray(DISTINCT toString(ee.event_uuid) || '#' || toString(ee.event_id)), ',') AS total_ids",
 		)
 		if getNew == nil || *getNew {
 			selectClauses = append(selectClauses,
 				// Count
 				fmt.Sprintf("uniqIf(ee.event_id, ee.event_created >= '%s') AS new", createdAt),
 				// IDs
-				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.event_created >= '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS new_event_ids", createdAt),
+				fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.event_created >= '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS new_ids", createdAt),
 			)
 		}
 		selectClauses = append(selectClauses,
@@ -4254,8 +4254,8 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 			fmt.Sprintf("uniqIf(ee.event_id, ee.end_date < '%s') AS past", today),
 			fmt.Sprintf("uniqIf(ee.event_id, ee.end_date >= '%s') AS active", today),
 			// IDs
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.end_date < '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS past_event_ids", today),
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.end_date >= '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS active_event_ids", today),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.end_date < '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS past_ids", today),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.end_date >= '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS active_ids", today),
 		)
 	} else {
 		// Normal behavior: return only counts (no IDs)
@@ -4409,14 +4409,14 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 
 	if isEventEntity {
 		// For event entity, set defaults for both counts and event IDs
-		result["total_event_ids"] = ""
+		result["total_ids"] = ""
 		result["past"] = 0
 		result["active"] = 0
-		result["past_event_ids"] = ""
-		result["active_event_ids"] = ""
+		result["past_ids"] = ""
+		result["active_ids"] = ""
 		if getNew == nil || *getNew {
 			result["new"] = 0
-			result["new_event_ids"] = ""
+			result["new_ids"] = ""
 		}
 	} else {
 		// Normal behavior: set defaults for counts only (no IDs)
