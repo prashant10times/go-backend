@@ -172,7 +172,7 @@ type FilterDataDto struct {
 	VisitorName        string `json:"visitorName,omitempty" form:"visitorName"`
 
 	JobComposite   string `json:"jobComposite,omitempty" form:"jobComposite"`
-	DesignationIds string `json:"designationIds,omitempty" form:"designationIds"`
+	// DesignationIds string `json:"designationIds,omitempty" form:"designationIds"`
 	SeniorityIds   string `json:"seniorityIds,omitempty" form:"seniorityIds"`
 
 	SpeakerDesignation string `json:"speakerDesignation,omitempty" form:"speakerDesignation"`
@@ -1079,18 +1079,18 @@ func (f *FilterDataDto) Validate() error {
 			return nil
 		}))),
 
-		validation.Field(&f.DesignationIds, validation.When(f.DesignationIds != "", validation.By(func(value interface{}) error {
-			designationIdStr := value.(string)
-			designationIds := strings.Split(designationIdStr, ",")
-			f.ParsedDesignationId = make([]string, 0, len(designationIds))
-			for _, designationId := range designationIds {
-				designationId = strings.TrimSpace(designationId)
-				if designationId != "" {
-					f.ParsedDesignationId = append(f.ParsedDesignationId, designationId)
-				}
-			}
-			return nil
-		}))),
+		// validation.Field(&f.DesignationIds, validation.When(f.DesignationIds != "", validation.By(func(value interface{}) error {
+		// 	designationIdStr := value.(string)
+		// 	designationIds := strings.Split(designationIdStr, ",")
+		// 	f.ParsedDesignationId = make([]string, 0, len(designationIds))
+		// 	for _, designationId := range designationIds {
+		// 		designationId = strings.TrimSpace(designationId)
+		// 		if designationId != "" {
+		// 			f.ParsedDesignationId = append(f.ParsedDesignationId, designationId)
+		// 		}
+		// 	}
+		// 	return nil
+		// }))),
 
 		validation.Field(&f.SeniorityIds, validation.When(f.SeniorityIds != "", validation.By(func(value interface{}) error {
 			seniorityIdStr := value.(string)

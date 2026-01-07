@@ -3437,6 +3437,8 @@ func (s *SharedFunctionService) getDesignationIdsByDepartment(ctx context.Contex
 			ON d1.department = d2.department
 		WHERE d2.designation_uuid IN (%s)`, strings.Join(uuidList, ","))
 
+	log.Printf("Designation ID by department Query: %s", query)
+
 	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("failed to query designation IDs by department: %w", err)
@@ -3471,6 +3473,8 @@ func (s *SharedFunctionService) getSeniorityIdsByRole(ctx context.Context, senio
 		INNER JOIN testing_db.event_designation_ch AS d2 
 			ON d1.role = d2.role
 		WHERE d2.designation_uuid IN (%s)`, strings.Join(uuidList, ","))
+	
+	log.Printf("Seniority ID by role Query: %s", query)
 
 	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
 	if err != nil {
