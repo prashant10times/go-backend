@@ -457,6 +457,61 @@ func getEventTypeGroupsFromIDs(eventTypeIDs []string) map[string]bool {
 	return groups
 }
 
+func getAllEventTypeIDsByGroup(eventTypeGroup Groups) []string {
+	eventTypeById := map[string]string{
+		"e5283caa-f655-504b-8e44-49ae0edb3faa": "festival",
+		"bffa5040-c654-5991-a1c5-0610e2c0ec74": "sport",
+		"69cf1329-0c71-5dae-b7a9-838c5712bce0": "concert",
+		"94fcb56e-2838-5d74-9092-e582d873a03e": "stage-performance",
+		"3a3609e5-56df-5a8b-ad47-c9e168eb4f59": "community-group",
+		"9b5524b4-60f5-5478-b3f0-38e2e12e3981": "tradeshows",
+		"4de48054-46fb-5452-a23f-8aac6c00592e": "conferences",
+		"ad7c83a5-b8fc-5109-a159-9306848de22c": "workshops",
+		"5b37e581-53f7-5dcf-8177-c6a43774b168": "holiday",
+	}
+
+	eventTypeGroups := map[string]string{
+		"festival":          "social",
+		"sport":             "social",
+		"concert":           "social",
+		"stage-performance": "social",
+		"community-group":   "social",
+		"tradeshows":        "business",
+		"conferences":       "business",
+		"workshops":         "business",
+		"holiday":           "unattended",
+	}
+
+	targetGroup := string(eventTypeGroup)
+	eventTypeIDs := make([]string, 0)
+
+	for eventTypeID, slug := range eventTypeById {
+		if group, exists := eventTypeGroups[slug]; exists && group == targetGroup {
+			eventTypeIDs = append(eventTypeIDs, eventTypeID)
+		}
+	}
+
+	return eventTypeIDs
+}
+
+func filterEventTypesByGroup(eventTypeIDs []string, eventTypeGroup Groups) []string {
+	if len(eventTypeIDs) == 0 {
+		return []string{}
+	}
+
+	targetGroup := string(eventTypeGroup)
+
+	filteredEventTypes := make([]string, 0)
+	for _, eventTypeID := range eventTypeIDs {
+		eventTypeGroups := getEventTypeGroupsFromIDs([]string{eventTypeID})
+		if eventTypeGroups[targetGroup] {
+			filteredEventTypes = append(filteredEventTypes, eventTypeID)
+		}
+	}
+
+	return filteredEventTypes
+}
+
 func (f *FilterDataDto) applyEventTypeBasedMappings(wasPublishedExplicitlyProvided, wasEventAudienceExplicitlyProvided bool) {
 	if len(f.ParsedEventTypes) == 0 {
 		return
@@ -1603,16 +1658,15 @@ func (f *FilterDataDto) Validate() error {
 			eventTypeGroupLower := strings.ToLower(strings.TrimSpace(eventTypeGroupStr))
 
 			validGroups := map[string]Groups{
-				"social":     GroupSocial,
-				"business":   GroupBusiness,
-				"unattended": GroupUnattended,
+				"social":   GroupSocial,
+				"business": GroupBusiness,
 			}
 
 			if group, exists := validGroups[eventTypeGroupLower]; exists {
 				f.ParsedEventTypeGroup = &group
 				f.EventTypeGroup = eventTypeGroupLower
 			} else {
-				validOptions := []string{"social", "business", "unattended"}
+				validOptions := []string{"social", "business"}
 				return validation.NewError("invalid_event_type_group", "Invalid event type group: "+eventTypeGroupStr+". Valid options are: "+strings.Join(validOptions, ", "))
 			}
 			return nil
@@ -2224,6 +2278,22 @@ func (f *FilterDataDto) Validate() error {
 					f.ParsedAdvancedSearchBy = append(f.ParsedAdvancedSearchBy, entity)
 				}
 			}
+		}
+	}
+
+	if f.ParsedEventTypeGroup != nil {
+		if len(f.ParsedEventTypes) > 0 {
+			filteredEventTypes := filterEventTypesByGroup(f.ParsedEventTypes, *f.ParsedEventTypeGroup)
+			if len(filteredEventTypes) == 0 {
+				return validation.NewError("no_matching_event_types", "No event types found matching the specified event type group")
+			}
+			f.ParsedEventTypes = filteredEventTypes
+		} else {
+			allEventTypes := getAllEventTypeIDsByGroup(*f.ParsedEventTypeGroup)
+			if len(allEventTypes) == 0 {
+				return validation.NewError("no_event_types_for_group", "No event types found for the specified event type group")
+			}
+			f.ParsedEventTypes = allEventTypes
 		}
 	}
 

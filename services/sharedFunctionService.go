@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"math"
@@ -3506,29 +3505,6 @@ func findValidEventTypes(eventTypes []string, eventTypeGroup string) []string {
 }
 
 func (s *SharedFunctionService) validateParameters(filterFields models.FilterDataDto) (models.FilterDataDto, error) {
-	if filterFields.EventTypeGroup != "" {
-		if len(filterFields.EventTypes) > 0 {
-			validEventTypes := findValidEventTypes(strings.Split(filterFields.EventTypes, ","), filterFields.EventTypeGroup)
-			if len(validEventTypes) == 0 && filterFields.View != "detail" {
-				return filterFields, errors.New("no valid event types found for the specified event type group")
-			}
-			if len(validEventTypes) > 0 {
-				filterFields.EventTypes = strings.Join(validEventTypes, ",")
-				filterFields.ParsedEventTypes = validEventTypes
-			}
-		} else if len(filterFields.Type) > 0 {
-			validEventTypes := findValidEventTypes(strings.Split(filterFields.Type, ","), filterFields.EventTypeGroup)
-			if len(validEventTypes) == 0 && filterFields.View != "detail" {
-				return filterFields, errors.New("no valid event types found for the specified event type group. Use eventTypes parameter with UUIDs when using eventTypeGroup")
-			}
-			if len(validEventTypes) > 0 {
-				filterFields.EventTypes = strings.Join(validEventTypes, ",")
-				filterFields.ParsedEventTypes = validEventTypes
-				filterFields.Type = ""
-				filterFields.ParsedType = []string{}
-			}
-		}
-	}
 
 	if len(filterFields.ParsedDesignationId) > 0 {
 		expandedIds, err := s.getDesignationIdsByDepartment(context.Background(), filterFields.ParsedDesignationId)
