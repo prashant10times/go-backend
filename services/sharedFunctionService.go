@@ -4674,15 +4674,15 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 				publishedCondition = fmt.Sprintf("e.published IN (%s)", strings.Join(businessSocialPublished, ", "))
 			}
 
-			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'business'))", publishedCondition))
-			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'social'))", publishedCondition))
+			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'business') and et.event_audience = e.editions_audiance_type)", publishedCondition))
+			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'social') and et.event_audience = e.editions_audiance_type)", publishedCondition))
 		}
 
 		if len(eventGroupCountConditions) == 0 {
 			eventGroupCountConditions = []string{
 				"(e.published = '4' AND has(et.groups, 'unattended'))",
-				"(e.published = '1' AND has(et.groups, 'business'))",
-				"(e.published = '1' AND has(et.groups, 'social'))",
+				"(e.published = '1' AND has(et.groups, 'business') and et.event_audience = e.editions_audiance_type)",
+				"(e.published = '1' AND has(et.groups, 'social') and et.event_audience = e.editions_audiance_type)",
 			}
 		}
 
@@ -4714,7 +4714,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		finalSelectStr := strings.Join(finalSelectClauses, ", ")
 
 		// preFilterEvent - only select required columns
-		preFilterSelectFields := []string{"ee.event_id", "ee.published"}
+		preFilterSelectFields := []string{"ee.event_id", "ee.published", "ee.editions_audiance_type"}
 		if isEventEntity {
 			preFilterSelectFields = append(preFilterSelectFields, "ee.event_uuid")
 		}
