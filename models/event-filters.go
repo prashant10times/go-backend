@@ -273,6 +273,7 @@ type FilterDataDto struct {
 	Maturity            string `json:"maturity,omitempty" form:"maturity"`
 	Status              string `json:"status,omitempty" form:"status"`
 	Published           string `json:"published,omitempty" form:"published"`
+	EditionType         string `json:"editionType,omitempty" form:"editionType"`
 	EventTypeGroup      string `json:"eventTypeGroup,omitempty" form:"eventTypeGroup"`
 	ViewBound           string `json:"viewBound,omitempty" form:"viewBound"`
 	ViewBounds          string `json:"viewBounds,omitempty" form:"viewBounds"`
@@ -336,6 +337,7 @@ type FilterDataDto struct {
 	ParsedAudienceSpread     []string            `json:"-"`
 	ParsedEventAudience      []int               `json:"-"`
 	ParsedPublished          []string            `json:"-"`
+	ParsedEditionType        []string            `json:"-"`
 	ParsedVisibility         []string            `json:"-"`
 	ParsedEventTypeGroup     *Groups             `json:"-"`
 	ParsedDesignationId      []string            `json:"-"`
@@ -391,6 +393,10 @@ func (f *FilterDataDto) SetDefaultValues() {
 	}
 	if strings.ToLower(f.View) == "calendar" && f.CalendarType == "" {
 		f.CalendarType = "month"
+	}
+	// Default editionType to current
+	if f.EditionType == "" {
+		f.EditionType = "current"
 	}
 }
 
@@ -1652,6 +1658,41 @@ func (f *FilterDataDto) Validate() error {
 			}
 			return nil
 		}))),
+
+		validation.Field(&f.EditionType, validation.By(func(value interface{}) error {
+			editionTypeStr := value.(string)
+			if editionTypeStr == "" {
+				editionTypeStr = "current"
+			}
+			editionTypes := strings.Split(editionTypeStr, ",")
+			f.ParsedEditionType = make([]string, 0, len(editionTypes))
+			validEditionTypes := map[string][]string{
+				"all":     {"current_edition", "past_edition", "future_edition"},
+				"current": {"current_edition"},
+				"past":    {"past_edition"},
+				"future":  {"future_edition"},
+			}
+			seenDbValues := make(map[string]bool)
+			for _, editionType := range editionTypes {
+				editionType = strings.TrimSpace(strings.ToLower(editionType))
+				if editionType != "" {
+					if dbValues, exists := validEditionTypes[editionType]; exists {
+						for _, dbValue := range dbValues {
+							if !seenDbValues[dbValue] {
+								f.ParsedEditionType = append(f.ParsedEditionType, dbValue)
+								seenDbValues[dbValue] = true
+							}
+						}
+					} else {
+						return validation.NewError("invalid_edition_type", "Invalid editionType value: "+editionType+". Valid values are: all, current, past, future")
+					}
+				}
+			}
+			if len(f.ParsedEditionType) == 0 {
+				f.ParsedEditionType = []string{"current_edition"}
+			}
+			return nil
+		})),
 
 		validation.Field(&f.EventTypeGroup, validation.When(f.EventTypeGroup != "", validation.By(func(value interface{}) error {
 			eventTypeGroupStr := value.(string)

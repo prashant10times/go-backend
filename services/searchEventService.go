@@ -1252,7 +1252,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	whereConditions := []string{
 		s.sharedFunctionService.buildPublishedCondition(filterFields),
 		s.sharedFunctionService.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.sharedFunctionService.buildEditionTypeCondition(filterFields, "ee"),
 	}
 
 	if !hasEndDateFilters {
@@ -1681,7 +1681,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		var err error
 
 		if len(eventIds) > 0 {
-			locations, err = s.sharedFunctionService.GetEventLocations(eventIds)
+			locations, err = s.sharedFunctionService.GetEventLocations(eventIds, filterFields)
 		} else {
 			locations = make(map[string]map[string]interface{})
 		}
@@ -2377,7 +2377,7 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	whereConditions := []string{
 		s.sharedFunctionService.buildPublishedCondition(filterFields),
 		s.sharedFunctionService.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.sharedFunctionService.buildEditionTypeCondition(filterFields, "ee"),
 	}
 	if !hasEndDateFilters {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.end_date >= '%s'", today))

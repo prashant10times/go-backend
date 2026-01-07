@@ -411,12 +411,24 @@ func (b *RelatedDataQueryBuilder) BuildQuery() string {
 }
 
 func (b *RelatedDataQueryBuilder) buildBaseQuery() string {
+	editionTypeCondition := "edition_type = 'current_edition'"
+	if len(b.filterFields.ParsedEditionType) > 0 {
+		if len(b.filterFields.ParsedEditionType) == 1 {
+			editionTypeCondition = fmt.Sprintf("edition_type = '%s'", b.filterFields.ParsedEditionType[0])
+		} else {
+			editionTypeValues := make([]string, len(b.filterFields.ParsedEditionType))
+			for i, et := range b.filterFields.ParsedEditionType {
+				editionTypeValues[i] = fmt.Sprintf("'%s'", et)
+			}
+			editionTypeCondition = fmt.Sprintf("edition_type IN (%s)", strings.Join(editionTypeValues, ","))
+		}
+	}
 	return fmt.Sprintf(`
 		WITH current_events AS (
     		SELECT edition_id
     		FROM testing_db.allevent_ch
     		WHERE event_id IN (%s)
-			AND edition_type = 'current_edition'
+			AND %s
 		)	
 		SELECT 
 			event AS event_id,
@@ -456,7 +468,7 @@ func (b *RelatedDataQueryBuilder) buildBaseQuery() string {
 		FROM testing_db.event_type_ch
 		WHERE event_id IN (%s)
 		GROUP BY event_id
-	`, b.eventIdsStr, b.eventIdsStr, b.eventIdsStr, b.eventIdsStr)
+	`, b.eventIdsStr, editionTypeCondition, b.eventIdsStr, b.eventIdsStr, b.eventIdsStr)
 }
 
 func (b *RelatedDataQueryBuilder) shouldIncludeJobComposite() bool {

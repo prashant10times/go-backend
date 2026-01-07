@@ -2019,7 +2019,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		preEventFilterConditions := []string{
 			s.buildPublishedCondition(filterFields),
 			s.buildStatusCondition(filterFields),
-			"ee.edition_type = 'current_edition'",
+			s.buildEditionTypeCondition(filterFields, "ee"),
 		}
 		hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
 			filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != ""
@@ -2447,6 +2447,24 @@ func (s *SharedFunctionService) buildPublishedCondition(filterFields models.Filt
 	return fmt.Sprintf("ee.published IN (%s)", strings.Join(publishedValues, ","))
 }
 
+func (s *SharedFunctionService) buildEditionTypeCondition(filterFields models.FilterDataDto, tableAlias string) string {
+	prefix := ""
+	if tableAlias != "" {
+		prefix = tableAlias + "."
+	}
+	if len(filterFields.ParsedEditionType) == 0 {
+		return fmt.Sprintf("%sedition_type = 'current_edition'", prefix)
+	}
+	if len(filterFields.ParsedEditionType) == 1 {
+		return fmt.Sprintf("%sedition_type = '%s'", prefix, filterFields.ParsedEditionType[0])
+	}
+	editionTypeValues := make([]string, len(filterFields.ParsedEditionType))
+	for i, editionType := range filterFields.ParsedEditionType {
+		editionTypeValues[i] = fmt.Sprintf("'%s'", editionType)
+	}
+	return fmt.Sprintf("%sedition_type IN (%s)", prefix, strings.Join(editionTypeValues, ","))
+}
+
 func (s *SharedFunctionService) buildListDataCountQuery(
 	queryResult *ClickHouseQueryResult,
 	cteAndJoinResult *CTEAndJoinResult,
@@ -2470,7 +2488,7 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 	whereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.buildEditionTypeCondition(filterFields, "ee"),
 	}
 
 	if !hasEndDateFilters {
@@ -2823,7 +2841,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 	editionFilterConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.buildEditionTypeCondition(filterFields, "ee"),
 		fmt.Sprintf("end_date >= '%s'", today),
 	}
 
@@ -2925,7 +2943,7 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		preEventFilterConditions := []string{
 			s.buildPublishedCondition(filterFields),
 			s.buildStatusCondition(filterFields),
-			"ee.edition_type = 'current_edition'",
+			s.buildEditionTypeCondition(filterFields, "ee"),
 		}
 
 		hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != ""
@@ -3627,7 +3645,7 @@ type EventLocationData struct {
 	EditionCountry     *string
 }
 
-func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32) (map[uint32]*EventLocationData, error) {
+func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32, filterFields models.FilterDataDto) (map[uint32]*EventLocationData, error) {
 	if len(eventIds) == 0 {
 		return make(map[uint32]*EventLocationData), nil
 	}
@@ -3638,6 +3656,8 @@ func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32) (map[u
 	}
 	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
 
+	editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
+
 	query := fmt.Sprintf(`
 		SELECT 
 			event_id,
@@ -3647,9 +3667,9 @@ func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32) (map[u
 			edition_country
 		FROM testing_db.allevent_ch
 		WHERE event_id IN (%s)
-		AND edition_type = 'current_edition'
+		AND %s
 		GROUP BY event_id, venue_id, venue_city, edition_city_state_id, edition_country
-	`, eventIdsStrJoined)
+	`, eventIdsStrJoined, editionTypeCondition)
 
 	log.Printf("Event location data query: %s", query)
 
@@ -4120,8 +4140,8 @@ func (s *SharedFunctionService) transformLocationData(locations map[string]map[s
 	return nil
 }
 
-func (s *SharedFunctionService) GetEventLocations(eventIds []uint32) (map[string]map[string]interface{}, error) {
-	locationDataMap, err := s.FetchEventLocationData(eventIds)
+func (s *SharedFunctionService) GetEventLocations(eventIds []uint32, filterFields models.FilterDataDto) (map[string]map[string]interface{}, error) {
+	locationDataMap, err := s.FetchEventLocationData(eventIds, filterFields)
 	if err != nil {
 		return nil, err
 	}
@@ -4265,7 +4285,7 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 			FROM testing_db.allevent_ch AS ee%s
 			WHERE %s 
 			AND %s
-			AND ee.edition_type = 'current_edition'
+			AND %s
 			%s
 			%s
 		)
@@ -4283,6 +4303,7 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 		}(),
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
+		s.buildEditionTypeCondition(filterFields, "ee"),
 		func() string {
 			if queryResult.WhereClause != "" {
 				return fmt.Sprintf("AND %s", queryResult.WhereClause)
@@ -4499,7 +4520,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.buildEditionTypeCondition(filterFields, "ee"),
 	}
 	if queryResult.WhereClause != "" {
 		baseWhereConditions = append(baseWhereConditions, queryResult.WhereClause)
@@ -5098,7 +5119,7 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.buildEditionTypeCondition(filterFields, "e"),
 	}
 	if queryResult.WhereClause != "" {
 		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
@@ -5270,7 +5291,7 @@ func (s *SharedFunctionService) GetEventCountByDate(
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.buildEditionTypeCondition(filterFields, "e"),
 	}
 	if queryResult.WhereClause != "" {
 		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
@@ -5415,7 +5436,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.buildEditionTypeCondition(filterFields, "e"),
 		fmt.Sprintf("start_date <= '%s'", endDate),
 		fmt.Sprintf("end_date >= '%s'", startDate),
 	}
@@ -5767,7 +5788,7 @@ func (s *SharedFunctionService) GetTrendsCountByLongDurations(
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.buildEditionTypeCondition(filterFields, "e"),
 		fmt.Sprintf("start_date <= '%s'", endDate),
 		fmt.Sprintf("end_date >= '%s'", startDate),
 	}
@@ -6048,7 +6069,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.buildEditionTypeCondition(filterFields, "e"),
 		fmt.Sprintf("start_date <= '%s'", endDate),
 		fmt.Sprintf("end_date >= '%s'", startDate),
 	}
@@ -6449,12 +6470,15 @@ func (s *SharedFunctionService) BuildEventIdsAlertQuery(params models.AlertSearc
 	if dateSeriesCTE != "" {
 		cteParts = append(cteParts, strings.TrimSpace(dateSeriesCTE))
 	}
+	defaultFilterFields := models.FilterDataDto{}
+	defaultFilterFields.SetDefaultValues()
+	editionTypeCondition := s.buildEditionTypeCondition(defaultFilterFields, "ee")
 	cteParts = append(cteParts, fmt.Sprintf(`filtered_event_ids AS (
 			SELECT DISTINCT event_id
 			FROM testing_db.allevent_ch
 			WHERE event_uuid IN (%s)
-				AND ee.edition_type = 'current_edition'
-		)`, eventUuidsClause))
+				AND %s
+		)`, eventUuidsClause, editionTypeCondition))
 	withClause := "WITH " + strings.Join(cteParts, ",\n\t\t")
 
 	if params.Required == "count" {
@@ -6570,7 +6594,10 @@ func (s *SharedFunctionService) BuildLocationIdsAlertQuery(params models.AlertSe
 			FROM testing_db.location_ch
 			WHERE id_uuid IN (%s)
 		)`, locationIdsClause))
-	cteParts = append(cteParts, `filtered_events AS (
+	defaultFilterFields := models.FilterDataDto{}
+	defaultFilterFields.SetDefaultValues()
+	editionTypeCondition := s.buildEditionTypeCondition(defaultFilterFields, "ee")
+	cteParts = append(cteParts, fmt.Sprintf(`filtered_events AS (
 			SELECT DISTINCT ee.event_id
 			FROM testing_db.allevent_ch AS ee
 			INNER JOIN filtered_locations AS loc ON (
@@ -6579,8 +6606,8 @@ func (s *SharedFunctionService) BuildLocationIdsAlertQuery(params models.AlertSe
 				ee.edition_city_state_id = loc.id OR
 				(loc.location_type = 'COUNTRY' AND ee.edition_country = loc.iso)
 			)
-			WHERE ee.edition_type = 'current_edition'
-		)`)
+			WHERE %s
+		)`, editionTypeCondition))
 	withClause := "WITH " + strings.Join(cteParts, ",\n\t\t")
 
 	if params.Required == "count" {
@@ -6688,12 +6715,15 @@ func (s *SharedFunctionService) BuildCoordinatesAlertQuery(params models.AlertSe
 			WHERE location_type = 'CITY'
 				AND greatCircleDistance(longitude, latitude, %f, %f) <= %f
 		)`, lon, lat, radiusMeters))
-	cteParts = append(cteParts, `filtered_events AS (
+	defaultFilterFields := models.FilterDataDto{}
+	defaultFilterFields.SetDefaultValues()
+	editionTypeCondition := s.buildEditionTypeCondition(defaultFilterFields, "ee")
+	cteParts = append(cteParts, fmt.Sprintf(`filtered_events AS (
 			SELECT DISTINCT ee.event_id
 			FROM testing_db.allevent_ch AS ee
 			WHERE ee.venue_city IN (SELECT id FROM nearby_cities)
-				AND ee.edition_type = 'current_edition'
-		)`)
+				AND %s
+		)`, editionTypeCondition))
 	withClause := "WITH " + strings.Join(cteParts, ",\n\t\t")
 
 	if params.Required == "count" {
@@ -7325,7 +7355,7 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
-		"ee.edition_type = 'current_edition'",
+		s.buildEditionTypeCondition(filterFields, "ee"),
 		fmt.Sprintf("start_date <= '%s'", endDate),
 		fmt.Sprintf("end_date >= '%s'", startDate),
 	}
