@@ -1985,7 +1985,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		// previousCTE = "filtered_types"
 
 		// Type uses JOIN
-		typeJoinOnClause := "etc.event_id = ee.event_id"
+		typeJoinOnClause := "etc.event_id = ee.event_id and etc.published = 1"
 		if len(typeWhereConditions) > 0 {
 			typeJoinOnClause += fmt.Sprintf("\n\t\t\tAND %s", strings.Join(typeWhereConditions, " AND "))
 		}
@@ -4536,7 +4536,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	// !eventTypeGroup && !eventGroupCount - Group by all groups using arrayJoin
 	if eventTypeGroup == nil && (eventGroupCount == nil || !*eventGroupCount) && searchByEntity != "eventestimatecount" && searchByEntity != "economicimpactbreakdowncount" {
 		// preFilterEvent - only select required columns
-		preFilterSelectFields := []string{"ee.event_id"}
+		preFilterSelectFields := []string{"ee.event_id", "ee.event_uuid"}
 		if createdAt != "" && (getNew == nil || *getNew) {
 			preFilterSelectFields = append(preFilterSelectFields, "ee.event_created")
 		}
@@ -4554,7 +4554,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 				SELECT
 					group_name%s
 				FROM preFilterEvent AS ee
-				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id
+				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id and et.published = 1
 				ARRAY JOIN et.groups AS group_name
 				WHERE group_name IN ('business', 'social', 'unattended')
 				GROUP BY group_name
@@ -4735,7 +4735,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 				SELECT
 					%s
 				FROM preFilterEvent e
-				INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+				INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1
 				WHERE %s
 				GROUP BY group_name
 			)
@@ -4851,7 +4851,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 					END AS group_name,
 					if(ee.end_date < today(), 'past', 'upcoming') AS time_state
 				FROM preFilterEvent AS ee
-				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id
+				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id and et.published = 1
 				WHERE has(et.groups, 'business') OR has(et.groups, 'social')
 			),
 			grouped AS (
@@ -5016,7 +5016,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		)
 		SELECT %s
 		FROM preFilterEvent e
-		INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+		INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1
 		WHERE has(et.groups, '%s')
 		`,
 		cteClausesStr,
@@ -5496,7 +5496,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 				sum(e.impactScore) AS eventImpactScore
 			FROM preFilterEvent e
 			INNER JOIN date_series ds ON true
-			INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id
+			INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1
 			ARRAY JOIN et.groups AS group_name
 			WHERE %s
 			GROUP BY
@@ -5637,7 +5637,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	}
 
 	if needsEventTypeJoin {
-		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id")
+		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1")
 		if len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 			joinClauses = append(joinClauses, "ARRAY JOIN et.groups AS group_name")
 		}
@@ -5910,7 +5910,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 
 	if needsEventTypeJoin {
-		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id")
+		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1")
 		if len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 			joinClauses = append(joinClauses, "ARRAY JOIN et.groups AS group_name")
 		}
