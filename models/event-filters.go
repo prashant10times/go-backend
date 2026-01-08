@@ -125,10 +125,18 @@ type JobCompositeConditions struct {
 	SeniorityIds  []string `json:"seniorityIds,omitempty"`
 }
 
+type JobCompositeProperty struct {
+	Department []string `json:"department,omitempty"`
+	Role       []string `json:"role,omitempty"`
+	Name       []string `json:"name,omitempty"`
+}
+
 type JobCompositeFilter struct {
 	DesignationIds []string                `json:"designationIds,omitempty"`
 	Logic          string                  `json:"logic,omitempty"` // defaults to "AND"
 	Conditions     *JobCompositeConditions `json:"conditions,omitempty"`
+	PropertyIds    []string                `json:"propertyIds,omitempty"`
+	Property       *JobCompositeProperty   `json:"property,omitempty"`
 }
 
 type FilterDataDto struct {
@@ -171,9 +179,9 @@ type FilterDataDto struct {
 	VisitorState       string `json:"visitorState,omitempty" form:"visitorState"`
 	VisitorName        string `json:"visitorName,omitempty" form:"visitorName"`
 
-	JobComposite   string `json:"jobComposite,omitempty" form:"jobComposite"`
+	JobComposite string `json:"jobComposite,omitempty" form:"jobComposite"`
 	// DesignationIds string `json:"designationIds,omitempty" form:"designationIds"`
-	SeniorityIds   string `json:"seniorityIds,omitempty" form:"seniorityIds"`
+	// SeniorityIds string `json:"seniorityIds,omitempty" form:"seniorityIds"`
 
 	SpeakerDesignation string `json:"speakerDesignation,omitempty" form:"speakerDesignation"`
 	SpeakerCity        string `json:"speakerCity,omitempty" form:"speakerCity"`
@@ -1092,18 +1100,18 @@ func (f *FilterDataDto) Validate() error {
 		// 	return nil
 		// }))),
 
-		validation.Field(&f.SeniorityIds, validation.When(f.SeniorityIds != "", validation.By(func(value interface{}) error {
-			seniorityIdStr := value.(string)
-			seniorityIds := strings.Split(seniorityIdStr, ",")
-			f.ParsedSeniorityId = make([]string, 0, len(seniorityIds))
-			for _, seniorityId := range seniorityIds {
-				seniorityId = strings.TrimSpace(seniorityId)
-				if seniorityId != "" {
-					f.ParsedSeniorityId = append(f.ParsedSeniorityId, seniorityId)
-				}
-			}
-			return nil
-		}))),
+		// validation.Field(&f.SeniorityIds, validation.When(f.SeniorityIds != "", validation.By(func(value interface{}) error {
+		// 	seniorityIdStr := value.(string)
+		// 	seniorityIds := strings.Split(seniorityIdStr, ",")
+		// 	f.ParsedSeniorityId = make([]string, 0, len(seniorityIds))
+		// 	for _, seniorityId := range seniorityIds {
+		// 		seniorityId = strings.TrimSpace(seniorityId)
+		// 		if seniorityId != "" {
+		// 			f.ParsedSeniorityId = append(f.ParsedSeniorityId, seniorityId)
+		// 		}
+		// 	}
+		// 	return nil
+		// }))),
 
 		validation.Field(&f.State, validation.When(f.State != "", validation.By(func(value interface{}) error {
 			stateStr := value.(string)
@@ -2167,6 +2175,7 @@ func (f *FilterDataDto) Validate() error {
 				"keywords":                     true,
 				"eventestimatecount":           true,
 				"economicimpactbreakdowncount": true,
+				"audience":                     true,
 			}
 
 			// Allow "event" when groupBy is used
@@ -2176,7 +2185,7 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			if !validEntities[searchByEntityLower] {
-				validOptions := []string{"company", "user", "speaker", "event", "keywords", "eventEstimateCount", "economicImpactBreakdownCount"}
+				validOptions := []string{"company", "user", "speaker", "event", "keywords", "eventEstimateCount", "economicImpactBreakdownCount", "audience"}
 				if hasGroupBy {
 					validOptions = append(validOptions, "event")
 				}
@@ -2191,7 +2200,7 @@ func (f *FilterDataDto) Validate() error {
 					f.AdvanceSearchBy = "speaker,visitor"
 				case "speaker":
 					f.AdvanceSearchBy = "speaker"
-				case "event", "keywords", "eventestimatecount", "economicimpactbreakdowncount":
+				case "event", "keywords", "eventestimatecount", "economicimpactbreakdowncount", "audience":
 					f.AdvanceSearchBy = ""
 				default:
 					f.AdvanceSearchBy = ""

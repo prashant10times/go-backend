@@ -3490,9 +3490,63 @@ func (s *SharedFunctionService) GetCountryDataByISO(iso string) map[string]inter
 	return nil
 }
 
-func (s *SharedFunctionService) getDesignationIdsByDepartment(ctx context.Context, designationUUIDs []string) ([]string, error) {
+// func (s *SharedFunctionService) getDesignationIdsByDepartment(ctx context.Context, designationUUIDs []string) ([]string, error) {
+// 	if len(designationUUIDs) == 0 {
+// 		return []string{}, nil
+// 	}
+
+// 	uuidList := make([]string, len(designationUUIDs))
+// 	for i, uuid := range designationUUIDs {
+// 		uuidList[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''"))
+// 	}
+
+// 	query := fmt.Sprintf(`
+// 		SELECT DISTINCT designation_uuid
+// 		FROM testing_db.event_designation_ch
+// 		WHERE department IN (
+// 			SELECT DISTINCT department
+// 			FROM testing_db.event_designation_ch
+// 			WHERE designation_uuid IN (%s)
+// 		)`, strings.Join(uuidList, ","))
+
+// 	log.Printf("Designation ID by department Query: %s", query)
+
+// 	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to query designation IDs by department: %w", err)
+// 	}
+// 	defer rows.Close()
+
+// 	var result []string
+// 	for rows.Next() {
+// 		var designationUUID string
+// 		if err := rows.Scan(&designationUUID); err != nil {
+// 			return nil, fmt.Errorf("failed to scan designation UUID: %w", err)
+// 		}
+// 		result = append(result, designationUUID)
+// 	}
+
+// 	return result, nil
+// }
+
+type DesignationWithDepartment struct {
+	ID         string
+	Department string
+}
+
+type DesignationWithRole struct {
+	ID   string
+	Role string
+}
+
+type DesignationWithName struct {
+	ID   string
+	Name string
+}
+
+func (s *SharedFunctionService) getDesignationIdsByDepartmentWithProps(ctx context.Context, designationUUIDs []string) ([]DesignationWithDepartment, error) {
 	if len(designationUUIDs) == 0 {
-		return []string{}, nil
+		return []DesignationWithDepartment{}, nil
 	}
 
 	uuidList := make([]string, len(designationUUIDs))
@@ -3501,13 +3555,16 @@ func (s *SharedFunctionService) getDesignationIdsByDepartment(ctx context.Contex
 	}
 
 	query := fmt.Sprintf(`
-		SELECT DISTINCT d1.designation_uuid
-		FROM testing_db.event_designation_ch AS d1
-		INNER JOIN testing_db.event_designation_ch AS d2 
-			ON d1.department = d2.department
-		WHERE d2.designation_uuid IN (%s)`, strings.Join(uuidList, ","))
+		SELECT DISTINCT designation_uuid, department
+		FROM testing_db.event_designation_ch
+		WHERE department IN (
+			SELECT DISTINCT department
+			FROM testing_db.event_designation_ch
+			WHERE designation_uuid IN (%s)
+		)
+		AND department != ''`, strings.Join(uuidList, ","))
 
-	log.Printf("Designation ID by department Query: %s", query)
+	log.Printf("Designation ID by department with props Query: %s", query)
 
 	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
 	if err != nil {
@@ -3515,21 +3572,63 @@ func (s *SharedFunctionService) getDesignationIdsByDepartment(ctx context.Contex
 	}
 	defer rows.Close()
 
-	var result []string
+	var result []DesignationWithDepartment
 	for rows.Next() {
-		var designationUUID string
-		if err := rows.Scan(&designationUUID); err != nil {
-			return nil, fmt.Errorf("failed to scan designation UUID: %w", err)
+		var designationUUID, department string
+		if err := rows.Scan(&designationUUID, &department); err != nil {
+			return nil, fmt.Errorf("failed to scan designation UUID and department: %w", err)
 		}
-		result = append(result, designationUUID)
+		result = append(result, DesignationWithDepartment{
+			ID:         designationUUID,
+			Department: department,
+		})
 	}
 
 	return result, nil
 }
 
-func (s *SharedFunctionService) getSeniorityIdsByRole(ctx context.Context, seniorityUUIDs []string) ([]string, error) {
+// func (s *SharedFunctionService) getSeniorityIdsByRole(ctx context.Context, seniorityUUIDs []string) ([]string, error) {
+// 	if len(seniorityUUIDs) == 0 {
+// 		return []string{}, nil
+// 	}
+
+// 	uuidList := make([]string, len(seniorityUUIDs))
+// 	for i, uuid := range seniorityUUIDs {
+// 		uuidList[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''"))
+// 	}
+
+// 	query := fmt.Sprintf(`
+// 		SELECT DISTINCT designation_uuid
+// 		FROM testing_db.event_designation_ch
+// 		WHERE role IN (
+// 			SELECT DISTINCT role
+// 			FROM testing_db.event_designation_ch
+// 			WHERE designation_uuid IN (%s)
+// 		)`, strings.Join(uuidList, ","))
+
+// 	log.Printf("Seniority ID by role Query: %s", query)
+
+// 	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+// 	if err != nil {
+// 		return nil, fmt.Errorf("failed to query designation IDs by role: %w", err)
+// 	}
+// 	defer rows.Close()
+
+// 	var result []string
+// 	for rows.Next() {
+// 		var designationUUID string
+// 		if err := rows.Scan(&designationUUID); err != nil {
+// 			return nil, fmt.Errorf("failed to scan designation UUID: %w", err)
+// 		}
+// 		result = append(result, designationUUID)
+// 	}
+
+// 	return result, nil
+// }
+
+func (s *SharedFunctionService) getSeniorityIdsByRoleWithProps(ctx context.Context, seniorityUUIDs []string) ([]DesignationWithRole, error) {
 	if len(seniorityUUIDs) == 0 {
-		return []string{}, nil
+		return []DesignationWithRole{}, nil
 	}
 
 	uuidList := make([]string, len(seniorityUUIDs))
@@ -3538,13 +3637,16 @@ func (s *SharedFunctionService) getSeniorityIdsByRole(ctx context.Context, senio
 	}
 
 	query := fmt.Sprintf(`
-		SELECT DISTINCT d1.designation_uuid
-		FROM testing_db.event_designation_ch AS d1
-		INNER JOIN testing_db.event_designation_ch AS d2 
-			ON d1.role = d2.role
-		WHERE d2.designation_uuid IN (%s)`, strings.Join(uuidList, ","))
+		SELECT DISTINCT designation_uuid, role
+		FROM testing_db.event_designation_ch
+		WHERE role IN (
+			SELECT DISTINCT role
+			FROM testing_db.event_designation_ch
+			WHERE designation_uuid IN (%s)
+		)
+		AND role != ''`, strings.Join(uuidList, ","))
 
-	log.Printf("Seniority ID by role Query: %s", query)
+	log.Printf("Seniority ID by role with props Query: %s", query)
 
 	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
 	if err != nil {
@@ -3552,16 +3654,77 @@ func (s *SharedFunctionService) getSeniorityIdsByRole(ctx context.Context, senio
 	}
 	defer rows.Close()
 
-	var result []string
+	var result []DesignationWithRole
 	for rows.Next() {
-		var designationUUID string
-		if err := rows.Scan(&designationUUID); err != nil {
-			return nil, fmt.Errorf("failed to scan designation UUID: %w", err)
+		var designationUUID, role string
+		if err := rows.Scan(&designationUUID, &role); err != nil {
+			return nil, fmt.Errorf("failed to scan designation UUID and role: %w", err)
 		}
-		result = append(result, designationUUID)
+		result = append(result, DesignationWithRole{
+			ID:   designationUUID,
+			Role: role,
+		})
 	}
 
 	return result, nil
+}
+
+func (s *SharedFunctionService) getDesignationNamesByIds(ctx context.Context, designationUUIDs []string) ([]DesignationWithName, error) {
+	if len(designationUUIDs) == 0 {
+		return []DesignationWithName{}, nil
+	}
+
+	uuidList := make([]string, len(designationUUIDs))
+	for i, uuid := range designationUUIDs {
+		uuidList[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(uuid, "'", "''"))
+	}
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT designation_uuid, display_name
+		FROM testing_db.event_designation_ch
+		WHERE designation_uuid IN (%s)
+		AND display_name != ''`, strings.Join(uuidList, ","))
+
+	log.Printf("Designation names by IDs Query: %s", query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query designation names by IDs: %w", err)
+	}
+	defer rows.Close()
+
+	var result []DesignationWithName
+	for rows.Next() {
+		var designationUUID, name string
+		if err := rows.Scan(&designationUUID, &name); err != nil {
+			return nil, fmt.Errorf("failed to scan designation UUID and name: %w", err)
+		}
+		result = append(result, DesignationWithName{
+			ID:   designationUUID,
+			Name: name,
+		})
+	}
+
+	return result, nil
+}
+
+func deduplicateStrings(strs []string) []string {
+	if len(strs) == 0 {
+		return []string{}
+	}
+
+	seen := make(map[string]bool)
+	result := make([]string, 0, len(strs))
+
+	for _, str := range strs {
+		trimmed := strings.TrimSpace(str)
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			result = append(result, trimmed)
+		}
+	}
+
+	return result
 }
 
 func findValidEventTypes(eventTypes []string, eventTypeGroup string) []string {
@@ -3597,61 +3760,131 @@ func findValidEventTypes(eventTypes []string, eventTypeGroup string) []string {
 }
 
 func (s *SharedFunctionService) validateParameters(filterFields models.FilterDataDto) (models.FilterDataDto, error) {
+	ctx := context.Background()
 
-	if len(filterFields.ParsedDesignationId) > 0 {
-		expandedIds, err := s.getDesignationIdsByDepartment(context.Background(), filterFields.ParsedDesignationId)
-		if err != nil {
-			return filterFields, fmt.Errorf("failed to expand designation IDs by department: %w", err)
-		}
-		filterFields.ParsedDesignationId = expandedIds
-	}
+	// Handle top-level ParsedDesignationId
+	// if len(filterFields.ParsedDesignationId) > 0 {
+	// 	expandedIds, err := s.getDesignationIdsByDepartment(ctx, filterFields.ParsedDesignationId)
+	// 	if err != nil {
+	// 		return filterFields, fmt.Errorf("failed to expand designation IDs by department: %w", err)
+	// 	}
+	// 	filterFields.ParsedDesignationId = expandedIds
+	// }
 
-	if len(filterFields.ParsedSeniorityId) > 0 {
-		expandedIds, err := s.getSeniorityIdsByRole(context.Background(), filterFields.ParsedSeniorityId)
-		if err != nil {
-			return filterFields, fmt.Errorf("failed to expand seniority IDs by role: %w", err)
-		}
-		filterFields.ParsedSeniorityId = expandedIds
-	}
+	// Handle top-level ParsedSeniorityId
+	// if len(filterFields.ParsedSeniorityId) > 0 {
+	// 	expandedIds, err := s.getSeniorityIdsByRole(ctx, filterFields.ParsedSeniorityId)
+	// 	if err != nil {
+	// 		return filterFields, fmt.Errorf("failed to expand seniority IDs by role: %w", err)
+	// 	}
+	// 	filterFields.ParsedSeniorityId = expandedIds
+	// }
 
+	// jobComposite filter
 	if filterFields.ParsedJobCompositeFilter != nil {
+		uniqueDesignationIds := make(map[string]bool)
+		propertyIds := make([]string, 0)
+		property := &models.JobCompositeProperty{}
+
+		//conditions.DepartmentIds
 		if filterFields.ParsedJobCompositeFilter.Conditions != nil {
 			if len(filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds) > 0 {
-				expanded, err := s.getDesignationIdsByDepartment(context.Background(), filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds)
+				expanded, err := s.getDesignationIdsByDepartmentWithProps(ctx, filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds)
 				if err != nil {
 					return filterFields, fmt.Errorf("failed to expand department IDs in jobComposite conditions: %w", err)
 				}
-				expandedSet := make(map[string]bool)
-				for _, id := range expanded {
-					trimmed := strings.TrimSpace(id)
-					if trimmed != "" {
-						expandedSet[trimmed] = true
+
+				departmentSet := make(map[string]bool)
+				for _, item := range expanded {
+					trimmedID := strings.TrimSpace(item.ID)
+					if trimmedID != "" {
+						uniqueDesignationIds[trimmedID] = true
+						propertyIds = append(propertyIds, trimmedID)
+
+						trimmedDept := strings.TrimSpace(item.Department)
+						if trimmedDept != "" {
+							departmentSet[trimmedDept] = true
+						}
 					}
 				}
-				filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds = make([]string, 0, len(expandedSet))
-				for id := range expandedSet {
-					filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds = append(filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds, id)
+
+				// Collect unique departments
+				property.Department = make([]string, 0, len(departmentSet))
+				for dept := range departmentSet {
+					property.Department = append(property.Department, dept)
 				}
+				filterFields.ParsedJobCompositeFilter.Conditions.DepartmentIds = nil
 			}
 
-			// Expand seniorityIds
+			// conditions.SeniorityIds
 			if len(filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds) > 0 {
-				expanded, err := s.getSeniorityIdsByRole(context.Background(), filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds)
+				expanded, err := s.getSeniorityIdsByRoleWithProps(ctx, filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds)
 				if err != nil {
 					return filterFields, fmt.Errorf("failed to expand seniority IDs in jobComposite conditions: %w", err)
 				}
-				expandedSet := make(map[string]bool)
-				for _, id := range expanded {
-					trimmed := strings.TrimSpace(id)
-					if trimmed != "" {
-						expandedSet[trimmed] = true
+
+				roleSet := make(map[string]bool)
+				for _, item := range expanded {
+					trimmedID := strings.TrimSpace(item.ID)
+					if trimmedID != "" {
+						uniqueDesignationIds[trimmedID] = true
+						propertyIds = append(propertyIds, trimmedID)
+
+						trimmedRole := strings.TrimSpace(item.Role)
+						if trimmedRole != "" {
+							roleSet[trimmedRole] = true
+						}
 					}
 				}
-				filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds = make([]string, 0, len(expandedSet))
-				for id := range expandedSet {
-					filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds = append(filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds, id)
+
+				// Collect unique roles
+				property.Role = make([]string, 0, len(roleSet))
+				for role := range roleSet {
+					property.Role = append(property.Role, role)
+				}
+
+				// Clear original condition array
+				filterFields.ParsedJobCompositeFilter.Conditions.SeniorityIds = nil
+			}
+		}
+
+		// Handle direct DesignationIds
+		if len(filterFields.ParsedJobCompositeFilter.DesignationIds) > 0 {
+			designationData, err := s.getDesignationNamesByIds(ctx, filterFields.ParsedJobCompositeFilter.DesignationIds)
+			if err != nil {
+				return filterFields, fmt.Errorf("failed to fetch designation names by IDs: %w", err)
+			}
+
+			nameSet := make(map[string]bool)
+			for _, item := range designationData {
+				trimmedID := strings.TrimSpace(item.ID)
+				if trimmedID != "" {
+					uniqueDesignationIds[trimmedID] = true
+					propertyIds = append(propertyIds, trimmedID)
+
+					trimmedName := strings.TrimSpace(item.Name)
+					if trimmedName != "" {
+						nameSet[trimmedName] = true
+					}
 				}
 			}
+
+			// Collect unique names
+			property.Name = make([]string, 0, len(nameSet))
+			for name := range nameSet {
+				property.Name = append(property.Name, name)
+			}
+		}
+
+		consolidatedIds := make([]string, 0, len(uniqueDesignationIds))
+		for id := range uniqueDesignationIds {
+			consolidatedIds = append(consolidatedIds, id)
+		}
+		filterFields.ParsedJobCompositeFilter.DesignationIds = consolidatedIds
+		filterFields.ParsedJobCompositeFilter.PropertyIds = deduplicateStrings(propertyIds)
+		hasPropertyValues := len(property.Department) > 0 || len(property.Role) > 0 || len(property.Name) > 0
+		if hasPropertyValues {
+			filterFields.ParsedJobCompositeFilter.Property = property
 		}
 	}
 
