@@ -228,6 +228,8 @@ type FilterDataDto struct {
 	ActiveGt  string `json:"active.gt,omitempty" form:"active.gt"`
 	ActiveLt  string `json:"active.lt,omitempty" form:"active.lt"`
 
+	Forecasted string `json:"forecasted,omitempty" form:"forecasted"`
+
 	Type       string `json:"type,omitempty" form:"type"`
 	EventTypes string `json:"eventTypes,omitempty" form:"eventTypes"`
 	Venue      string `json:"venue,omitempty" form:"venue"`
@@ -1569,6 +1571,8 @@ func (f *FilterDataDto) Validate() error {
 
 			return nil
 		}))),
+
+		validation.Field(&f.Forecasted, validation.When(f.Forecasted != "", validation.In("only", "included").Error("forecasted must be either 'only' or 'included'"))),
 
 		validation.Field(&f.EventRanking, validation.When(f.EventRanking != "", validation.By(func(value interface{}) error {
 			eventRankingStr := value.(string)

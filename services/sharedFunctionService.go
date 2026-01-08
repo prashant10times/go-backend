@@ -1394,6 +1394,8 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	}
 
 	if len(filterFields.ParsedDates) > 0 {
+		forecasted := filterFields.Forecasted
+		tableAlias := "ee"
 		var dateRangeConditions []string
 
 		for _, dateRange := range filterFields.ParsedDates {
@@ -1403,14 +1405,38 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			var rangeConditions []string
 
 			if start != nil && *start != "" {
-				rangeConditions = append(rangeConditions, fmt.Sprintf("ee.end_date >= '%s'", strings.ReplaceAll(*start, "'", "''")))
-			}
-
-			if end != nil && *end != "" {
-				if start != nil && *start != "" {
-					rangeConditions = append(rangeConditions, fmt.Sprintf("ee.start_date <= '%s'", strings.ReplaceAll(*end, "'", "''")))
+				escapedStart := strings.ReplaceAll(*start, "'", "''")
+				if end != nil && *end != "" {
+					escapedEnd := strings.ReplaceAll(*end, "'", "''")
+					switch forecasted {
+					case "only":
+						rangeConditions = append(rangeConditions, fmt.Sprintf("%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedStartDate <= '%s'", tableAlias, escapedStart, tableAlias, escapedEnd))
+					case "included":
+						rangeConditions = append(rangeConditions, fmt.Sprintf("((%s.end_date >= '%s' AND %s.start_date <= '%s') OR (%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedStartDate <= '%s'))",
+							tableAlias, escapedStart, tableAlias, escapedEnd,
+							tableAlias, escapedStart, tableAlias, escapedEnd))
+					default:
+						rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s.start_date <= '%s'", tableAlias, escapedStart, tableAlias, escapedEnd))
+					}
 				} else {
-					rangeConditions = append(rangeConditions, fmt.Sprintf("ee.end_date <= '%s'", strings.ReplaceAll(*end, "'", "''")))
+					switch forecasted {
+					case "only":
+						rangeConditions = append(rangeConditions, fmt.Sprintf("%s.futureExpexctedEndDate >= '%s'", tableAlias, escapedStart))
+					case "included":
+						rangeConditions = append(rangeConditions, fmt.Sprintf("((%s.end_date >= '%s') OR (%s.futureExpexctedEndDate >= '%s'))", tableAlias, escapedStart, tableAlias, escapedStart))
+					default:
+						rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date >= '%s'", tableAlias, escapedStart))
+					}
+				}
+			} else if end != nil && *end != "" {
+				escapedEnd := strings.ReplaceAll(*end, "'", "''")
+				switch forecasted {
+				case "only":
+					rangeConditions = append(rangeConditions, fmt.Sprintf("%s.futureExpexctedEndDate <= '%s'", tableAlias, escapedEnd))
+				case "included":
+					rangeConditions = append(rangeConditions, fmt.Sprintf("((%s.end_date <= '%s') OR (%s.futureExpexctedEndDate <= '%s'))", tableAlias, escapedEnd, tableAlias, escapedEnd))
+				default:
+					rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date <= '%s'", tableAlias, escapedEnd))
 				}
 			}
 
@@ -1425,19 +1451,47 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	}
 
 	if filterFields.ParsedPastBetween != nil {
+		forecasted := filterFields.Forecasted
+		tableAlias := "ee"
 		start := filterFields.ParsedPastBetween.Start
 		end := filterFields.ParsedPastBetween.End
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.end_date >= '%s' AND ee.end_date < '%s'",
-			strings.ReplaceAll(start, "'", "''"),
-			strings.ReplaceAll(end, "'", "''")))
+		escapedStart := strings.ReplaceAll(start, "'", "''")
+		escapedEnd := strings.ReplaceAll(end, "'", "''")
+
+		switch forecasted {
+		case "only":
+			whereConditions = append(whereConditions, fmt.Sprintf("%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedEndDate < '%s'",
+				tableAlias, escapedStart, tableAlias, escapedEnd))
+		case "included":
+			whereConditions = append(whereConditions, fmt.Sprintf("((%s.end_date >= '%s' AND %s.end_date < '%s') OR (%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedEndDate < '%s'))",
+				tableAlias, escapedStart, tableAlias, escapedEnd,
+				tableAlias, escapedStart, tableAlias, escapedEnd))
+		default:
+			whereConditions = append(whereConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s.end_date < '%s'",
+				tableAlias, escapedStart, tableAlias, escapedEnd))
+		}
 	}
 
 	if filterFields.ParsedActiveBetween != nil {
+		forecasted := filterFields.Forecasted
+		tableAlias := "ee"
 		start := filterFields.ParsedActiveBetween.Start
 		end := filterFields.ParsedActiveBetween.End
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.start_date <= '%s' AND ee.end_date >= '%s'",
-			strings.ReplaceAll(end, "'", "''"),
-			strings.ReplaceAll(start, "'", "''")))
+		escapedStart := strings.ReplaceAll(start, "'", "''")
+		escapedEnd := strings.ReplaceAll(end, "'", "''")
+
+		switch forecasted {
+		case "only":
+			whereConditions = append(whereConditions, fmt.Sprintf("%s.futureExpexctedStartDate <= '%s' AND %s.futureExpexctedEndDate >= '%s'",
+				tableAlias, escapedEnd, tableAlias, escapedStart))
+		case "included":
+			whereConditions = append(whereConditions, fmt.Sprintf("((%s.start_date <= '%s' AND %s.end_date >= '%s') OR (%s.futureExpexctedStartDate <= '%s' AND %s.futureExpexctedEndDate >= '%s'))",
+				tableAlias, escapedEnd, tableAlias, escapedStart,
+				tableAlias, escapedEnd, tableAlias, escapedStart))
+		default:
+			whereConditions = append(whereConditions, fmt.Sprintf("%s.start_date <= '%s' AND %s.end_date >= '%s'",
+				tableAlias, escapedEnd, tableAlias, escapedStart))
+		}
 	}
 
 	if len(filterFields.ParsedCity) > 0 {
@@ -2437,22 +2491,135 @@ func (s *SharedFunctionService) addInFilter(filterKey string, dbField string, wh
 	}
 }
 
+func (s *SharedFunctionService) buildDefaultDateCondition(forecasted string, tableAlias string, today string) string {
+	switch forecasted {
+	case "only":
+		return fmt.Sprintf("%s.futureExpexctedEndDate >= '%s'", tableAlias, today)
+	case "included":
+		return fmt.Sprintf("(%s.end_date >= '%s' OR %s.futureExpexctedEndDate >= '%s')", tableAlias, today, tableAlias, today)
+	default:
+		return fmt.Sprintf("%s.end_date >= '%s'", tableAlias, today)
+	}
+}
+
+func (s *SharedFunctionService) buildPreFilterSelectDates(preFilterSelect string, forecasted string) string {
+	switch forecasted {
+	case "only":
+		return preFilterSelect + ", e.futureExpexctedStartDate, e.futureExpexctedEndDate"
+	case "included":
+		return preFilterSelect + ", e.start_date, e.end_date, e.futureExpexctedStartDate, e.futureExpexctedEndDate"
+	default:
+		return preFilterSelect + ", e.start_date, e.end_date"
+	}
+}
+
+func (s *SharedFunctionService) getDateFieldName(forecasted string, fieldType string, tableAlias string) string {
+	if forecasted == "only" {
+		if fieldType == "start" {
+			return fmt.Sprintf("%s.futureExpexctedStartDate", tableAlias)
+		}
+		return fmt.Sprintf("%s.futureExpexctedEndDate", tableAlias)
+	}
+	if fieldType == "start" {
+		return fmt.Sprintf("%s.start_date", tableAlias)
+	}
+	return fmt.Sprintf("%s.end_date", tableAlias)
+}
+
+func (s *SharedFunctionService) buildTrendsDateCondition(forecasted string, tableAlias string, conditionType string, startDate string, endDate string) string {
+	switch conditionType {
+	case "preFilterRange":
+		switch forecasted {
+		case "only":
+			if endDate == "" || endDate == startDate {
+				return fmt.Sprintf("%s.futureExpexctedEndDate >= '%s'", tableAlias, startDate)
+			}
+			return fmt.Sprintf("%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedStartDate <= '%s'", tableAlias, startDate, tableAlias, endDate)
+		case "included":
+			if endDate == "" || endDate == startDate {
+				return fmt.Sprintf("((%s.end_date >= '%s') OR (%s.futureExpexctedEndDate >= '%s'))", tableAlias, startDate, tableAlias, startDate)
+			}
+			return fmt.Sprintf("((%s.end_date >= '%s' AND %s.start_date <= '%s') OR (%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedStartDate <= '%s'))",
+				tableAlias, startDate, tableAlias, endDate,
+				tableAlias, startDate, tableAlias, endDate)
+		default:
+			if endDate == "" || endDate == startDate {
+				return fmt.Sprintf("%s.end_date >= '%s'", tableAlias, startDate)
+			}
+			return fmt.Sprintf("%s.end_date >= '%s' AND %s.start_date <= '%s'", tableAlias, startDate, tableAlias, endDate)
+		}
+	case "dateJoin":
+		switch forecasted {
+		case "only":
+			return fmt.Sprintf("%s.futureExpexctedStartDate <= ds.date AND %s.futureExpexctedEndDate >= ds.date", tableAlias, tableAlias)
+		case "included":
+			return fmt.Sprintf("((%s.start_date <= ds.date AND %s.end_date >= ds.date) OR (%s.futureExpexctedStartDate <= ds.date AND %s.futureExpexctedEndDate >= ds.date))",
+				tableAlias, tableAlias, tableAlias, tableAlias)
+		default:
+			return fmt.Sprintf("%s.start_date <= ds.date AND %s.end_date >= ds.date", tableAlias, tableAlias)
+		}
+	case "finalDatesJoin":
+		switch forecasted {
+		case "only":
+			return fmt.Sprintf("%s.futureExpexctedStartDate <= fd.end_date AND %s.futureExpexctedEndDate >= fd.start_date", tableAlias, tableAlias)
+		case "included":
+			return fmt.Sprintf("((%s.start_date <= fd.end_date AND %s.end_date >= fd.start_date) OR (%s.futureExpexctedStartDate <= fd.end_date AND %s.futureExpexctedEndDate >= fd.start_date))",
+				tableAlias, tableAlias, tableAlias, tableAlias)
+		default:
+			return fmt.Sprintf("%s.start_date <= fd.end_date AND %s.end_date >= fd.start_date", tableAlias, tableAlias)
+		}
+	default:
+		return ""
+	}
+}
+
 func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, filterFields models.FilterDataDto) {
+	forecasted := filterFields.Forecasted
+	tableAlias := "ee"
+
 	activeFilters := []struct {
-		key      string
-		field    string
-		operator string
+		key       string
+		field     string
+		fieldType string
+		operator  string
 	}{
-		{"ActiveGte", "end_date", ">="},
-		{"ActiveLte", "start_date", "<="},
-		{"ActiveGt", "end_date", ">"},
-		{"ActiveLt", "start_date", "<"},
+		{"ActiveGte", "end_date", "end", ">="},
+		{"ActiveLte", "start_date", "start", "<="},
+		{"ActiveGt", "end_date", "end", ">"},
+		{"ActiveLt", "start_date", "start", "<"},
 	}
 
-	for _, filter := range activeFilters {
-		value := s.getFilterValue(filterFields, filter.key)
-		if value != "" {
-			*whereConditions = append(*whereConditions, fmt.Sprintf("ee.%s %s '%s'", filter.field, filter.operator, value))
+	if forecasted == "included" {
+		var originalConditions []string
+		var futureConditions []string
+
+		for _, filter := range activeFilters {
+			value := s.getFilterValue(filterFields, filter.key)
+			if value != "" {
+				originalField := s.getDateFieldName("", filter.fieldType, tableAlias)
+				futureField := s.getDateFieldName("only", filter.fieldType, tableAlias)
+				originalConditions = append(originalConditions, fmt.Sprintf("%s %s '%s'", originalField, filter.operator, value))
+				futureConditions = append(futureConditions, fmt.Sprintf("%s %s '%s'", futureField, filter.operator, value))
+			}
+		}
+
+		if len(originalConditions) > 0 {
+			originalGroup := strings.Join(originalConditions, " AND ")
+			futureGroup := strings.Join(futureConditions, " AND ")
+			*whereConditions = append(*whereConditions, fmt.Sprintf("((%s) OR (%s))", originalGroup, futureGroup))
+		}
+	} else {
+		for _, filter := range activeFilters {
+			value := s.getFilterValue(filterFields, filter.key)
+			if value != "" {
+				switch forecasted {
+				case "only":
+					futureField := s.getDateFieldName("only", filter.fieldType, tableAlias)
+					*whereConditions = append(*whereConditions, fmt.Sprintf("%s %s '%s'", futureField, filter.operator, value))
+				default:
+					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.%s %s '%s'", filter.field, filter.operator, value))
+				}
+			}
 		}
 	}
 }
@@ -2562,7 +2729,8 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 	}
 
 	if !hasEndDateFilters {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.end_date >= '%s'", today))
+		dateCondition := s.buildDefaultDateCondition(filterFields.Forecasted, "ee", today)
+		whereConditions = append(whereConditions, dateCondition)
 	}
 
 	if queryResult.WhereClause != "" {
@@ -4478,6 +4646,9 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 		createdAt = today
 	}
 
+	forecasted := filterFields.Forecasted
+	endDateField := s.getDateFieldName(forecasted, "end", "ee")
+
 	getNew := filterFields.ParsedGetNew
 	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
 	isEventEntity := searchByEntity == "event"
@@ -4543,11 +4714,11 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 		}
 		selectClauses = append(selectClauses,
 			// Counts
-			fmt.Sprintf("uniqIf(ee.event_id, ee.end_date < '%s') AS past", today),
-			fmt.Sprintf("uniqIf(ee.event_id, ee.end_date >= '%s') AS active", today),
+			fmt.Sprintf("uniqIf(ee.event_id, %s < '%s') AS past", endDateField, today),
+			fmt.Sprintf("uniqIf(ee.event_id, %s >= '%s') AS active", endDateField, today),
 			// IDs
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.end_date < '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS past_ids", today),
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN ee.end_date >= '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS active_ids", today),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN %s < '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS past_ids", endDateField, today),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN %s >= '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS active_ids", endDateField, today),
 		)
 	} else {
 		// Normal behavior: return only counts (no IDs)
@@ -4559,15 +4730,15 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 
 		if getNew == nil || !*getNew {
 			selectClauses = append(selectClauses,
-				fmt.Sprintf("uniqIf(ee.event_id, ee.end_date < '%s') AS past", today),
-				fmt.Sprintf("uniqIf(ee.event_id, ee.end_date >= '%s') AS active", today),
+				fmt.Sprintf("uniqIf(ee.event_id, %s < '%s') AS past", endDateField, today),
+				fmt.Sprintf("uniqIf(ee.event_id, %s >= '%s') AS active", endDateField, today),
 			)
 		}
 
 		if len(selectClauses) == 0 {
 			selectClauses = []string{
-				fmt.Sprintf("uniqIf(ee.event_id, ee.end_date < '%s') AS past", today),
-				fmt.Sprintf("uniqIf(ee.event_id, ee.end_date >= '%s') AS active", today),
+				fmt.Sprintf("uniqIf(ee.event_id, %s < '%s') AS past", endDateField, today),
+				fmt.Sprintf("uniqIf(ee.event_id, %s >= '%s') AS active", endDateField, today),
 				fmt.Sprintf("uniqIf(ee.event_id, ee.event_created >= '%s') AS new", createdAt),
 			}
 		}
@@ -4576,7 +4747,15 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	selectStr := strings.Join(selectClauses, ", ")
 
 	// Determine which columns to select in preFilterEvent CTE
-	preFilterSelectFields := []string{"ee.event_id", "ee.end_date"}
+	preFilterSelectFields := []string{"ee.event_id"}
+	switch forecasted {
+	case "only":
+		preFilterSelectFields = append(preFilterSelectFields, "ee.futureExpexctedEndDate")
+	case "included":
+		preFilterSelectFields = append(preFilterSelectFields, "ee.end_date", "ee.futureExpexctedEndDate")
+	default:
+		preFilterSelectFields = append(preFilterSelectFields, "ee.end_date")
+	}
 	if getNew == nil || *getNew || isEventEntity {
 		preFilterSelectFields = append(preFilterSelectFields, "ee.event_created")
 	}
@@ -5615,24 +5794,29 @@ func (s *SharedFunctionService) GetEventCountByDate(
 	whereClause := strings.Join(baseWhereConditions, " AND ")
 	whereClause = strings.ReplaceAll(whereClause, "ee.", "e.")
 
+	forecasted := filterFields.Forecasted
+	startDateField := s.getDateFieldName(forecasted, "start", "e")
+	endDateField := s.getDateFieldName(forecasted, "end", "e")
+
 	var dateGroupByExpr string
 	switch groupBy {
 	case "day":
-		dateGroupByExpr = "formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(e.start_date), x), range(0, dateDiff('day', toDate(e.start_date), toDate(e.end_date)) + 1))), '%Y-%m-%d')"
+		dateGroupByExpr = fmt.Sprintf("formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(%s), x), range(0, dateDiff('day', toDate(%s), toDate(%s)) + 1))), '%%Y-%%m-%%d')", startDateField, startDateField, endDateField)
 	case "month":
-		dateGroupByExpr = "formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(e.start_date), x), range(0, dateDiff('day', toDate(e.start_date), toDate(e.end_date)) + 1))), '%Y-%m')"
+		dateGroupByExpr = fmt.Sprintf("formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(%s), x), range(0, dateDiff('day', toDate(%s), toDate(%s)) + 1))), '%%Y-%%m')", startDateField, startDateField, endDateField)
 	case "year":
-		dateGroupByExpr = "formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(e.start_date), x), range(0, dateDiff('day', toDate(e.start_date), toDate(e.end_date)) + 1))), '%Y')"
+		dateGroupByExpr = fmt.Sprintf("formatDateTime(arrayJoin(arrayMap(x -> addDays(toDate(%s), x), range(0, dateDiff('day', toDate(%s), toDate(%s)) + 1))), '%%Y')", startDateField, startDateField, endDateField)
 	default:
 		return nil, fmt.Errorf("unsupported date groupBy: %s", groupBy)
 	}
 
+	preFilterSelect := "e.event_id"
+	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
+
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
-				e.event_id,
-				e.start_date,
-				e.end_date
+				%s
 			FROM testing_db.allevent_ch AS e
 			%s
 			WHERE %s
@@ -5645,6 +5829,7 @@ func (s *SharedFunctionService) GetEventCountByDate(
 		ORDER BY date_key ASC
 	`,
 		cteClausesStr,
+		preFilterSelect,
 		func() string {
 			if joinClausesStr != "" {
 				return "\t\t" + joinClausesStr
@@ -5740,12 +5925,15 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	}
 	daysDiff := int(endDateParsed.Sub(startDateParsed).Hours()/24) + 1
 
+	forecasted := filterFields.Forecasted
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
 		s.buildEditionTypeCondition(filterFields, "e"),
-		fmt.Sprintf("start_date <= '%s'", endDate),
-		fmt.Sprintf("end_date >= '%s'", startDate),
+	}
+	dateCondition := s.buildTrendsDateCondition(forecasted, "e", "preFilterRange", startDate, endDate)
+	if dateCondition != "" {
+		preFilterWhereConditions = append(preFilterWhereConditions, dateCondition)
 	}
 	if queryResult.WhereClause != "" {
 		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
@@ -5777,8 +5965,12 @@ func (s *SharedFunctionService) GetEventCountByDay(
 			filterWhereClause,
 			groupBy,
 			joinClausesStr,
+			filterFields,
 		)
 	}
+
+	preFilterSelect := "e.event_id, e.impactScore"
+	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
 
 	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
@@ -5787,10 +5979,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		),
 		preFilterEvent AS (
 			SELECT
-				e.event_id,
-				e.start_date,
-				e.end_date,
-				e.impactScore
+				%s
 			FROM testing_db.allevent_ch AS e
 			%s
 			WHERE %s
@@ -5817,6 +6006,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		cteClausesStr,
 		startDate,
 		daysDiff,
+		preFilterSelect,
 		func() string {
 			if joinClausesStr != "" {
 				return "\t\t" + joinClausesStr
@@ -5837,8 +6027,10 @@ func (s *SharedFunctionService) GetEventCountByDay(
 					conditions = append(conditions, cleaned)
 				}
 			}
-			conditions = append(conditions, "e.start_date <= ds.date")
-			conditions = append(conditions, "e.end_date >= ds.date")
+			dateJoinCond := s.buildTrendsDateCondition(filterFields.Forecasted, "e", "dateJoin", "", "")
+			if dateJoinCond != "" {
+				conditions = append(conditions, dateJoinCond)
+			}
 			conditions = append(conditions, "group_name IN ('business', 'social', 'unattended')")
 			return strings.Join(conditions, " AND ")
 		}(),
@@ -5884,6 +6076,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	filterWhereClause string,
 	groupBy []models.CountGroup,
 	joinClausesStr string,
+	filterFields models.FilterDataDto,
 ) (interface{}, error) {
 	if len(groupBy) < 2 {
 		return nil, fmt.Errorf("groupBy must have at least 2 elements: [dateView, column, ...secondaryGroups]")
@@ -5962,8 +6155,10 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			whereConditions = append(whereConditions, cleaned)
 		}
 	}
-	whereConditions = append(whereConditions, "e.start_date <= ds.date")
-	whereConditions = append(whereConditions, "e.end_date >= ds.date")
+	dateJoinCond := s.buildTrendsDateCondition(filterFields.Forecasted, "e", "dateJoin", "", "")
+	if dateJoinCond != "" {
+		whereConditions = append(whereConditions, dateJoinCond)
+	}
 	if needsEventTypeJoin && len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 		whereConditions = append(whereConditions, "group_name IN ('business', 'social', 'unattended')")
 	}
@@ -5985,12 +6180,6 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		joinStr = strings.Join(joinClauses, "\n            ")
 	}
 
-	startDateParsed, err := time.Parse("2006-01-02", startDate)
-	if err != nil {
-		return nil, fmt.Errorf("invalid startDate format: %w", err)
-	}
-	endDate := startDateParsed.AddDate(0, 0, daysDiff-1).Format("2006-01-02")
-
 	preFilterSelect := "e.event_id"
 	if columnStr != "eventCount" {
 		switch columnStr {
@@ -6009,9 +6198,25 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		}
 	}
 
-	preFilterSelect += ", e.start_date, e.end_date"
+	forecasted := filterFields.Forecasted
+	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
 
-	dateJoinCondition := "e.start_date <= ds.date AND e.end_date >= ds.date"
+	dateJoinCondition := s.buildTrendsDateCondition(forecasted, "e", "dateJoin", "", "")
+	if dateJoinCondition == "" {
+		dateJoinCondition = "e.start_date <= ds.date AND e.end_date >= ds.date"
+	}
+
+	startDateParsed, err := time.Parse("2006-01-02", startDate)
+	if err != nil {
+		return nil, fmt.Errorf("invalid startDate format: %w", err)
+	}
+	endDate := startDateParsed.AddDate(0, 0, daysDiff-1).Format("2006-01-02")
+
+	preFilterDateCondition := s.buildTrendsDateCondition(forecasted, "e", "preFilterRange", startDate, endDate)
+	preFilterWhereWithDate := preFilterWhereClause
+	if preFilterDateCondition != "" {
+		preFilterWhereWithDate = fmt.Sprintf("%s AND %s", preFilterWhereClause, preFilterDateCondition)
+	}
 
 	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
@@ -6024,8 +6229,6 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			FROM testing_db.allevent_ch AS e
 			%s
 			WHERE %s
-				AND e.start_date <= '%s'
-				AND e.end_date >= '%s'
 		)
 		SELECT
 			%s
@@ -6046,9 +6249,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			}
 			return ""
 		}(),
-		preFilterWhereClause,
-		endDate,
-		startDate,
+		preFilterWhereWithDate,
 		selectStr,
 		dateJoinCondition,
 		joinStr,
@@ -6092,12 +6293,15 @@ func (s *SharedFunctionService) GetTrendsCountByLongDurations(
 		joinClausesStr = strings.ReplaceAll(cteAndJoinResult.JoinClausesStr, "ee.", "e.")
 	}
 
+	forecasted := filterFields.Forecasted
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
 		s.buildEditionTypeCondition(filterFields, "e"),
-		fmt.Sprintf("start_date <= '%s'", endDate),
-		fmt.Sprintf("end_date >= '%s'", startDate),
+	}
+	dateCondition := s.buildTrendsDateCondition(forecasted, "e", "preFilterRange", startDate, endDate)
+	if dateCondition != "" {
+		preFilterWhereConditions = append(preFilterWhereConditions, dateCondition)
 	}
 	if queryResult.WhereClause != "" {
 		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
@@ -6129,6 +6333,7 @@ func (s *SharedFunctionService) GetTrendsCountByLongDurations(
 		filterWhereClause,
 		groupBy,
 		joinClausesStr,
+		filterFields,
 	)
 }
 
@@ -6141,6 +6346,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	filterWhereClause string,
 	groupBy []models.CountGroup,
 	joinClausesStr string,
+	filterFields models.FilterDataDto,
 ) (interface{}, error) {
 	if len(groupBy) < 2 {
 		return nil, fmt.Errorf("groupBy must have at least 2 elements: [dateView, column, ...secondaryGroups]")
@@ -6235,8 +6441,11 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 			whereConditions = append(whereConditions, cleaned)
 		}
 	}
-	whereConditions = append(whereConditions, "e.start_date <= fd.end_date")
-	whereConditions = append(whereConditions, "e.end_date >= fd.start_date")
+	forecasted := filterFields.Forecasted
+	finalDatesJoinCond := s.buildTrendsDateCondition(forecasted, "e", "finalDatesJoin", "", "")
+	if finalDatesJoinCond != "" {
+		whereConditions = append(whereConditions, finalDatesJoinCond)
+	}
 	if needsEventTypeJoin && len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 		whereConditions = append(whereConditions, "group_name IN ('business', 'social', 'unattended')")
 	}
@@ -6275,7 +6484,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 			preFilterSelect += ", e.event_economic_breakdown"
 		}
 	}
-	preFilterSelect += ", e.start_date, e.end_date"
+	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
 
 	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
@@ -6373,12 +6582,15 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		joinClausesStr = strings.ReplaceAll(cteAndJoinResult.JoinClausesStr, "ee.", "e.")
 	}
 
+	forecasted := filterFields.Forecasted
 	preFilterWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
 		s.buildEditionTypeCondition(filterFields, "e"),
-		fmt.Sprintf("start_date <= '%s'", endDate),
-		fmt.Sprintf("end_date >= '%s'", startDate),
+	}
+	dateCondition := s.buildTrendsDateCondition(forecasted, "e", "preFilterRange", startDate, endDate)
+	if dateCondition != "" {
+		preFilterWhereConditions = append(preFilterWhereConditions, dateCondition)
 	}
 	if queryResult.WhereClause != "" {
 		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
@@ -6417,6 +6629,14 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		return nil, fmt.Errorf("unsupported duration: %s. Valid options are: month, year, week", duration)
 	}
 
+	preFilterSelect := "e.event_id"
+	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
+
+	finalWhereDateCondition := s.buildTrendsDateCondition(forecasted, "e", "finalDatesJoin", "", "")
+	if finalWhereDateCondition == "" {
+		finalWhereDateCondition = "e.start_date <= fd.end_date AND e.end_date >= fd.start_date"
+	}
+
 	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
 			SELECT toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL number %s AS duration_start
@@ -6441,9 +6661,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		),
 		preFilterEvent AS (
 			SELECT
-				e.event_id,
-				e.start_date,
-				e.end_date
+				%s
 			FROM testing_db.allevent_ch AS e
 			%s
 			WHERE %s
@@ -6461,6 +6679,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
 		startDate, startDate, intervalUnit, intervalUnit, endDate,
 		intervalUnit, endDate, startDate,
+		preFilterSelect,
 		func() string {
 			if joinClausesStr != "" {
 				return "\t\t" + joinClausesStr
@@ -6482,8 +6701,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 					conditions = append(conditions, cleaned)
 				}
 			}
-			conditions = append(conditions, "e.start_date <= fd.end_date")
-			conditions = append(conditions, "e.end_date >= fd.start_date")
+			conditions = append(conditions, finalWhereDateCondition)
 			return strings.Join(conditions, " AND ")
 		}(),
 	)
@@ -7659,12 +7877,15 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		joinConditionsStr = fmt.Sprintf("AND %s", strings.Join(cteAndJoinResult.JoinConditions, " AND "))
 	}
 
+	forecasted := filterFields.Forecasted
 	baseWhereConditions := []string{
 		s.buildPublishedCondition(filterFields),
 		s.buildStatusCondition(filterFields),
 		s.buildEditionTypeCondition(filterFields, "ee"),
-		fmt.Sprintf("start_date <= '%s'", endDate),
-		fmt.Sprintf("end_date >= '%s'", startDate),
+	}
+	dateCondition := s.buildTrendsDateCondition(forecasted, "e", "preFilterRange", startDate, endDate)
+	if dateCondition != "" {
+		baseWhereConditions = append(baseWhereConditions, dateCondition)
 	}
 
 	if queryResult.WhereClause != "" {
@@ -7692,26 +7913,32 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 	}
 	daysDiff := int(endDateParsed.Sub(startDateParsed).Hours()/24) + 1
 
+	startDateField := s.getDateFieldName(forecasted, "start", "e")
+	endDateField := s.getDateFieldName(forecasted, "end", "e")
+	preFilterSelect := fmt.Sprintf(`
+				e.event_uuid,
+				e.event_name,
+				%s AS start_date,
+				%s AS end_date,
+				e.editions_audiance_type,
+				e.impactScore,
+				e.event_score,
+				e.PrimaryEventType,
+				toUInt32(dateDiff('day', toDate(%s), toDate(%s))) AS duration`, startDateField, endDateField, startDateField, endDateField)
+
+	dateJoinCondition := "e.start_date <= ds.date AND e.end_date >= ds.date"
+
+	orderByDateField := "e.start_date"
+
 	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
 			SELECT toDate(addDays(toDate('%s'), number)) AS date
 			FROM numbers(%d)
 		),
 		preFilterEvent AS (
-			SELECT 
-				e.event_uuid,
-				e.event_name,
-				e.start_date,
-				e.end_date,
-				e.editions_audiance_type,
-				e.impactScore,
-				e.event_score,
-				e.PrimaryEventType,
-				toUInt32(dateDiff('day', toDate(e.start_date), toDate(e.end_date))) AS duration
+			SELECT %s
 			FROM testing_db.allevent_ch AS e
 			WHERE %s
-				AND e.start_date <= '%s'
-				AND e.end_date >= '%s'
 		),
 		events AS (
 			SELECT 
@@ -7733,12 +7960,12 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 					ORDER BY 
 						e.event_score DESC,
 						COALESCE(e.editions_audiance_type, 0) ASC,
-						e.start_date DESC,
+						%s DESC,
 						e.duration DESC
 				) AS rn
 			FROM preFilterEvent e
 			INNER JOIN date_series ds ON (
-				e.start_date <= ds.date AND e.end_date >= ds.date
+				%s
 			)
 		)
 		SELECT 
@@ -7762,9 +7989,10 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		cteClausesStr,
 		startDate,
 		daysDiff,
+		preFilterSelect,
 		whereClause,
-		endDate,
-		startDate,
+		orderByDateField,
+		dateJoinCondition,
 	)
 
 	log.Printf("Events by week query: %s", query)

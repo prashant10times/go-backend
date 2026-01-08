@@ -1256,7 +1256,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	if !hasEndDateFilters {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.end_date >= '%s'", today))
+		dateCondition := s.sharedFunctionService.buildDefaultDateCondition(filterFields.Forecasted, "ee", today)
+		whereConditions = append(whereConditions, dateCondition)
 	}
 
 	if queryResult.WhereClause != "" {
@@ -2432,7 +2433,8 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		s.sharedFunctionService.buildEditionTypeCondition(filterFields, "ee"),
 	}
 	if !hasEndDateFilters {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.end_date >= '%s'", today))
+		dateCondition := s.sharedFunctionService.buildDefaultDateCondition(filterFields.Forecasted, "ee", today)
+		whereConditions = append(whereConditions, dateCondition)
 	}
 	if queryResult.WhereClause != "" {
 		whereConditions = append(whereConditions, queryResult.WhereClause)
