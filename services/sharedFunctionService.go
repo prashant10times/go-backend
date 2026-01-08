@@ -1520,8 +1520,16 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_pricing = '%s'", strings.ReplaceAll(filterFields.Price, "'", "''")))
 	}
 
-	if filterFields.Frequency != "" {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_frequency = '%s'", strings.ReplaceAll(filterFields.Frequency, "'", "''")))
+	if len(filterFields.ParsedFrequency) > 0 {
+		escapedFrequencies := make([]string, 0, len(filterFields.ParsedFrequency))
+		for _, freq := range filterFields.ParsedFrequency {
+			escapedFrequencies = append(escapedFrequencies, fmt.Sprintf("'%s'", strings.ReplaceAll(freq, "'", "''")))
+		}
+		if len(escapedFrequencies) == 1 {
+			whereConditions = append(whereConditions, fmt.Sprintf("ee.event_frequency = %s", escapedFrequencies[0]))
+		} else {
+			whereConditions = append(whereConditions, fmt.Sprintf("ee.event_frequency IN (%s)", strings.Join(escapedFrequencies, ",")))
+		}
 	}
 
 	if filterFields.AvgRating != "" {

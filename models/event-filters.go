@@ -385,6 +385,7 @@ type FilterDataDto struct {
 	ParsedUserCompanyName  []string `json:"-"`
 	ParsedCompanyId        []string `json:"-"`
 	ParsedCompanyName      []string `json:"-"`
+	ParsedFrequency        []string `json:"-"`
 	ParsedCompanyWebsite   []string `json:"-"`
 	ParsedSearchByEntity   []string `json:"-"`
 	ParsedAdvancedSearchBy []string `json:"-"` // Parsed version of AdvanceSearchBy
@@ -879,7 +880,49 @@ func (f *FilterDataDto) Validate() error {
 			return nil
 		}))),
 
-		validation.Field(&f.Frequency, validation.When(f.Frequency != "", validation.In("Weekly", "Monthly", "Quarterly", "Bi-annual", "Annual", "Biennial", "Triennial", "Quinquennial", "One-time", "Quadrennial"))), // Frequency validation
+		validation.Field(&f.Frequency, validation.When(f.Frequency != "", validation.By(func(value interface{}) error {
+			frequencyStr := value.(string)
+			if frequencyStr == "" {
+				return nil
+			}
+
+			frequencyMap := map[string]string{
+				"weekly":       "Weekly",
+				"monthly":      "Monthly",
+				"quarterly":    "Quarterly",
+				"bi-annual":    "Bi-annual",
+				"annual":       "Annual",
+				"biennial":     "Biennial",
+				"triennial":    "Triennial",
+				"quinquennial": "Quinquennial",
+				"one-time":     "One-time",
+				"quadrennial":  "Quadrennial",
+			}
+
+			frequencies := strings.Split(frequencyStr, ",")
+			f.ParsedFrequency = make([]string, 0, len(frequencies))
+
+			for _, freq := range frequencies {
+				freq = strings.TrimSpace(freq)
+				if freq == "" {
+					continue
+				}
+
+				frequencyLower := strings.ToLower(freq)
+				if properCase, exists := frequencyMap[frequencyLower]; exists {
+					f.ParsedFrequency = append(f.ParsedFrequency, properCase)
+				} else {
+					validValues := []string{"Weekly", "Monthly", "Quarterly", "Bi-annual", "Annual", "Biennial", "Triennial", "Quinquennial", "One-time", "Quadrennial"}
+					return validation.NewError("invalid_frequency", "Invalid frequency value: "+freq+". Valid values are: "+strings.Join(validValues, ", "))
+				}
+			}
+
+			if len(f.ParsedFrequency) == 0 {
+				return validation.NewError("empty_frequency", "frequency cannot be empty after parsing")
+			}
+
+			return nil
+		}))),
 
 		validation.Field(&f.Visibility, validation.By(func(value interface{}) error {
 			visibilityStr := value.(string)
