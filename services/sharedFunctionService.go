@@ -794,15 +794,55 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			companyIds = append(companyIds, escapeSqlValue(companyId))
 		}
 		companyIdCondition := fmt.Sprintf("company_id IN (%s)", strings.Join(companyIds, ","))
+		userCompanyIdCondition := fmt.Sprintf("user_company_id IN (%s)", strings.Join(companyIds, ","))
 		result.CompanyIdWhereConditions = append(result.CompanyIdWhereConditions, companyIdCondition)
 
-		_, _, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
+		hasVisitor, hasSpeaker, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
 
-		if hasOrganizer && (hasExhibitor || hasSponsor) {
-			result.NeedsCompanyIdUnionCTE = true
-		} else if hasExhibitor && hasSponsor {
+		// Count entity types
+		companyEntityCount := 0
+		if hasExhibitor {
+			companyEntityCount++
+		}
+		if hasSponsor {
+			companyEntityCount++
+		}
+		if hasOrganizer {
+			companyEntityCount++
+		}
+
+		userEntityCount := 0
+		if hasVisitor {
+			userEntityCount++
+		}
+		if hasSpeaker {
+			userEntityCount++
+		}
+
+		// Determine if we need UNION CTE
+		needsUnionCTE := false
+		if companyEntityCount > 1 {
+			needsUnionCTE = true
+		}
+		if userEntityCount > 1 {
+			needsUnionCTE = true
+		}
+		if companyEntityCount > 0 && userEntityCount > 0 {
+			needsUnionCTE = true
+		}
+
+		if needsUnionCTE {
 			result.NeedsCompanyIdUnionCTE = true
 		} else {
+			// Single entity type - use direct joins
+			if hasVisitor {
+				result.NeedsVisitorJoin = true
+				result.VisitorWhereConditions = append(result.VisitorWhereConditions, userCompanyIdCondition)
+			}
+			if hasSpeaker {
+				result.NeedsSpeakerJoin = true
+				result.SpeakerWhereConditions = append(result.SpeakerWhereConditions, userCompanyIdCondition)
+			}
 			if hasExhibitor {
 				result.NeedsExhibitorJoin = true
 				result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, companyIdCondition)
@@ -1713,13 +1753,29 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	if needsCompanyIdUnionCTE && len(companyIdWhereConditions) > 0 {
 		companyIdCondition := strings.Join(companyIdWhereConditions, " AND ")
 
-		_, _, hasExhibitor, hasSponsor, hasOrganizer := func() (bool, bool, bool, bool, bool) {
+		// Extract companyIds from the condition for user_company_id queries
+		companyIds := make([]string, 0)
+		if len(filterFields.ParsedCompanyId) > 0 {
+			for _, companyId := range filterFields.ParsedCompanyId {
+				escaped := strings.ReplaceAll(companyId, "'", "''")
+				companyIds = append(companyIds, fmt.Sprintf("'%s'", escaped))
+			}
+		}
+		userCompanyIdCondition := fmt.Sprintf("user_company_id IN (%s)", strings.Join(companyIds, ","))
+
+		hasVisitor, hasSpeaker, hasExhibitor, hasSponsor, hasOrganizer := func() (bool, bool, bool, bool, bool) {
 			entities := filterFields.ParsedAdvancedSearchBy
+			hasVisitor := false
+			hasSpeaker := false
 			hasExhibitor := false
 			hasSponsor := false
 			hasOrganizer := false
 			for _, entity := range entities {
 				switch entity {
+				case "visitor":
+					hasVisitor = true
+				case "speaker":
+					hasSpeaker = true
 				case "exhibitor":
 					hasExhibitor = true
 				case "sponsor":
@@ -1728,10 +1784,24 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 					hasOrganizer = true
 				}
 			}
-			return false, false, hasExhibitor, hasSponsor, hasOrganizer
+			return hasVisitor, hasSpeaker, hasExhibitor, hasSponsor, hasOrganizer
 		}()
 
 		var unionParts []string
+
+		if hasVisitor {
+			visitorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+			FROM testing_db.event_visitors_ch
+			WHERE %s`, userCompanyIdCondition)
+			unionParts = append(unionParts, visitorPart)
+		}
+
+		if hasSpeaker {
+			speakerPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+			FROM testing_db.event_speaker_ch
+			WHERE %s`, userCompanyIdCondition)
+			unionParts = append(unionParts, speakerPart)
+		}
 
 		if hasExhibitor {
 			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
@@ -3473,7 +3543,7 @@ func (s *SharedFunctionService) getSeniorityIdsByRole(ctx context.Context, senio
 		INNER JOIN testing_db.event_designation_ch AS d2 
 			ON d1.role = d2.role
 		WHERE d2.designation_uuid IN (%s)`, strings.Join(uuidList, ","))
-	
+
 	log.Printf("Seniority ID by role Query: %s", query)
 
 	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
