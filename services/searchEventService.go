@@ -1634,6 +1634,11 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}, nil
 	}
 
+	var eventToDesignationMatchInfo map[string]interface{}
+	if filterFields.ParsedJobCompositeFilter != nil && filterFields.ParsedJobCompositeFilter.Property != nil {
+		eventToDesignationMatchInfo = make(map[string]interface{})
+	}
+
 	var eventIdsStr []string
 	for _, id := range eventIds {
 		eventIdsStr = append(eventIdsStr, fmt.Sprintf("%d", id))
@@ -1660,8 +1665,15 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		Duration  time.Duration
 	}
 
+	type audienceMatchInfoResult struct {
+		MatchInfo map[string]interface{}
+		Err       error
+		Duration  time.Duration
+	}
+
 	relatedDataChan := make(chan relatedDataResult, 1)
 	locationDataChan := make(chan locationDataResult, 1)
+	audienceMatchInfoChan := make(chan audienceMatchInfoResult, 1)
 
 	go func() {
 		queryStartTime := time.Now()
@@ -1695,11 +1707,42 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 	}()
 
+	go func() {
+		queryStartTime := time.Now()
+		var matchInfo map[string]interface{}
+		var err error
+
+		if filterFields.ParsedJobCompositeFilter != nil && filterFields.ParsedJobCompositeFilter.Property != nil && len(eventIds) > 0 {
+			matchInfo, err = s.sharedFunctionService.audienceTrackerMatchInfo(
+				eventIds,
+				filterFields.ParsedJobCompositeFilter.Property,
+			)
+		} else {
+			matchInfo = make(map[string]interface{})
+		}
+
+		duration := time.Since(queryStartTime)
+
+		audienceMatchInfoChan <- audienceMatchInfoResult{
+			MatchInfo: matchInfo,
+			Err:       err,
+			Duration:  duration,
+		}
+	}()
+
 	relatedDataRes := <-relatedDataChan
 	locationDataRes := <-locationDataChan
+	audienceMatchInfoRes := <-audienceMatchInfoChan
 
 	log.Printf("Related data query time: %v", relatedDataRes.Duration)
 	log.Printf("Event location query time: %v", locationDataRes.Duration)
+	log.Printf("Audience match info query time: %v", audienceMatchInfoRes.Duration)
+
+	if audienceMatchInfoRes.Err != nil {
+		log.Printf("Error fetching audience match info: %v", audienceMatchInfoRes.Err)
+	} else {
+		eventToDesignationMatchInfo = audienceMatchInfoRes.MatchInfo
+	}
 
 	if relatedDataRes.Err != nil {
 		log.Printf("Related data query error: %v", relatedDataRes.Err)
@@ -2008,6 +2051,12 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] {
 			grouper.AddField("bannerUrl", nil)
+		}
+
+		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["eventToDesignationMatchInfo"] {
+			if matchInfo, ok := eventToDesignationMatchInfo[eventID]; ok {
+				grouper.AddField("eventToDesignationMatchInfo", matchInfo)
+			}
 		}
 
 		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["eventLocation"] {

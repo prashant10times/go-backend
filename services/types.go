@@ -79,6 +79,7 @@ var EventResponseKeys = []string{
 	"sourceId",
 	"publishStatus",
 	"jobComposite",
+	"eventToDesignationMatchInfo",
 	"futureExpectedStartDate",
 	"futureExpectedEndDate",
 }
@@ -126,6 +127,7 @@ var ResponseGroupsMap = map[ResponseGroups][]string{
 		"publishStatus",
 		"eventLocation",
 		"jobComposite",
+		"eventToDesignationMatchInfo",
 		"futureExpectedStartDate",
 		"estimatedAttendance",
 		"estimatedVisitorRangeTag",

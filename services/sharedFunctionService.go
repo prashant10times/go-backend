@@ -8565,3 +8565,145 @@ func (s *SharedFunctionService) getThresholdData(groupedData map[string]map[stri
 
 	return thresholds
 }
+
+func (s *SharedFunctionService) audienceTrackerMatchInfo(eventIds []uint32, jobCompositeValues *models.JobCompositeProperty) (map[string]interface{}, error) {
+	if len(eventIds) == 0 || jobCompositeValues == nil {
+		return make(map[string]interface{}), nil
+	}
+
+	totalDesignationCount := len(jobCompositeValues.Department) + len(jobCompositeValues.Role) + len(jobCompositeValues.Name)
+	if totalDesignationCount == 0 {
+		return make(map[string]interface{}), nil
+	}
+
+	totalKeywords := make([]string, 0, totalDesignationCount)
+	totalKeywords = append(totalKeywords, jobCompositeValues.Department...)
+	totalKeywords = append(totalKeywords, jobCompositeValues.Role...)
+	totalKeywords = append(totalKeywords, jobCompositeValues.Name...)
+
+	var designationOrConditions []string
+
+	if len(jobCompositeValues.Name) > 0 {
+		escapedNames := make([]string, len(jobCompositeValues.Name))
+		for i, name := range jobCompositeValues.Name {
+			escapedNames[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(name, "'", "''"))
+		}
+		designationOrConditions = append(designationOrConditions, fmt.Sprintf("display_name IN (%s)", strings.Join(escapedNames, ",")))
+	}
+
+	if len(jobCompositeValues.Department) > 0 {
+		escapedDepts := make([]string, len(jobCompositeValues.Department))
+		for i, dept := range jobCompositeValues.Department {
+			escapedDepts[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(dept, "'", "''"))
+		}
+		designationOrConditions = append(designationOrConditions, fmt.Sprintf("department IN (%s)", strings.Join(escapedDepts, ",")))
+	}
+
+	if len(jobCompositeValues.Role) > 0 {
+		escapedRoles := make([]string, len(jobCompositeValues.Role))
+		for i, role := range jobCompositeValues.Role {
+			escapedRoles[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(role, "'", "''"))
+		}
+		designationOrConditions = append(designationOrConditions, fmt.Sprintf("role IN (%s)", strings.Join(escapedRoles, ",")))
+	}
+
+	if len(designationOrConditions) == 0 {
+		return make(map[string]interface{}), nil
+	}
+
+	eventIdsStr := make([]string, len(eventIds))
+	for i, eventId := range eventIds {
+		eventIdsStr[i] = fmt.Sprintf("%d", eventId)
+	}
+
+	query := fmt.Sprintf(`
+		SELECT 
+			toString(event_id) AS eventid,
+			count(*) AS count,
+			arrayStringConcat(
+				arrayMap(
+					x -> concat(x.1, '<val-sep>', x.2, '<val-sep>', x.3),
+					groupArray(tuple(toString(display_name), toString(role), toString(department)))
+				),
+				'<line-sep>'
+			) AS descriptions
+		FROM testing_db.event_designation_ch
+		WHERE event_id IN (%s)
+			AND (%s)
+		GROUP BY event_id`, strings.Join(eventIdsStr, ","), strings.Join(designationOrConditions, " OR "))
+
+	log.Printf("Audience tracker match info query: %s", query)
+
+	ctx := context.Background()
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query audience tracker match info: %w", err)
+	}
+	defer rows.Close()
+
+	result := make(map[string]interface{})
+	totalKeywordsSet := make(map[string]bool)
+	for _, keyword := range totalKeywords {
+		totalKeywordsSet[keyword] = true
+	}
+
+	for rows.Next() {
+		var eventId string
+		var count uint64
+		var descriptions *string
+
+		if err := rows.Scan(&eventId, &count, &descriptions); err != nil {
+			log.Printf("Error scanning audience match info row: %v", err)
+			continue
+		}
+
+		allDesignationDepartmentRole := make([]string, 0)
+		if descriptions != nil && *descriptions != "" {
+			rowWiseSplit := strings.Split(*descriptions, "<line-sep>")
+			for _, row := range rowWiseSplit {
+				values := strings.Split(row, "<val-sep>")
+				for _, val := range values {
+					trimmed := strings.TrimSpace(val)
+					if trimmed != "" {
+						allDesignationDepartmentRole = append(allDesignationDepartmentRole, trimmed)
+					}
+				}
+			}
+		}
+
+		seen := make(map[string]bool)
+		uniqueValues := make([]string, 0)
+		for _, val := range allDesignationDepartmentRole {
+			if !seen[val] {
+				seen[val] = true
+				uniqueValues = append(uniqueValues, val)
+			}
+		}
+
+		countMatched := 0
+		matchedKeywords := make([]string, 0)
+		for _, val := range uniqueValues {
+			if totalKeywordsSet[val] {
+				countMatched++
+				matchedKeywords = append(matchedKeywords, val)
+			}
+		}
+
+		matchedKeywordsPercentage := 0.0
+		if totalDesignationCount > 0 {
+			matchedKeywordsPercentage = (float64(countMatched) / float64(totalDesignationCount)) * 100.0
+			matchedKeywordsPercentage = math.Round(matchedKeywordsPercentage*100) / 100
+		}
+
+		result[eventId] = map[string]interface{}{
+			"matchedKeywordsPercentage": matchedKeywordsPercentage,
+			"matchedKeywords":           matchedKeywords,
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error reading audience match info rows: %w", err)
+	}
+
+	return result, nil
+}
