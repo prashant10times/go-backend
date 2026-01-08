@@ -8613,7 +8613,7 @@ func (s *SharedFunctionService) audienceTrackerMatchInfo(eventIds []uint32, jobC
 
 	eventIdsStr := make([]string, len(eventIds))
 	for i, eventId := range eventIds {
-		eventIdsStr[i] = fmt.Sprintf("%d", eventId)
+		eventIdsStr[i] = fmt.Sprintf("'%d'", eventId)
 	}
 
 	query := fmt.Sprintf(`
@@ -8628,7 +8628,7 @@ func (s *SharedFunctionService) audienceTrackerMatchInfo(eventIds []uint32, jobC
 				'<line-sep>'
 			) AS descriptions
 		FROM testing_db.event_designation_ch
-		WHERE event_id IN (%s)
+		WHERE toString(event_id) IN (%s)
 			AND (%s)
 		GROUP BY event_id`, strings.Join(eventIdsStr, ","), strings.Join(designationOrConditions, " OR "))
 
