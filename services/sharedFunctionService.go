@@ -1822,12 +1822,17 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			cteName = "filtered_user_events"
 		}
 
+		selectColumn := "event_id"
+		if cteName == "filtered_user_events" {
+			selectColumn = "edition_id"
+		}
+
 		unionCTE := fmt.Sprintf(`%s AS (
-			SELECT DISTINCT event_id
+			SELECT DISTINCT %s
 			FROM (
 				%s
 			)
-		)`, cteName, strings.Join(unifiedUnionParts, "\n\t\t\t\tUNION ALL\n\t\t\t\t"))
+		)`, cteName, selectColumn, strings.Join(unifiedUnionParts, "\n\t\t\t\tUNION ALL\n\t\t\t\t"))
 
 		result.CTEClauses = append(result.CTEClauses, unionCTE)
 		previousCTE = cteName
