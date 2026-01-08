@@ -2057,9 +2057,16 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			grouper.AddField("bannerUrl", nil)
 		}
 
-		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["eventToDesignationMatchInfo"] {
+		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["matchedKeywords"] || requestedFieldsSet["matchedKeywordsPercentage"] {
 			if matchInfo, ok := eventToDesignationMatchInfo[eventID]; ok {
-				grouper.AddField("eventToDesignationMatchInfo", matchInfo)
+				if matchInfoMap, ok := matchInfo.(map[string]interface{}); ok {
+					if matchedKeywords, exists := matchInfoMap["matchedKeywords"]; exists {
+						grouper.AddField("matchedKeywords", matchedKeywords)
+					}
+					if matchedKeywordsPercentage, exists := matchInfoMap["matchedKeywordsPercentage"]; exists {
+						grouper.AddField("matchedKeywordsPercentage", matchedKeywordsPercentage)
+					}
+				}
 			}
 		}
 
