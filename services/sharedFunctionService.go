@@ -1532,8 +1532,23 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if filterFields.AvgRating != "" {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_avgRating >= %s", filterFields.AvgRating))
+	if len(filterFields.ParsedAvgRating) > 0 {
+		var ratingConditions []string
+		for _, ratingRange := range filterFields.ParsedAvgRating {
+			var rangeConditions []string
+			if ratingRange.Start >= 0 {
+				rangeConditions = append(rangeConditions, fmt.Sprintf("ee.event_avgRating >= %g", ratingRange.Start))
+			}
+			if ratingRange.End > 0 {
+				rangeConditions = append(rangeConditions, fmt.Sprintf("ee.event_avgRating <= %g", ratingRange.End))
+			}
+			if len(rangeConditions) > 0 {
+				ratingConditions = append(ratingConditions, fmt.Sprintf("(%s)", strings.Join(rangeConditions, " AND ")))
+			}
+		}
+		if len(ratingConditions) > 0 {
+			whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(ratingConditions, " OR ")))
+		}
 	}
 
 	if filterFields.ParsedMode != nil {

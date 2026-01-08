@@ -27,6 +27,11 @@ type Keywords struct {
 
 type DateRange [2]*string
 
+type RatingRange struct {
+	Start float64
+	End   float64
+}
+
 type Groups string
 
 const (
@@ -369,26 +374,27 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedTrackerDates     []string `json:"-"`
-	ParsedCalendarType     *string  `json:"-"`
-	ParsedDateView         *string  `json:"-"`
-	ParsedColumns          []string `json:"-"`
-	ParsedGroupByTrends    *string  `json:"-"`
-	ParsedRegions          []string `json:"-"`
-	ParsedCountryIds       []string `json:"-"`
-	ParsedStateIds         []string `json:"-"`
-	ParsedCityIds          []string `json:"-"`
-	ParsedVenueIds         []string `json:"-"`
-	ParsedCategoryIds      []string `json:"-"`
-	ParsedUserId           []string `json:"-"`
-	ParsedUserName         []string `json:"-"`
-	ParsedUserCompanyName  []string `json:"-"`
-	ParsedCompanyId        []string `json:"-"`
-	ParsedCompanyName      []string `json:"-"`
-	ParsedFrequency        []string `json:"-"`
-	ParsedCompanyWebsite   []string `json:"-"`
-	ParsedSearchByEntity   []string `json:"-"`
-	ParsedAdvancedSearchBy []string `json:"-"` // Parsed version of AdvanceSearchBy
+	ParsedAvgRating        []RatingRange `json:"-"`
+	ParsedTrackerDates     []string      `json:"-"`
+	ParsedCalendarType     *string       `json:"-"`
+	ParsedDateView         *string       `json:"-"`
+	ParsedColumns          []string      `json:"-"`
+	ParsedGroupByTrends    *string       `json:"-"`
+	ParsedRegions          []string      `json:"-"`
+	ParsedCountryIds       []string      `json:"-"`
+	ParsedStateIds         []string      `json:"-"`
+	ParsedCityIds          []string      `json:"-"`
+	ParsedVenueIds         []string      `json:"-"`
+	ParsedCategoryIds      []string      `json:"-"`
+	ParsedUserId           []string      `json:"-"`
+	ParsedUserName         []string      `json:"-"`
+	ParsedUserCompanyName  []string      `json:"-"`
+	ParsedCompanyId        []string      `json:"-"`
+	ParsedCompanyName      []string      `json:"-"`
+	ParsedFrequency        []string      `json:"-"`
+	ParsedCompanyWebsite   []string      `json:"-"`
+	ParsedSearchByEntity   []string      `json:"-"`
+	ParsedAdvancedSearchBy []string      `json:"-"` // Parsed version of AdvanceSearchBy
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -587,6 +593,36 @@ func (f *FilterDataDto) applyEventTypeBasedMappings(wasPublishedExplicitlyProvid
 	}
 }
 
+func combineRatingRanges(ranges []RatingRange) []RatingRange {
+	if len(ranges) == 0 {
+		return ranges
+	}
+
+	for i := 0; i < len(ranges)-1; i++ {
+		for j := i + 1; j < len(ranges); j++ {
+			if ranges[i].Start > ranges[j].Start {
+				ranges[i], ranges[j] = ranges[j], ranges[i]
+			}
+		}
+	}
+
+	combined := []RatingRange{ranges[0]}
+	for i := 1; i < len(ranges); i++ {
+		last := &combined[len(combined)-1]
+		current := ranges[i]
+
+		if current.Start <= last.End {
+			if current.End > last.End {
+				last.End = current.End
+			}
+		} else {
+			combined = append(combined, current)
+		}
+	}
+
+	return combined
+}
+
 func (f *FilterDataDto) Validate() error {
 	wasPublishedExplicitlyProvided := f.Published != ""
 	wasEventAudienceExplicitlyProvided := f.EventAudience != ""
@@ -594,8 +630,43 @@ func (f *FilterDataDto) Validate() error {
 	f.SetDefaultValues()
 
 	err := validation.ValidateStruct(f,
-		validation.Field(&f.Price, validation.When(f.Price != "", validation.In("free", "paid", "not_available", "free-paid"))),    // Price validation
-		validation.Field(&f.AvgRating, validation.When(f.AvgRating != "", validation.In("1", "2", "3", "4", "5"))),                 // AvgRating validation
+		validation.Field(&f.Price, validation.When(f.Price != "", validation.In("free", "paid", "not_available", "free-paid"))), // Price validation
+		validation.Field(&f.AvgRating, validation.When(f.AvgRating != "", validation.By(func(value interface{}) error {
+			avgRatingStr := value.(string)
+			avgRatingStr = strings.TrimSpace(avgRatingStr)
+			if avgRatingStr == "" {
+				return nil
+			}
+
+			ratingRanges := strings.Split(avgRatingStr, ",")
+			validRanges := map[string]RatingRange{
+				"0-1": {Start: 0, End: 1},
+				"1-2": {Start: 1, End: 2},
+				"2-3": {Start: 2, End: 3},
+				"3-4": {Start: 3, End: 4},
+				"4-5": {Start: 4, End: 5},
+			}
+
+			parsedRanges := make([]RatingRange, 0)
+			for _, ratingRange := range ratingRanges {
+				ratingRange = strings.TrimSpace(ratingRange)
+				if ratingRange == "" {
+					continue
+				}
+
+				if validRange, exists := validRanges[ratingRange]; exists {
+					parsedRanges = append(parsedRanges, validRange)
+				} else {
+					return validation.NewError("invalid_avg_rating", "Invalid avgRating range: "+ratingRange+". Valid ranges are: 0-1, 1-2, 2-3, 3-4, 4-5")
+				}
+			}
+
+			if len(parsedRanges) > 0 {
+				f.ParsedAvgRating = combineRatingRanges(parsedRanges)
+			}
+
+			return nil
+		}))), // AvgRating validation
 		validation.Field(&f.Unit, validation.When(f.Unit != "", validation.In("km", "mi", "ft"))),                                  // Unit validation
 		validation.Field(&f.EventDistanceOrder, validation.When(f.EventDistanceOrder != "", validation.In("closest", "farthest"))), // EventDistanceOrder validation
 
