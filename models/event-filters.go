@@ -2237,9 +2237,33 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("entity_required", "searchByEntity is required when companyName is provided")
 			}
 
-			searchByEntityLower := strings.ToLower(strings.TrimSpace(f.SearchByEntity))
-			if searchByEntityLower != "company" {
-				return validation.NewError("invalid_entity_for_company_name", "searchByEntity must be 'company' when companyName is provided")
+			var searchByEntityValues []string
+			if len(f.ParsedSearchByEntity) > 0 {
+				searchByEntityValues = f.ParsedSearchByEntity
+			} else {
+				searchByEntityParts := strings.Split(f.SearchByEntity, ",")
+				searchByEntityValues = make([]string, 0, len(searchByEntityParts))
+				for _, part := range searchByEntityParts {
+					part = strings.ToLower(strings.TrimSpace(part))
+					if part != "" {
+						searchByEntityValues = append(searchByEntityValues, part)
+					}
+				}
+			}
+
+			validForCompanyName := map[string]bool{
+				"company": true,
+			}
+
+			var invalidValues []string
+			for _, val := range searchByEntityValues {
+				if !validForCompanyName[val] {
+					invalidValues = append(invalidValues, val)
+				}
+			}
+
+			if len(invalidValues) > 0 {
+				return validation.NewError("invalid_entity_for_company_name", "searchByEntity must be 'company' when companyName is provided. Invalid value(s): "+strings.Join(invalidValues, ", "))
 			}
 
 			return nil
@@ -2283,12 +2307,12 @@ func (f *FilterDataDto) Validate() error {
 				return nil
 			}
 
-			// Only allow single value (no comma-separated)
-			searchByEntityLower := strings.ToLower(strings.TrimSpace(searchByEntityStr))
+			searchByEntityParts := strings.Split(searchByEntityStr, ",")
 			validEntities := map[string]bool{
 				"company":                      true,
 				"user":                         true,
 				"speaker":                      true,
+				"visitor":                      true,
 				"event":                        true,
 				"keywords":                     true,
 				"eventestimatecount":           true,
@@ -2302,25 +2326,70 @@ func (f *FilterDataDto) Validate() error {
 				validEntities["event"] = true
 			}
 
-			if !validEntities[searchByEntityLower] {
-				validOptions := []string{"company", "user", "speaker", "event", "keywords", "eventEstimateCount", "economicImpactBreakdownCount", "audience"}
+			parsedValues := make([]string, 0, len(searchByEntityParts))
+			var invalidValues []string
+			for _, part := range searchByEntityParts {
+				partLower := strings.ToLower(strings.TrimSpace(part))
+				if partLower != "" {
+					if validEntities[partLower] {
+						exists := false
+						for _, existing := range parsedValues {
+							if existing == partLower {
+								exists = true
+								break
+							}
+						}
+						if !exists {
+							parsedValues = append(parsedValues, partLower)
+						}
+					} else {
+						invalidValues = append(invalidValues, part)
+					}
+				}
+			}
+
+			if len(invalidValues) > 0 {
+				validOptions := []string{"company", "user", "speaker", "visitor", "event", "keywords", "eventEstimateCount", "economicImpactBreakdownCount", "audience"}
 				if hasGroupBy {
 					validOptions = append(validOptions, "event")
 				}
-				return validation.NewError("invalid_search_by_entity", "Invalid searchByEntity value: "+searchByEntityStr+". Valid options are: "+strings.Join(validOptions, ", "))
+				return validation.NewError("invalid_search_by_entity", "Invalid searchByEntity value(s): "+strings.Join(invalidValues, ", ")+". Valid options are: "+strings.Join(validOptions, ", "))
 			}
-			f.ParsedSearchByEntity = []string{searchByEntityLower}
+
+			if len(parsedValues) == 0 {
+				return validation.NewError("empty_search_by_entity", "searchByEntity cannot be empty after parsing")
+			}
+
+			f.ParsedSearchByEntity = parsedValues
+
 			if f.AdvanceSearchBy == "" {
-				switch searchByEntityLower {
-				case "company":
-					f.AdvanceSearchBy = "exhibitor,sponsor,organizer"
-				case "user":
-					f.AdvanceSearchBy = "speaker,visitor"
-				case "speaker":
-					f.AdvanceSearchBy = "speaker"
-				case "event", "keywords", "eventestimatecount", "economicimpactbreakdowncount", "audience":
-					f.AdvanceSearchBy = ""
-				default:
+				var advanceSearchByParts []string
+				for _, searchByEntityVal := range parsedValues {
+					switch searchByEntityVal {
+					case "company":
+						advanceSearchByParts = append(advanceSearchByParts, "exhibitor", "sponsor", "organizer")
+					case "user":
+						advanceSearchByParts = append(advanceSearchByParts, "speaker", "visitor")
+					case "speaker":
+						advanceSearchByParts = append(advanceSearchByParts, "speaker")
+					case "visitor":
+						advanceSearchByParts = append(advanceSearchByParts, "visitor")
+					case "event", "keywords", "eventestimatecount", "economicimpactbreakdowncount", "audience":
+						// These don't map to advanceSearchBy
+					}
+				}
+
+				if len(advanceSearchByParts) > 0 {
+					uniqueParts := make(map[string]bool)
+					for _, part := range advanceSearchByParts {
+						uniqueParts[part] = true
+					}
+					finalParts := make([]string, 0, len(uniqueParts))
+					for part := range uniqueParts {
+						finalParts = append(finalParts, part)
+					}
+					f.AdvanceSearchBy = strings.Join(finalParts, ",")
+				} else {
 					f.AdvanceSearchBy = ""
 				}
 

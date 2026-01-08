@@ -866,6 +866,12 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	if len(filterFields.ParsedCompanyName) > 0 && len(filterFields.ParsedAdvancedSearchBy) > 0 {
 		hasVisitor, hasSpeaker, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
 
+		isCompanyEntity := false
+		if len(filterFields.ParsedSearchByEntity) > 0 {
+			searchByEntityLower := strings.ToLower(strings.TrimSpace(filterFields.ParsedSearchByEntity[0]))
+			isCompanyEntity = searchByEntityLower == "company"
+		}
+
 		var companyNameConditions []string
 		for _, companyName := range filterFields.ParsedCompanyName {
 			companyCondition := s.matchPhraseConverter("user_company", companyName)
@@ -876,7 +882,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 		if len(companyNameConditions) > 0 {
 			finalCompanyNameCondition := fmt.Sprintf("(%s)", strings.Join(companyNameConditions, " OR "))
-			if hasVisitor || hasSpeaker {
+			if !isCompanyEntity && (hasVisitor || hasSpeaker) {
 				if hasVisitor && hasSpeaker {
 					result.NeedsUserIdUnionCTE = true
 					if len(result.UserIdWhereConditions) > 0 {
@@ -1775,8 +1781,40 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	}
 
 	var unifiedUnionParts []string
+	visitorAddedToUnion := false
+	speakerAddedToUnion := false
+
+	visitorHasCompanyNameCondition := false
+	speakerHasCompanyNameCondition := false
+
+	if needsVisitorJoin && len(visitorWhereConditions) > 0 {
+		for _, condition := range visitorWhereConditions {
+			if strings.Contains(condition, "user_company") {
+				visitorHasCompanyNameCondition = true
+				break
+			}
+		}
+	}
+	if needsSpeakerJoin && len(speakerWhereConditions) > 0 {
+		for _, condition := range speakerWhereConditions {
+			if strings.Contains(condition, "user_company") {
+				speakerHasCompanyNameCondition = true
+				break
+			}
+		}
+	}
 
 	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 {
+		for _, condition := range userIdWhereConditions {
+			if strings.Contains(condition, "user_company") {
+				visitorHasCompanyNameCondition = true
+				speakerHasCompanyNameCondition = true
+				break
+			}
+		}
+	}
+
+	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 && !visitorHasCompanyNameCondition {
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
 		visitorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
 			FROM testing_db.event_visitors_ch
@@ -1784,7 +1822,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		unifiedUnionParts = append(unifiedUnionParts, visitorPart)
 	}
 
-	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 {
+	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 && !speakerHasCompanyNameCondition {
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
 		speakerPart := fmt.Sprintf(`SELECT DISTINCT edition_id
 			FROM testing_db.event_speaker_ch
@@ -1816,14 +1854,79 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		unifiedUnionParts = append(unifiedUnionParts, organizerPart)
 	}
 
+	if needsVisitorJoin && len(visitorWhereConditions) > 0 {
+		hasCompanyNameCondition := false
+		for _, condition := range visitorWhereConditions {
+			if strings.Contains(condition, "user_company") {
+				hasCompanyNameCondition = true
+				break
+			}
+		}
+		if hasCompanyNameCondition {
+			visitorWhereClause := strings.Join(visitorWhereConditions, " AND ")
+			visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
+				FROM testing_db.event_visitors_ch
+				WHERE %s`, visitorWhereClause)
+			unifiedUnionParts = append(unifiedUnionParts, visitorPart)
+			visitorAddedToUnion = true
+		}
+	}
+
+	if needsSpeakerJoin && len(speakerWhereConditions) > 0 {
+		hasCompanyNameCondition := false
+		for _, condition := range speakerWhereConditions {
+			if strings.Contains(condition, "user_company") {
+				hasCompanyNameCondition = true
+				break
+			}
+		}
+		if hasCompanyNameCondition {
+			speakerWhereClause := strings.Join(speakerWhereConditions, " AND ")
+			speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
+				FROM testing_db.event_speaker_ch
+				WHERE %s`, speakerWhereClause)
+			unifiedUnionParts = append(unifiedUnionParts, speakerPart)
+			speakerAddedToUnion = true
+		}
+	}
+
+	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 {
+		hasCompanyNameCondition := false
+		for _, condition := range userIdWhereConditions {
+			if strings.Contains(condition, "user_company") {
+				hasCompanyNameCondition = true
+				break
+			}
+		}
+		if hasCompanyNameCondition {
+			userIdCondition := strings.Join(userIdWhereConditions, " AND ")
+
+			// Add visitor if not already added
+			if !visitorAddedToUnion {
+				visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
+					FROM testing_db.event_visitors_ch
+					WHERE %s`, userIdCondition)
+				unifiedUnionParts = append(unifiedUnionParts, visitorPart)
+				visitorAddedToUnion = true
+			}
+
+			// Add speaker if not already added
+			if !speakerAddedToUnion {
+				speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
+					FROM testing_db.event_speaker_ch
+					WHERE %s`, userIdCondition)
+				unifiedUnionParts = append(unifiedUnionParts, speakerPart)
+				speakerAddedToUnion = true
+			}
+		}
+	}
+
 	if len(unifiedUnionParts) > 0 {
 		cteName := "filtered_company_events_by_name"
-		if !needsExhibitorJoin && !needsSponsorJoin && len(organizerWhereConditions) == 0 {
-			cteName = "filtered_user_events"
-		}
-
 		selectColumn := "event_id"
-		if cteName == "filtered_user_events" {
+
+		if !needsExhibitorJoin && !needsSponsorJoin && len(organizerWhereConditions) == 0 && !visitorAddedToUnion && !speakerAddedToUnion {
+			cteName = "filtered_user_events"
 			selectColumn = "edition_id"
 		}
 
@@ -1925,7 +2028,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		}
 	}
 
-	if needsVisitorJoin {
+	if needsVisitorJoin && !visitorAddedToUnion {
 		visitorWhereClause := ""
 		if len(visitorWhereConditions) > 0 {
 			visitorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(visitorWhereConditions, " AND "))
@@ -1941,7 +2044,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		previousCTE = "filtered_visitors"
 	}
 
-	if needsSpeakerJoin {
+	if needsSpeakerJoin && !speakerAddedToUnion {
 		speakerWhereClause := ""
 		if len(speakerWhereConditions) > 0 {
 			speakerWhereClause = fmt.Sprintf("WHERE %s", strings.Join(speakerWhereConditions, " AND "))
@@ -8976,4 +9079,635 @@ func (s *SharedFunctionService) audienceTrackerMatchInfo(eventIds []uint32, jobC
 	}
 
 	return result, nil
+}
+
+func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
+	ctx context.Context,
+	eventIds []uint32,
+	filterFields models.FilterDataDto,
+) (map[uint32][]string, error) {
+	result := make(map[uint32][]string)
+
+	hasCompanyName := len(filterFields.ParsedCompanyName) > 0
+	isSpeakerEntity := false
+	isUserEntity := false
+
+	if len(filterFields.ParsedSearchByEntity) > 0 {
+		searchByEntityLower := strings.ToLower(strings.TrimSpace(filterFields.ParsedSearchByEntity[0]))
+		isSpeakerEntity = searchByEntityLower == "speaker"
+		isUserEntity = searchByEntityLower == "user"
+	}
+
+	hasUserNameForEntity := (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserName) > 0
+
+	if (!hasCompanyName && !hasUserNameForEntity) || len(eventIds) == 0 {
+		return result, nil
+	}
+
+	hasExhibitor := true
+	hasSponsor := true
+	hasOrganizer := true
+	hasVisitor := true
+	hasSpeaker := true
+
+	if !hasExhibitor && !hasSponsor && !hasOrganizer && !hasVisitor && !hasSpeaker {
+		return result, nil
+	}
+
+	eventIdsStr := make([]string, len(eventIds))
+	for i, id := range eventIds {
+		eventIdsStr[i] = fmt.Sprintf("%d", id)
+	}
+	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
+
+	var exhibitorConditions []string
+	var sponsorConditions []string
+	var organizerConditions []string
+	var visitorConditions []string
+	var speakerConditions []string
+
+	for _, companyName := range filterFields.ParsedCompanyName {
+		if hasExhibitor {
+			exhibitorCondition := s.matchPhraseConverter("company_id_name", companyName)
+			if exhibitorCondition != "" {
+				exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
+			}
+		}
+		if hasSponsor {
+			sponsorCondition := s.matchPhraseConverter("company_id_name", companyName)
+			if sponsorCondition != "" {
+				sponsorConditions = append(sponsorConditions, sponsorCondition)
+			}
+		}
+		if hasOrganizer {
+			organizerCondition := s.matchPhraseConverter("company_name", companyName)
+			if organizerCondition != "" {
+				organizerConditions = append(organizerConditions, organizerCondition)
+			}
+		}
+		if hasVisitor {
+			visitorCondition := s.matchPhraseConverter("user_company", companyName)
+			if visitorCondition != "" {
+				visitorConditions = append(visitorConditions, visitorCondition)
+			}
+		}
+		if hasSpeaker {
+			isSpeakerEntityLocal := false
+			if len(filterFields.ParsedSearchByEntity) > 0 {
+				searchByEntityLower := strings.ToLower(strings.TrimSpace(filterFields.ParsedSearchByEntity[0]))
+				if searchByEntityLower == "speaker" {
+					isSpeakerEntityLocal = true
+				}
+			}
+
+			if isSpeakerEntityLocal && len(filterFields.ParsedUserName) > 0 {
+			} else {
+				speakerCondition := s.matchPhraseConverter("user_company", companyName)
+				if speakerCondition != "" {
+					speakerConditions = append(speakerConditions, speakerCondition)
+				}
+			}
+		}
+	}
+
+	if hasSpeaker && (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserName) > 0 {
+		for _, userName := range filterFields.ParsedUserName {
+			speakerCondition := s.matchPhraseConverter("user_name", userName)
+			if speakerCondition != "" {
+				speakerConditions = append(speakerConditions, speakerCondition)
+			}
+		}
+	}
+
+	if hasVisitor && (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserName) > 0 {
+		for _, userName := range filterFields.ParsedUserName {
+			visitorCondition := s.matchPhraseConverter("user_name", userName)
+			if visitorCondition != "" {
+				visitorConditions = append(visitorConditions, visitorCondition)
+			}
+		}
+	}
+
+	type queryResult struct {
+		EntityType string
+		Data       map[uint32][]string
+		Err        error
+	}
+
+	queryChan := make(chan queryResult, 5)
+
+	if hasExhibitor && len(exhibitorConditions) > 0 {
+		go func() {
+			exhibitorWhereClause := fmt.Sprintf("(%s)", strings.Join(exhibitorConditions, " OR "))
+			exhibitorQuery := fmt.Sprintf(`
+				SELECT DISTINCT event_id, company_id_name as company_name
+				FROM testing_db.event_exhibitor_ch
+				WHERE event_id IN (%s)
+				AND %s
+			`, eventIdsStrJoined, exhibitorWhereClause)
+			log.Printf("Exhibitor query: %s", exhibitorQuery)
+
+			rows, err := s.clickhouseService.ExecuteQuery(ctx, exhibitorQuery)
+			if err != nil {
+				queryChan <- queryResult{EntityType: "exhibitor", Data: nil, Err: err}
+				return
+			}
+			defer rows.Close()
+
+			data := make(map[uint32][]string)
+			for rows.Next() {
+				var eventID uint32
+				var companyName string
+
+				if err := rows.Scan(&eventID, &companyName); err != nil {
+					log.Printf("Error scanning exhibitor row: %v", err)
+					continue
+				}
+
+				entityQualification := fmt.Sprintf("exhibitor_%s", companyName)
+				data[eventID] = append(data[eventID], entityQualification)
+			}
+
+			if err := rows.Err(); err != nil {
+				queryChan <- queryResult{EntityType: "exhibitor", Data: nil, Err: err}
+				return
+			}
+
+			queryChan <- queryResult{EntityType: "exhibitor", Data: data, Err: nil}
+		}()
+	}
+
+	if hasSponsor && len(sponsorConditions) > 0 {
+		go func() {
+			sponsorWhereClause := fmt.Sprintf("(%s)", strings.Join(sponsorConditions, " OR "))
+			sponsorQuery := fmt.Sprintf(`
+				SELECT DISTINCT event_id, company_id_name as company_name
+				FROM testing_db.event_sponsors_ch
+				WHERE event_id IN (%s)
+				AND %s
+			`, eventIdsStrJoined, sponsorWhereClause)
+			log.Printf("Sponsor query: %s", sponsorQuery)
+			rows, err := s.clickhouseService.ExecuteQuery(ctx, sponsorQuery)
+			if err != nil {
+				queryChan <- queryResult{EntityType: "sponsor", Data: nil, Err: err}
+				return
+			}
+			defer rows.Close()
+
+			data := make(map[uint32][]string)
+			for rows.Next() {
+				var eventID uint32
+				var companyName string
+
+				if err := rows.Scan(&eventID, &companyName); err != nil {
+					log.Printf("Error scanning sponsor row: %v", err)
+					continue
+				}
+
+				entityQualification := fmt.Sprintf("sponsor_%s", companyName)
+				data[eventID] = append(data[eventID], entityQualification)
+			}
+
+			if err := rows.Err(); err != nil {
+				queryChan <- queryResult{EntityType: "sponsor", Data: nil, Err: err}
+				return
+			}
+
+			queryChan <- queryResult{EntityType: "sponsor", Data: data, Err: nil}
+		}()
+	}
+
+	if hasOrganizer && len(organizerConditions) > 0 {
+		go func() {
+			organizerWhereClause := fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR "))
+			organizerQuery := fmt.Sprintf(`
+				SELECT DISTINCT event_id, company_name
+				FROM testing_db.allevent_ch
+				WHERE event_id IN (%s)
+				AND %s
+			`, eventIdsStrJoined, organizerWhereClause)
+			log.Printf("Organizer query: %s", organizerQuery)
+			rows, err := s.clickhouseService.ExecuteQuery(ctx, organizerQuery)
+			if err != nil {
+				queryChan <- queryResult{EntityType: "organizer", Data: nil, Err: err}
+				return
+			}
+			defer rows.Close()
+
+			data := make(map[uint32][]string)
+			for rows.Next() {
+				var eventID uint32
+				var companyName string
+
+				if err := rows.Scan(&eventID, &companyName); err != nil {
+					log.Printf("Error scanning organizer row: %v", err)
+					continue
+				}
+
+				entityQualification := fmt.Sprintf("organizer_%s", companyName)
+				data[eventID] = append(data[eventID], entityQualification)
+			}
+
+			if err := rows.Err(); err != nil {
+				queryChan <- queryResult{EntityType: "organizer", Data: nil, Err: err}
+				return
+			}
+
+			queryChan <- queryResult{EntityType: "organizer", Data: data, Err: nil}
+		}()
+	}
+
+	if hasVisitor && len(visitorConditions) > 0 {
+		go func() {
+			visitorWhereClause := fmt.Sprintf("(%s)", strings.Join(visitorConditions, " OR "))
+			isFilteringByUserName := (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserName) > 0
+			var selectField string
+			var entityQualificationPrefix string
+			if isFilteringByUserName {
+				selectField = "user_name as person_name"
+				entityQualificationPrefix = "user_"
+			} else {
+				selectField = "user_company as company_name"
+				entityQualificationPrefix = "visitor_"
+			}
+
+			visitorQuery := fmt.Sprintf(`
+				SELECT DISTINCT event_id, %s
+				FROM testing_db.event_visitors_ch
+				WHERE event_id IN (%s)
+				AND %s
+			`, selectField, eventIdsStrJoined, visitorWhereClause)
+			log.Printf("Visitor query: %s", visitorQuery)
+
+			rows, err := s.clickhouseService.ExecuteQuery(ctx, visitorQuery)
+			if err != nil {
+				queryChan <- queryResult{EntityType: "visitor", Data: nil, Err: err}
+				return
+			}
+			defer rows.Close()
+
+			data := make(map[uint32][]string)
+			for rows.Next() {
+				var eventID uint32
+				var nameValue string
+
+				if err := rows.Scan(&eventID, &nameValue); err != nil {
+					log.Printf("Error scanning visitor row: %v", err)
+					continue
+				}
+
+				if isFilteringByUserName {
+					nameWithUnderscores := strings.ReplaceAll(nameValue, " ", "_")
+					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+					data[eventID] = append(data[eventID], entityQualification)
+				} else {
+					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameValue)
+					data[eventID] = append(data[eventID], entityQualification)
+				}
+			}
+
+			if err := rows.Err(); err != nil {
+				queryChan <- queryResult{EntityType: "visitor", Data: nil, Err: err}
+				return
+			}
+
+			queryChan <- queryResult{EntityType: "visitor", Data: data, Err: nil}
+		}()
+	}
+
+	if hasSpeaker && len(speakerConditions) > 0 {
+		go func() {
+			speakerWhereClause := fmt.Sprintf("(%s)", strings.Join(speakerConditions, " OR "))
+
+			speakerQuery := fmt.Sprintf(`
+				SELECT DISTINCT event_id, user_name as person_name
+				FROM testing_db.event_speaker_ch
+				WHERE event_id IN (%s)
+				AND %s
+			`, eventIdsStrJoined, speakerWhereClause)
+			log.Printf("Speaker query: %s", speakerQuery)
+
+			rows, err := s.clickhouseService.ExecuteQuery(ctx, speakerQuery)
+			if err != nil {
+				queryChan <- queryResult{EntityType: "speaker", Data: nil, Err: err}
+				return
+			}
+			defer rows.Close()
+
+			data := make(map[uint32][]string)
+			for rows.Next() {
+				var eventID uint32
+				var nameValue string
+
+				if err := rows.Scan(&eventID, &nameValue); err != nil {
+					log.Printf("Error scanning speaker row: %v", err)
+					continue
+				}
+
+				nameWithUnderscores := strings.ReplaceAll(nameValue, " ", "_")
+				entityQualification := fmt.Sprintf("speaker_user_%s", nameWithUnderscores)
+				data[eventID] = append(data[eventID], entityQualification)
+			}
+
+			if err := rows.Err(); err != nil {
+				queryChan <- queryResult{EntityType: "speaker", Data: nil, Err: err}
+				return
+			}
+
+			queryChan <- queryResult{EntityType: "speaker", Data: data, Err: nil}
+		}()
+	}
+
+	queryCount := 0
+	if hasExhibitor && len(exhibitorConditions) > 0 {
+		queryCount++
+	}
+	if hasSponsor && len(sponsorConditions) > 0 {
+		queryCount++
+	}
+	if hasOrganizer && len(organizerConditions) > 0 {
+		queryCount++
+	}
+	if hasVisitor && len(visitorConditions) > 0 {
+		queryCount++
+	}
+	if hasSpeaker && len(speakerConditions) > 0 {
+		queryCount++
+	}
+
+	for i := 0; i < queryCount; i++ {
+		queryRes := <-queryChan
+		if queryRes.Err != nil {
+			log.Printf("Error fetching %s entity qualifications: %v", queryRes.EntityType, queryRes.Err)
+			continue
+		}
+
+		for eventID, qualifications := range queryRes.Data {
+			result[eventID] = append(result[eventID], qualifications...)
+		}
+	}
+
+	return result, nil
+}
+
+func (s *SharedFunctionService) getTrackerMatchInfo(
+	eventEntityQualifications map[uint32][]string,
+	searchByEntity string,
+	filterFields models.FilterDataDto,
+) (map[uint32]map[string]interface{}, error) {
+	result := make(map[uint32]map[string]interface{})
+
+	if len(eventEntityQualifications) == 0 {
+		return result, nil
+	}
+
+	searchByEntityLower := strings.ToLower(strings.TrimSpace(searchByEntity))
+
+	switch searchByEntityLower {
+	case "company":
+		return s.getTrackerMatchInfoForCompany(eventEntityQualifications), nil
+	case "visitor", "exhibitor", "sponsor", "organizer":
+		return s.getTrackerMatchInfoForCompany(eventEntityQualifications), nil
+	case "speaker":
+		return s.getTrackerMatchInfoForSpeaker(eventEntityQualifications, filterFields), nil
+	case "user":
+		return s.getTrackerMatchInfoForUser(eventEntityQualifications, filterFields), nil
+	default:
+		return result, nil
+	}
+}
+
+func (s *SharedFunctionService) getTrackerMatchInfoForCompany(
+	eventEntityQualifications map[uint32][]string,
+) map[uint32]map[string]interface{} {
+	result := make(map[uint32]map[string]interface{})
+
+	priorityVal := []string{
+		"organizer",
+		"exhibitor",
+		"sponsor",
+		"speaker",
+		"visitor",
+	}
+
+	priority := map[string]string{
+		"organizer": "High",
+		"exhibitor": "Medium",
+		"sponsor":   "Medium",
+		"speaker":   "Medium",
+		"visitor":   "Low",
+	}
+
+	for eventID, fromData := range eventEntityQualifications {
+		if len(fromData) == 0 {
+			continue
+		}
+
+		var association string
+		var associationLevel string
+		domain := make([]string, 0)
+
+		for _, priorityEntity := range priorityVal {
+			for _, dataItem := range fromData {
+				parts := strings.Split(dataItem, "_")
+				if len(parts) > 0 && parts[0] == priorityEntity {
+					association = priorityEntity
+					associationLevel = priority[priorityEntity]
+					break
+				}
+			}
+			if association != "" {
+				break
+			}
+		}
+
+		domainSet := make(map[string]bool)
+		for _, dataItem := range fromData {
+			if !domainSet[dataItem] {
+				domain = append(domain, dataItem)
+				domainSet[dataItem] = true
+			}
+		}
+
+		result[eventID] = map[string]interface{}{
+			"competitorDomainOrName": domain,
+			"competitorAssociation":  association,
+			"competitorPercentage":   associationLevel,
+		}
+	}
+
+	return result
+}
+
+func (s *SharedFunctionService) getTrackerMatchInfoForSpeaker(
+	eventEntityQualifications map[uint32][]string,
+	filterFields models.FilterDataDto,
+) map[uint32]map[string]interface{} {
+	result := make(map[uint32]map[string]interface{})
+
+	orgPerson := make([]string, 0)
+	if len(filterFields.ParsedUserName) > 0 {
+		orgPersonSet := make(map[string]bool)
+		for _, userName := range filterFields.ParsedUserName {
+			userNameLower := strings.ToLower(strings.TrimSpace(userName))
+			if userNameLower != "" && !orgPersonSet[userNameLower] {
+				orgPerson = append(orgPerson, userNameLower)
+				orgPersonSet[userNameLower] = true
+			}
+		}
+	}
+
+	if len(orgPerson) == 0 {
+		for eventID := range eventEntityQualifications {
+			result[eventID] = map[string]interface{}{
+				"speakerPersonAssociation":           []string{},
+				"speakerPersonAssociationPercentage": "",
+			}
+		}
+		return result
+	}
+
+	for eventID, fromData := range eventEntityQualifications {
+		uniqueSpeakers := make(map[string]string)
+		speakerPersonAssociation := make([]string, 0)
+		speakerNamesForMatching := make([]string, 0)
+
+		for _, val := range fromData {
+			if strings.HasPrefix(val, "speaker_user_") {
+				personName := strings.TrimPrefix(val, "speaker_user_")
+				lowerCaseVal := strings.ToLower(personName)
+
+				if _, exists := uniqueSpeakers[lowerCaseVal]; !exists {
+					speakerNamesForMatching = append(speakerNamesForMatching, personName)
+					uniqueSpeakers[lowerCaseVal] = personName
+					speakerPersonAssociation = append(speakerPersonAssociation, personName)
+				}
+			}
+		}
+
+		countMatched := 0
+		for _, personData := range speakerNamesForMatching {
+			personDataLower := strings.ToLower(personData)
+			personDataParts := strings.Split(personDataLower, "_")
+			if len(personDataParts) > 0 {
+				personDataToMatch := personDataParts[0]
+				for _, orgPersonName := range orgPerson {
+					if strings.Contains(orgPersonName, personDataToMatch) {
+						countMatched++
+					}
+				}
+			}
+		}
+
+		var matchType string
+		if len(orgPerson) > 0 {
+			match := float64(countMatched) / float64(len(orgPerson)) * 100.0
+			if match > 20 {
+				matchType = "High"
+			} else if match >= 10 && match <= 20 {
+				matchType = "Medium"
+			} else if match > 0 && match < 10 {
+				matchType = "Low"
+			} else {
+				matchType = ""
+			}
+		}
+
+		result[eventID] = map[string]interface{}{
+			"speakerPersonAssociation":           speakerPersonAssociation,
+			"speakerPersonAssociationPercentage": matchType,
+		}
+	}
+
+	return result
+}
+
+func (s *SharedFunctionService) getTrackerMatchInfoForUser(
+	eventEntityQualifications map[uint32][]string,
+	filterFields models.FilterDataDto,
+) map[uint32]map[string]interface{} {
+	result := make(map[uint32]map[string]interface{})
+
+	orgPerson := make([]string, 0)
+	if len(filterFields.ParsedUserId) > 0 {
+		for _, userId := range filterFields.ParsedUserId {
+			orgPerson = append(orgPerson, strings.ToLower(strings.TrimSpace(userId)))
+		}
+	} else if len(filterFields.ParsedUserName) > 0 {
+		orgPersonSet := make(map[string]bool)
+		for _, userName := range filterFields.ParsedUserName {
+			userNameLower := strings.ToLower(strings.TrimSpace(userName))
+			if userNameLower != "" && !orgPersonSet[userNameLower] {
+				orgPerson = append(orgPerson, userNameLower)
+				orgPersonSet[userNameLower] = true
+			}
+		}
+	}
+
+	if len(orgPerson) == 0 {
+		for eventID := range eventEntityQualifications {
+			result[eventID] = map[string]interface{}{
+				"peopleFinderPersonAssociation":           []string{},
+				"peopleFinderPersonAssociationPercentage": "",
+			}
+		}
+		return result
+	}
+
+	for eventID, fromData := range eventEntityQualifications {
+		uniquePeopleFinder := make(map[string]string)
+		peopleFinderPersonAssociation := make([]string, 0)
+
+		for _, val := range fromData {
+			var personName string
+			if strings.HasPrefix(val, "speaker_user_") {
+				personName = strings.TrimPrefix(val, "speaker_user_")
+			} else if strings.HasPrefix(val, "user_") {
+				personName = strings.TrimPrefix(val, "user_")
+			} else {
+				continue
+			}
+
+			lowerCaseVal := strings.ToLower(personName)
+			if _, exists := uniquePeopleFinder[lowerCaseVal]; !exists {
+				uniquePeopleFinder[lowerCaseVal] = personName
+				peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, personName)
+			}
+		}
+
+		countMatched := 0
+		for _, personData := range peopleFinderPersonAssociation {
+			personDataLower := strings.ToLower(personData)
+			personDataParts := strings.Split(personDataLower, "_")
+			if len(personDataParts) > 1 {
+				personDataToMatch := personDataParts[1]
+				for _, orgPersonName := range orgPerson {
+					if strings.Contains(orgPersonName, personDataToMatch) {
+						countMatched++
+					}
+				}
+			}
+		}
+
+		var matchType string
+		if len(orgPerson) > 0 {
+			match := float64(countMatched) / float64(len(orgPerson)) * 100.0
+			if match > 20 {
+				matchType = "High"
+			} else if match >= 10 && match <= 20 {
+				matchType = "Medium"
+			} else if match > 0 && match < 10 {
+				matchType = "Low"
+			} else {
+				matchType = ""
+			}
+		}
+
+		result[eventID] = map[string]interface{}{
+			"peopleFinderPersonAssociation":           peopleFinderPersonAssociation,
+			"peopleFinderPersonAssociationPercentage": matchType,
+		}
+	}
+
+	return result
 }

@@ -1672,9 +1672,21 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		Duration  time.Duration
 	}
 
+	type entityQualificationsResult struct {
+		Qualifications map[uint32][]string
+		Err            error
+		Duration       time.Duration
+	}
+
 	relatedDataChan := make(chan relatedDataResult, 1)
 	locationDataChan := make(chan locationDataResult, 1)
 	audienceMatchInfoChan := make(chan audienceMatchInfoResult, 1)
+
+	hasSearchByEntity := len(filterFields.ParsedSearchByEntity) > 0
+	var entityQualificationsChan chan entityQualificationsResult
+	if hasSearchByEntity {
+		entityQualificationsChan = make(chan entityQualificationsResult, 1)
+	}
 
 	go func() {
 		queryStartTime := time.Now()
@@ -1731,13 +1743,82 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 	}()
 
+	if hasSearchByEntity {
+		go func() {
+			queryStartTime := time.Now()
+			var qualifications map[uint32][]string
+			var err error
+
+			if len(eventIds) > 0 {
+				qualifications, err = s.sharedFunctionService.getEntityQualificationsForCompanyName(
+					parallelQueryCtx,
+					eventIds,
+					filterFields,
+				)
+			} else {
+				qualifications = make(map[uint32][]string)
+			}
+
+			duration := time.Since(queryStartTime)
+
+			entityQualificationsChan <- entityQualificationsResult{
+				Qualifications: qualifications,
+				Err:            err,
+				Duration:       duration,
+			}
+		}()
+	}
+
 	relatedDataRes := <-relatedDataChan
 	locationDataRes := <-locationDataChan
 	audienceMatchInfoRes := <-audienceMatchInfoChan
 
+	var entityQualificationsRes entityQualificationsResult
+	if hasSearchByEntity {
+		entityQualificationsRes = <-entityQualificationsChan
+	} else {
+		entityQualificationsRes = entityQualificationsResult{
+			Qualifications: make(map[uint32][]string),
+			Err:            nil,
+			Duration:       0,
+		}
+	}
+
 	log.Printf("Related data query time: %v", relatedDataRes.Duration)
 	log.Printf("Event location query time: %v", locationDataRes.Duration)
 	log.Printf("Audience match info query time: %v", audienceMatchInfoRes.Duration)
+
+	var eventTrackerMatchInfo map[uint32]map[string]interface{}
+
+	if hasSearchByEntity {
+		log.Printf("Entity qualifications query time: %v", entityQualificationsRes.Duration)
+
+		if entityQualificationsRes.Err != nil {
+			log.Printf("Error fetching entity qualifications: %v", entityQualificationsRes.Err)
+			eventTrackerMatchInfo = make(map[uint32]map[string]interface{})
+		} else {
+			if len(entityQualificationsRes.Qualifications) > 0 {
+				searchByEntity := filterFields.ParsedSearchByEntity[0]
+				trackerMatchInfo, err := s.sharedFunctionService.getTrackerMatchInfo(
+					entityQualificationsRes.Qualifications,
+					searchByEntity,
+					filterFields,
+				)
+				if err != nil {
+					log.Printf("Error processing tracker match info: %v", err)
+					eventTrackerMatchInfo = make(map[uint32]map[string]interface{})
+				} else {
+					eventTrackerMatchInfo = trackerMatchInfo
+				}
+			} else {
+				eventTrackerMatchInfo = make(map[uint32]map[string]interface{})
+			}
+		}
+
+		fmt.Println("eventTrackerMatchInfo:", eventTrackerMatchInfo)
+	} else {
+		eventTrackerMatchInfo = make(map[uint32]map[string]interface{})
+	}
 
 	if audienceMatchInfoRes.Err != nil {
 		log.Printf("Error fetching audience match info: %v", audienceMatchInfoRes.Err)
@@ -2244,6 +2325,15 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 		combinedEvent = grouper.GetFinalEvent()
 		delete(combinedEvent, "event_id")
+
+		if len(eventTrackerMatchInfo) > 0 {
+			if eventIDUint, ok := event["event_id"].(uint32); ok {
+				if trackerInfo, exists := eventTrackerMatchInfo[eventIDUint]; exists && trackerInfo != nil && len(trackerInfo) > 0 {
+					combinedEvent["trackerMatchInfo"] = trackerInfo
+				}
+			}
+		}
+
 		combinedData = append(combinedData, combinedEvent)
 	}
 
