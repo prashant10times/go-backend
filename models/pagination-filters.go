@@ -12,6 +12,7 @@ var SortFieldMap = map[string]string{
 	"start":                 "start_date",
 	"created":               "event_created",
 	"following":             "event_followers",
+	"visitor":               "event_followers",
 	"exhibitors":            "event_exhibitor",
 	"speakers":              "event_speaker",
 	"avgRating":             "event_avgRating",
