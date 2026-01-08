@@ -2039,6 +2039,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 
 		categories := categoriesMap[eventID]
+		if categories == nil {
+			categories = []map[string]string{}
+		}
 		tags := tagsMap[eventID]
 		types := typesMap[eventID]
 		grouper.AddField("categories", categories)
