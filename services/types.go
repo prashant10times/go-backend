@@ -293,9 +293,15 @@ func MapAPIFieldsToDBSelect(apiFields []string) []string {
 	}
 
 	hasIsNew := false
+	hasEstimatedExhibitors := false
 	for _, field := range apiFields {
 		if field == "isNew" {
 			hasIsNew = true
+		}
+		if field == "estimatedExhibitors" {
+			hasEstimatedExhibitors = true
+		}
+		if hasIsNew && hasEstimatedExhibitors {
 			break
 		}
 	}
@@ -305,6 +311,14 @@ func MapAPIFieldsToDBSelect(apiFields []string) []string {
 		}
 		if !fieldSet["ee.event_created as createdAt"] {
 			dbSelects = append(dbSelects, "ee.event_created as createdAt")
+		}
+	}
+	if hasEstimatedExhibitors {
+		if !fieldSet["ee.exhibitors_lower_bound as exhibitors_lower_bound"] {
+			dbSelects = append(dbSelects, "ee.exhibitors_lower_bound as exhibitors_lower_bound")
+		}
+		if !fieldSet["ee.exhibitors_upper_bound as exhibitors_upper_bound"] {
+			dbSelects = append(dbSelects, "ee.exhibitors_upper_bound as exhibitors_upper_bound")
 		}
 	}
 
