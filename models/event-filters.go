@@ -395,6 +395,7 @@ type FilterDataDto struct {
 	ParsedCompanyWebsite   []string      `json:"-"`
 	ParsedSearchByEntity   []string      `json:"-"`
 	ParsedAdvancedSearchBy []string      `json:"-"` // Parsed version of AdvanceSearchBy
+	ParsedPrice            []string      `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -630,7 +631,44 @@ func (f *FilterDataDto) Validate() error {
 	f.SetDefaultValues()
 
 	err := validation.ValidateStruct(f,
-		validation.Field(&f.Price, validation.When(f.Price != "", validation.In("free", "paid", "not_available", "free-paid"))), // Price validation
+		validation.Field(&f.Price, validation.When(f.Price != "", validation.By(func(value interface{}) error {
+			priceStr := value.(string)
+			if priceStr == "" {
+				return nil
+			}
+
+			prices := strings.Split(priceStr, ",")
+			f.ParsedPrice = make([]string, 0, len(prices))
+			validPrices := map[string]bool{
+				"free":          true,
+				"paid":          true,
+				"not_available": true,
+				"free-paid":     true,
+			}
+
+			var invalidPrices []string
+			for _, price := range prices {
+				price = strings.TrimSpace(price)
+				if price != "" {
+					if validPrices[price] {
+						f.ParsedPrice = append(f.ParsedPrice, price)
+					} else {
+						invalidPrices = append(invalidPrices, price)
+					}
+				}
+			}
+
+			if len(invalidPrices) > 0 {
+				validOptions := []string{"free", "paid", "not_available", "free-paid"}
+				return validation.NewError("invalid_price", "Invalid price value(s): "+strings.Join(invalidPrices, ", ")+". Valid values are: "+strings.Join(validOptions, ", "))
+			}
+
+			if len(f.ParsedPrice) == 0 {
+				return validation.NewError("empty_price", "price cannot be empty after parsing")
+			}
+
+			return nil
+		}))), // Price validation
 		validation.Field(&f.AvgRating, validation.When(f.AvgRating != "", validation.By(func(value interface{}) error {
 			avgRatingStr := value.(string)
 			avgRatingStr = strings.TrimSpace(avgRatingStr)
