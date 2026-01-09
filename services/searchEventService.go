@@ -1421,7 +1421,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				}
 			case "followers":
 				if followers, ok := val.(*uint32); ok && followers != nil {
-					rowData[col] = *followers
+					// Store followers in map for percentage calculation, but don't add to response
 					if currentEventID != 0 {
 						eventFollowersMap[currentEventID] = *followers
 					}
