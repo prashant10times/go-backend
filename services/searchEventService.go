@@ -1865,6 +1865,41 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	designationSpreadMap := make(map[string][]map[string]interface{})
 	rankingsMap := make(map[string]string)
 
+	// Helper function to convert interface{} to float64
+	convertToFloat64 := func(value interface{}) (float64, bool) {
+		switch v := value.(type) {
+		case float64:
+			return v, true
+		case float32:
+			return float64(v), true
+		case int:
+			return float64(v), true
+		case int8:
+			return float64(v), true
+		case int16:
+			return float64(v), true
+		case int32:
+			return float64(v), true
+		case int64:
+			return float64(v), true
+		case uint:
+			return float64(v), true
+		case uint8:
+			return float64(v), true
+		case uint16:
+			return float64(v), true
+		case uint32:
+			return float64(v), true
+		case uint64:
+			return float64(v), true
+		case string:
+			if parsed, err := strconv.ParseFloat(v, 64); err == nil {
+				return parsed, true
+			}
+		}
+		return 0, false
+	}
+
 	for relatedDataRows.Next() {
 		var eventID uint32
 		var dataType, value, uuidValue, slugValue, eventGroupTypeValue string
@@ -1961,10 +1996,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				if totalCount, ok := countryData["total_count"]; ok {
 					transformedCountryData["count"] = totalCount
 					percentage := 0.0
-					if followers, exists := eventFollowersMap[eventID]; exists && followers > 0 {
-						if userCount, ok := totalCount.(float64); ok && userCount > 0 {
-							percentage = math.Round((userCount/float64(followers))*100*100) / 100
-						}
+					followers := eventFollowersMap[eventID]
+					if userCount, ok := convertToFloat64(totalCount); ok && userCount > 0 {
+						percentage = math.Round((userCount/float64(followers))*100*100) / 100
 					}
 					transformedCountryData["percentage"] = percentage
 				}
@@ -2181,6 +2215,27 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 		countrySpreadData, _ := countrySpreadMap[eventID]
 		designationSpreadData, _ := designationSpreadMap[eventID]
+
+		// Calculate total count from all country spread (audienceSpread) entries and recalculate percentages
+		totalCountryCount := 0.0
+		eventIDUint, _ := event["event_id"].(uint32)
+		followers, exists := eventFollowersMap[eventIDUint]
+
+		// Recalculate percentages for each country entry using followers
+		for i, countryItem := range countrySpreadData {
+			if count, ok := countryItem["count"]; ok {
+				if countFloat, ok := convertToFloat64(count); ok {
+					totalCountryCount += countFloat
+					if exists && followers > 0 && countFloat > 0 {
+						percentage := math.Round((countFloat/float64(followers))*100*100) / 100
+						countrySpreadData[i]["percentage"] = percentage
+					} else {
+						countrySpreadData[i]["percentage"] = 0.0
+					}
+				}
+			}
+		}
+
 		grouper.AddAudienceData(countrySpreadData, designationSpreadData, audienceZone)
 
 		var estimatedExhibitorsValue string

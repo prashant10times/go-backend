@@ -165,6 +165,7 @@ var ResponseGroupsMap = map[ResponseGroups][]string{
 		"audienceSpread",
 		"designationSpread",
 		"audienceZone",
+		"followers",
 	},
 }
 
@@ -212,6 +213,7 @@ var APIFieldToDBSelect = map[string]string{
 	"trustChangePercentage":      "ee.repeatSentimentChangePercentage as trustChangePercentage",
 	"reputationChangePercentage": "ee.reputationChangePercentage as reputationChangePercentage",
 	"audienceZone":               "ee.audienceZone as audienceZone",
+	"followers":                  "ee.event_followers as followers",
 	"isNew":                      "CASE WHEN ee.event_updated >= ee.event_created THEN true ELSE false END as isNew",
 	"updated":                    "ee.event_updated as updated",
 	"organizer":                  "ee.company_uuid as organizer_id, ee.company_name as organizer_name, ee.company_website as organizer_website, ee.companyLogoUrl as organizer_logoUrl, ee.company_id as organizer_companyId, ee.company_address as organizer_address, ee.company_city_name as organizer_city, ee.company_state as organizer_state, ee.company_country as organizer_country",
