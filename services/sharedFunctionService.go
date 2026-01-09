@@ -1824,7 +1824,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 && !visitorHasCompanyNameCondition {
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
-		visitorPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+		visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_visitors_ch
 			WHERE %s`, userIdCondition)
 		unifiedUnionParts = append(unifiedUnionParts, visitorPart)
@@ -1832,7 +1832,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 && !speakerHasCompanyNameCondition {
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
-		speakerPart := fmt.Sprintf(`SELECT DISTINCT edition_id
+		speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_speaker_ch
 			WHERE %s`, userIdCondition)
 		unifiedUnionParts = append(unifiedUnionParts, speakerPart)
@@ -1935,7 +1935,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 		if !needsExhibitorJoin && !needsSponsorJoin && len(organizerWhereConditions) == 0 && !visitorAddedToUnion && !speakerAddedToUnion {
 			cteName = "filtered_user_events"
-			selectColumn = "edition_id"
+			selectColumn = "event_id"
 		}
 
 		unionCTE := fmt.Sprintf(`%s AS (
@@ -2067,7 +2067,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			var joinColumn string
 			switch previousCTE {
 			case "filtered_user_events":
-				joinColumn = "edition_id"
+				joinColumn = "event_id"
 			case "filtered_company_events":
 				joinColumn = "event_id"
 			case "filtered_company_events_by_name":
@@ -2110,7 +2110,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if previousCTE != "" {
 				switch previousCTE {
 				case "filtered_user_events":
-					joinColumn = "edition_id"
+					joinColumn = "event_id"
 				case "filtered_company_events_by_name", "filtered_company_events":
 					joinColumn = "event_id"
 				default:
@@ -2156,7 +2156,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 					var joinColumn string
 					switch previousCTE {
 					case "filtered_user_events":
-						joinColumn = "edition_id"
+						joinColumn = "event_id"
 					case "filtered_company_events":
 						joinColumn = "event_id"
 					default:
@@ -2196,7 +2196,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 					var joinColumn string
 					switch previousCTE {
 					case "filtered_user_events":
-						joinColumn = "edition_id"
+						joinColumn = "event_id"
 					case "filtered_company_events":
 						joinColumn = "event_id"
 					default:
@@ -2462,8 +2462,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			selectColumn = "event_id"
 			joinColumn = "ee.event_id"
 		case "filtered_user_events":
-			selectColumn = "edition_id"
-			joinColumn = "ee.edition_id"
+			selectColumn = "event_id"
+			joinColumn = "ee.event_id"
 		default:
 			selectColumn = "event_id"
 			joinColumn = "ee.event_id"
@@ -3600,7 +3600,7 @@ func (s *SharedFunctionService) buildFieldFrom(fields []string, cteClauses []str
 	}
 
 	if s.containsCTE(cteClauses, "filtered_user_events") {
-		from += " INNER JOIN filtered_user_events fue ON ee.edition_id = fue.edition_id"
+		from += " INNER JOIN filtered_user_events fue ON ee.event_id = fue.event_id"
 	}
 	if s.containsCTE(cteClauses, "filtered_company_events") {
 		from += " INNER JOIN filtered_company_events fce ON ee.event_id = fce.event_id"
