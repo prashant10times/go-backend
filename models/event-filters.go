@@ -334,7 +334,7 @@ type FilterDataDto struct {
 	ParsedKeywords           *Keywords           `json:"-"`
 	ParsedIsBranded          *bool               `json:"-"`
 	ParsedIsSeries           *bool               `json:"-"`
-	ParsedMode               *string             `json:"-"`
+	ParsedMode               []string            `json:"-"`
 	ParsedStatus             []string            `json:"-"`
 	ParsedState              []string            `json:"-"`
 	ParsedCompanyState       []string            `json:"-"`
@@ -1065,17 +1065,44 @@ func (f *FilterDataDto) Validate() error {
 
 		validation.Field(&f.Mode, validation.When(f.Mode != "", validation.By(func(value interface{}) error {
 			modeStr := value.(string)
-			modes := strings.Split(modeStr, ",")
-			if len(modes) > 0 {
-				mode := strings.TrimSpace(modes[0])
-				if mode != "online" && mode != "in_person" && mode != "hybrid" {
-					return validation.NewError("invalid_mode", "Invalid mode value: "+mode+". Must be 'online', 'in_person', or 'hybrid'")
-				}
-				if mode == "in_person" {
-					mode = "offline"
-				}
-				f.ParsedMode = &mode
+			if modeStr == "" {
+				return nil
 			}
+
+			modes := strings.Split(modeStr, ",")
+			f.ParsedMode = make([]string, 0, len(modes))
+			validModes := map[string]string{
+				"online":    "ONLINE",
+				"in_person": "OFFLINE",
+				"offline":   "OFFLINE",
+				"hybrid":    "HYBRID",
+			}
+
+			var invalidModes []string
+			seenModes := make(map[string]bool)
+			for _, mode := range modes {
+				mode = strings.TrimSpace(strings.ToLower(mode))
+				if mode != "" {
+					if dbValue, exists := validModes[mode]; exists {
+						if !seenModes[dbValue] {
+							f.ParsedMode = append(f.ParsedMode, dbValue)
+							seenModes[dbValue] = true
+						}
+					} else {
+						invalidModes = append(invalidModes, mode)
+					}
+				}
+			}
+
+			if len(invalidModes) > 0 {
+				validOptions := []string{"online", "in_person", "offline", "hybrid"}
+				return validation.NewError("invalid_mode", "Invalid mode value(s): "+strings.Join(invalidModes, ", ")+". Valid values are: "+strings.Join(validOptions, ", "))
+			}
+
+			if len(f.ParsedMode) == 0 {
+				return validation.NewError("empty_mode", "mode cannot be empty after parsing")
+			}
+
 			return nil
 		}))),
 

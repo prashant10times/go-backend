@@ -1565,16 +1565,16 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if filterFields.ParsedMode != nil {
+	if len(filterFields.ParsedMode) > 0 {
 		log.Printf("Parsed mode: %v", filterFields.ParsedMode)
-		mode := *filterFields.ParsedMode
-		switch mode {
-		case "hybrid":
-			whereConditions = append(whereConditions, "ee.event_format = 'HYBRID'")
-		case "online":
-			whereConditions = append(whereConditions, "ee.event_format = 'ONLINE'")
-		case "offline":
-			whereConditions = append(whereConditions, "ee.event_format = 'OFFLINE'")
+		escapedModes := make([]string, 0, len(filterFields.ParsedMode))
+		for _, mode := range filterFields.ParsedMode {
+			escapedModes = append(escapedModes, fmt.Sprintf("'%s'", strings.ReplaceAll(mode, "'", "''")))
+		}
+		if len(escapedModes) == 1 {
+			whereConditions = append(whereConditions, fmt.Sprintf("ee.event_format = %s", escapedModes[0]))
+		} else {
+			whereConditions = append(whereConditions, fmt.Sprintf("ee.event_format IN (%s)", strings.Join(escapedModes, ",")))
 		}
 	}
 
