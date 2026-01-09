@@ -209,9 +209,9 @@ func (g *FieldGrouper) AddAudienceData(countrySpreadData []map[string]interface{
 		if audienceGroup, ok := g.groupedFields[ResponseGroupAudience]; ok {
 			if shouldIncludeSpread {
 				if len(countrySpreadData) > 0 {
-					audienceGroup["countrySpread"] = countrySpreadData
+					audienceGroup["audienceSpread"] = countrySpreadData
 				} else {
-					audienceGroup["countrySpread"] = []interface{}{}
+					audienceGroup["audienceSpread"] = []interface{}{}
 				}
 			}
 			if shouldIncludeDesignationSpread {
@@ -229,9 +229,9 @@ func (g *FieldGrouper) AddAudienceData(countrySpreadData []map[string]interface{
 		audienceData := make(map[string]interface{})
 		if shouldIncludeSpread {
 			if len(countrySpreadData) > 0 {
-				audienceData["countrySpread"] = countrySpreadData
+				audienceData["audienceSpread"] = countrySpreadData
 			} else {
-				audienceData["countrySpread"] = []interface{}{}
+				audienceData["audienceSpread"] = []interface{}{}
 			}
 		}
 		if shouldIncludeDesignationSpread {
@@ -530,7 +530,7 @@ func (b *RelatedDataQueryBuilder) buildAudienceSpreadQuery() string {
 
 		SELECT 
 			event_id,
-			'countrySpread' AS data_type,
+			'audienceSpread' AS data_type,
 			CAST(country_data as String) AS value,
 			'' AS uuid_value,
 			'' AS slug_value,

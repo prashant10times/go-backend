@@ -1936,7 +1936,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					"department": parts[2],
 				})
 			}
-		case "countrySpread":
+		case "audienceSpread":
 			var countryData map[string]interface{}
 			if err := json.Unmarshal([]byte(value), &countryData); err == nil {
 				transformedCountryData := make(map[string]interface{})
