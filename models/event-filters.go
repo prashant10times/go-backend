@@ -374,28 +374,29 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedAvgRating        []RatingRange `json:"-"`
-	ParsedTrackerDates     []string      `json:"-"`
-	ParsedCalendarType     *string       `json:"-"`
-	ParsedDateView         *string       `json:"-"`
-	ParsedColumns          []string      `json:"-"`
-	ParsedGroupByTrends    *string       `json:"-"`
-	ParsedRegions          []string      `json:"-"`
-	ParsedCountryIds       []string      `json:"-"`
-	ParsedStateIds         []string      `json:"-"`
-	ParsedCityIds          []string      `json:"-"`
-	ParsedVenueIds         []string      `json:"-"`
-	ParsedCategoryIds      []string      `json:"-"`
-	ParsedUserId           []string      `json:"-"`
-	ParsedUserName         []string      `json:"-"`
-	ParsedUserCompanyName  []string      `json:"-"`
-	ParsedCompanyId        []string      `json:"-"`
-	ParsedCompanyName      []string      `json:"-"`
-	ParsedFrequency        []string      `json:"-"`
-	ParsedCompanyWebsite   []string      `json:"-"`
-	ParsedSearchByEntity   []string      `json:"-"`
-	ParsedAdvancedSearchBy []string      `json:"-"` // Parsed version of AdvanceSearchBy
-	ParsedPrice            []string      `json:"-"`
+	ParsedAvgRating         []RatingRange `json:"-"`
+	ParsedTrackerDates      []string      `json:"-"`
+	ParsedCalendarType      *string       `json:"-"`
+	ParsedDateView          *string       `json:"-"`
+	ParsedColumns           []string      `json:"-"`
+	ParsedGroupByTrends     *string       `json:"-"`
+	ParsedRegions           []string      `json:"-"`
+	ParsedCountryIds        []string      `json:"-"`
+	ParsedStateIds          []string      `json:"-"`
+	ParsedCityIds           []string      `json:"-"`
+	ParsedVenueIds          []string      `json:"-"`
+	ParsedCategoryIds       []string      `json:"-"`
+	ParsedUserId            []string      `json:"-"`
+	ParsedUserName          []string      `json:"-"`
+	ParsedUserCompanyName   []string      `json:"-"`
+	ParsedCompanyId         []string      `json:"-"`
+	ParsedCompanyName       []string      `json:"-"`
+	ParsedFrequency         []string      `json:"-"`
+	ParsedCompanyWebsite    []string      `json:"-"`
+	ParsedSearchByEntity    []string      `json:"-"`
+	ParsedAdvancedSearchBy  []string      `json:"-"` // Parsed version of AdvanceSearchBy
+	ParsedPrice             []string      `json:"-"`
+	ParsedEstimatedVisitors []string      `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -1171,7 +1172,53 @@ func (f *FilterDataDto) Validate() error {
 			return nil
 		}))),
 
-		validation.Field(&f.EstimatedVisitors, validation.When(f.EstimatedVisitors != "", validation.In("Nano", "Micro", "Small", "Medium", "Large", "Mega", "Ultra"))), // EstimatedVisitors validation
+		validation.Field(&f.EstimatedVisitors, validation.When(f.EstimatedVisitors != "", validation.By(func(value interface{}) error {
+			estimatedVisitorsStr := value.(string)
+			if estimatedVisitorsStr == "" {
+				return nil
+			}
+
+			estimatedVisitors := strings.Split(estimatedVisitorsStr, ",")
+			f.ParsedEstimatedVisitors = make([]string, 0, len(estimatedVisitors))
+
+			validValues := map[string]string{
+				"nano":   "Nano",
+				"micro":  "Micro",
+				"small":  "Small",
+				"medium": "Medium",
+				"large":  "Large",
+				"mega":   "Mega",
+				"ultra":  "Ultra",
+			}
+
+			var invalidValues []string
+			seenValues := make(map[string]bool)
+			for _, ev := range estimatedVisitors {
+				ev = strings.TrimSpace(ev)
+				if ev != "" {
+					evLower := strings.ToLower(ev)
+					if normalizedValue, exists := validValues[evLower]; exists {
+						if !seenValues[normalizedValue] {
+							f.ParsedEstimatedVisitors = append(f.ParsedEstimatedVisitors, normalizedValue)
+							seenValues[normalizedValue] = true
+						}
+					} else {
+						invalidValues = append(invalidValues, ev)
+					}
+				}
+			}
+
+			if len(invalidValues) > 0 {
+				validOptions := []string{"Nano", "Micro", "Small", "Medium", "Large", "Mega", "Ultra"}
+				return validation.NewError("invalid_estimated_visitors", "Invalid estimatedVisitors value(s): "+strings.Join(invalidValues, ", ")+". Valid values are: "+strings.Join(validOptions, ", "))
+			}
+
+			if len(f.ParsedEstimatedVisitors) == 0 {
+				return validation.NewError("empty_estimated_visitors", "estimatedVisitors cannot be empty after parsing")
+			}
+
+			return nil
+		}))), // EstimatedVisitors validation
 
 		validation.Field(&f.EstimatedExhibitors, validation.When(f.EstimatedExhibitors != "", validation.In("0-100", "100-500", "500-1000", "1000"))),
 

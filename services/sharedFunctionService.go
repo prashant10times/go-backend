@@ -1305,8 +1305,12 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.edition_functionality IN (%s)", strings.Join(escapedVisibilities, ",")))
 	}
-	if filterFields.EstimatedVisitors != "" {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_estimatedVisitors = %s", escapeSqlValue(filterFields.EstimatedVisitors)))
+	if len(filterFields.ParsedEstimatedVisitors) > 0 {
+		escapedValues := make([]string, len(filterFields.ParsedEstimatedVisitors))
+		for i, ev := range filterFields.ParsedEstimatedVisitors {
+			escapedValues[i] = escapeSqlValue(ev)
+		}
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_estimatedVisitors IN (%s)", strings.Join(escapedValues, ",")))
 	}
 
 	if filterFields.EventEstimate {
