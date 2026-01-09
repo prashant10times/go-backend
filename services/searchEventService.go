@@ -1573,9 +1573,11 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				}
 			case "isBranded", "isSeries":
 				if uuidVal, ok := val.(*string); ok && uuidVal != nil && *uuidVal != "" {
-					rowData[col] = *uuidVal
+					// If ID exists, return true
+					rowData[col] = true
 				} else {
-					rowData[col] = nil
+					// If null/empty, return false
+					rowData[col] = false
 				}
 			case "publishStatus":
 				if publishStatusVal, ok := val.(*int8); ok && publishStatusVal != nil {
