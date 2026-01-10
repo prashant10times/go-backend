@@ -1529,12 +1529,12 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	if len(filterFields.ParsedPrice) > 0 {
 		escapedPrices := make([]string, 0, len(filterFields.ParsedPrice))
 		for _, price := range filterFields.ParsedPrice {
-			escapedPrices = append(escapedPrices, fmt.Sprintf("'%s'", strings.ReplaceAll(price, "'", "''")))
+			escapedPrices = append(escapedPrices, fmt.Sprintf("lower('%s')", strings.ReplaceAll(price, "'", "''")))
 		}
 		if len(escapedPrices) == 1 {
-			whereConditions = append(whereConditions, fmt.Sprintf("ee.event_pricing = %s", escapedPrices[0]))
+			whereConditions = append(whereConditions, fmt.Sprintf("lower(ee.event_pricing) = %s", escapedPrices[0]))
 		} else {
-			whereConditions = append(whereConditions, fmt.Sprintf("ee.event_pricing IN (%s)", strings.Join(escapedPrices, ",")))
+			whereConditions = append(whereConditions, fmt.Sprintf("lower(ee.event_pricing) IN (%s)", strings.Join(escapedPrices, ",")))
 		}
 	}
 

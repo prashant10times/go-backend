@@ -640,19 +640,25 @@ func (f *FilterDataDto) Validate() error {
 
 			prices := strings.Split(priceStr, ",")
 			f.ParsedPrice = make([]string, 0, len(prices))
-			validPrices := map[string]bool{
-				"free":          true,
-				"paid":          true,
-				"not_available": true,
-				"free-paid":     true,
+
+			validPrices := map[string]string{
+				"free":          "free",
+				"paid":          "paid",
+				"not_available": "not_available",
+				"free-paid":     "free-paid",
 			}
 
 			var invalidPrices []string
+			seenPrices := make(map[string]bool)
 			for _, price := range prices {
 				price = strings.TrimSpace(price)
 				if price != "" {
-					if validPrices[price] {
-						f.ParsedPrice = append(f.ParsedPrice, price)
+					priceLower := strings.ToLower(price)
+					if normalizedValue, exists := validPrices[priceLower]; exists {
+						if !seenPrices[normalizedValue] {
+							f.ParsedPrice = append(f.ParsedPrice, normalizedValue)
+							seenPrices[normalizedValue] = true
+						}
 					} else {
 						invalidPrices = append(invalidPrices, price)
 					}
