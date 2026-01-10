@@ -12,6 +12,7 @@ import (
 	"search-event-go/middleware"
 	"search-event-go/models"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -1974,65 +1975,93 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				})
 			}
 		case "audienceSpread":
-			var countryData map[string]interface{}
-			if err := json.Unmarshal([]byte(value), &countryData); err == nil {
-				transformedCountryData := make(map[string]interface{})
-				if cntryId, ok := countryData["cntry_id"]; ok {
-					transformedCountryData["iso"] = cntryId
+			var countryArray []map[string]interface{}
+			if err := json.Unmarshal([]byte(value), &countryArray); err != nil {
+				log.Printf("Error unmarshaling audienceSpread for event %d: %v", eventID, err)
+			} else {
+				followers := eventFollowersMap[eventID]
+				sort.Slice(countryArray, func(i, j int) bool {
+					iCount, _ := convertToFloat64(countryArray[i]["total_count"])
+					jCount, _ := convertToFloat64(countryArray[j]["total_count"])
+					return iCount > jCount
+				})
+				for _, countryData := range countryArray {
+					transformedCountryData := make(map[string]interface{})
+					if cntryId, ok := countryData["cntry_id"]; ok {
+						transformedCountryData["iso"] = cntryId
 
-					if isoStr, ok := cntryId.(string); ok {
-						countryInfo := s.sharedFunctionService.GetCountryDataByISO(isoStr)
-						if countryInfo != nil {
-							if name, ok := countryInfo["name"].(string); ok {
-								transformedCountryData["name"] = name
-							}
-							if geoLat, ok := countryInfo["geoLat"].(float64); ok {
-								transformedCountryData["latitude"] = geoLat
-							}
-							if geoLong, ok := countryInfo["geoLong"].(float64); ok {
-								transformedCountryData["longitude"] = geoLong
+						if isoStr, ok := cntryId.(string); ok {
+							countryInfo := s.sharedFunctionService.GetCountryDataByISO(isoStr)
+							if countryInfo != nil {
+								if name, ok := countryInfo["name"].(string); ok {
+									transformedCountryData["name"] = name
+								}
+								if geoLat, ok := countryInfo["geoLat"].(float64); ok {
+									transformedCountryData["latitude"] = geoLat
+								}
+								if geoLong, ok := countryInfo["geoLong"].(float64); ok {
+									transformedCountryData["longitude"] = geoLong
+								}
 							}
 						}
 					}
-				}
-				if totalCount, ok := countryData["total_count"]; ok {
-					transformedCountryData["count"] = totalCount
-					percentage := 0.0
-					followers := eventFollowersMap[eventID]
-					if userCount, ok := convertToFloat64(totalCount); ok && userCount > 0 {
-						percentage = math.Round((userCount/float64(followers))*100*100) / 100
-					}
-					transformedCountryData["percentage"] = percentage
-				}
-				countrySpreadMap[eventIDStr] = append(countrySpreadMap[eventIDStr], transformedCountryData)
-			}
-		case "designationSpread":
-			var designationData map[string]interface{}
-			if err := json.Unmarshal([]byte(value), &designationData); err == nil {
-				transformedDesignationData := make(map[string]interface{})
-				if designation, ok := designationData["designation"]; ok {
-					transformedDesignationData["designation"] = designation
-				}
-				if totalCount, ok := designationData["total_count"]; ok {
-					transformedDesignationData["count"] = totalCount
-					percentage := 0.0
-					if followers, exists := eventFollowersMap[eventID]; exists && followers > 0 {
-						var userCount float64
-						if countFloat, ok := totalCount.(float64); ok {
-							userCount = countFloat
-						} else if countStr, ok := totalCount.(string); ok {
-							if parsedCount, err := strconv.ParseFloat(countStr, 64); err == nil {
-								userCount = parsedCount
-							}
-						}
-
-						if userCount > 0 {
+					if totalCount, ok := countryData["total_count"]; ok {
+						transformedCountryData["count"] = totalCount
+						percentage := 0.0
+						if userCount, ok := convertToFloat64(totalCount); ok && userCount > 0 {
 							percentage = math.Round((userCount/float64(followers))*100*100) / 100
 						}
+						transformedCountryData["percentage"] = percentage
 					}
-					transformedDesignationData["percentage"] = percentage
+					countrySpreadMap[eventIDStr] = append(countrySpreadMap[eventIDStr], transformedCountryData)
 				}
-				designationSpreadMap[eventIDStr] = append(designationSpreadMap[eventIDStr], transformedDesignationData)
+			}
+		case "designationSpread":
+			var designationArray []map[string]interface{}
+			if err := json.Unmarshal([]byte(value), &designationArray); err != nil {
+				log.Printf("Error unmarshaling designationSpread for event %d: %v", eventID, err)
+			} else {
+				followers, exists := eventFollowersMap[eventID]
+				shouldLimit := len(designationArray) > 5 && (fieldCtx.Processor.GetShowValues() == "" ||
+					(strings.ToLower(strings.TrimSpace(filterFields.View)) == "list" ||
+						strings.ToLower(strings.TrimSpace(filterFields.View)) == "tracker"))
+
+				sort.Slice(designationArray, func(i, j int) bool {
+					iCount, _ := convertToFloat64(designationArray[i]["total_count"])
+					jCount, _ := convertToFloat64(designationArray[j]["total_count"])
+					return iCount > jCount
+				})
+
+				if shouldLimit && len(designationArray) > 5 {
+					designationArray = designationArray[:5]
+				}
+
+				for _, designationData := range designationArray {
+					transformedDesignationData := make(map[string]interface{})
+					if designation, ok := designationData["designation"]; ok {
+						transformedDesignationData["designation"] = designation
+					}
+					if totalCount, ok := designationData["total_count"]; ok {
+						transformedDesignationData["count"] = totalCount
+						percentage := 0.0
+						if exists && followers > 0 {
+							var userCount float64
+							if countFloat, ok := totalCount.(float64); ok {
+								userCount = countFloat
+							} else if countStr, ok := totalCount.(string); ok {
+								if parsedCount, err := strconv.ParseFloat(countStr, 64); err == nil {
+									userCount = parsedCount
+								}
+							}
+
+							if userCount > 0 {
+								percentage = math.Round((userCount/float64(followers))*100*100) / 100
+							}
+						}
+						transformedDesignationData["percentage"] = percentage
+					}
+					designationSpreadMap[eventIDStr] = append(designationSpreadMap[eventIDStr], transformedDesignationData)
+				}
 			}
 		case "rankings":
 			rankingsMap[eventIDStr] = value

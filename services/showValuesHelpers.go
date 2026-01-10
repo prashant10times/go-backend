@@ -520,25 +520,19 @@ func (b *RelatedDataQueryBuilder) shouldIncludeAudienceSpread() bool {
 }
 
 func (b *RelatedDataQueryBuilder) buildAudienceSpreadQuery() string {
-	limitClause := ""
-	if b.shouldLimitAudienceSpread() {
-		limitClause = "\n\t\tLIMIT 5 BY event_id"
-	}
-
 	query := `
 		UNION ALL
 
 		SELECT 
 			event_id,
 			'audienceSpread' AS data_type,
-			CAST(country_data as String) AS value,
+			toJSONString(user_by_cntry) AS value,
 			'' AS uuid_value,
 			'' AS slug_value,
 			'' AS eventGroupType_value
 		FROM testing_db.event_visitorSpread_ch
-		ARRAY JOIN user_by_cntry AS country_data
 		WHERE event_id IN (` + b.eventIdsStr + `)
-		ORDER BY event_id, JSONExtractInt(CAST(country_data as String), 'total_count') DESC` + limitClause + `
+		AND length(user_by_cntry) > 0
 		`
 
 	query += `
@@ -547,14 +541,13 @@ func (b *RelatedDataQueryBuilder) buildAudienceSpreadQuery() string {
 		SELECT 
 			event_id,
 			'designationSpread' AS data_type,
-			CAST(designation_data as String) AS value,
+			toJSONString(user_by_designation) AS value,
 			'' AS uuid_value,
 			'' AS slug_value,
 			'' AS eventGroupType_value
 		FROM testing_db.event_visitorSpread_ch
-		ARRAY JOIN user_by_designation AS designation_data
 		WHERE event_id IN (` + b.eventIdsStr + `)
-		ORDER BY event_id, JSONExtractInt(CAST(designation_data as String), 'total_count') DESC` + limitClause + `
+		AND length(user_by_designation) > 0
 		`
 
 	return query
