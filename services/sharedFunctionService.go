@@ -9132,8 +9132,9 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 	}
 
 	hasUserNameForEntity := (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserName) > 0
+	hasUserIdForEntity := (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserId) > 0
 
-	if (!hasCompanyName && !hasUserNameForEntity) || len(eventIds) == 0 {
+	if (!hasCompanyName && !hasUserNameForEntity && !hasUserIdForEntity) || len(eventIds) == 0 {
 		return result, nil
 	}
 
@@ -9218,6 +9219,26 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 			if visitorCondition != "" {
 				visitorConditions = append(visitorConditions, visitorCondition)
 			}
+		}
+	}
+
+	var speakerUserIdConditions []string
+	var visitorUserIdConditions []string
+	if isUserEntity && len(filterFields.ParsedUserId) > 0 {
+		escapeSqlValue := func(value string) string {
+			return strings.ReplaceAll(value, "'", "''")
+		}
+		userIds := make([]string, 0, len(filterFields.ParsedUserId))
+		for _, userId := range filterFields.ParsedUserId {
+			userIds = append(userIds, escapeSqlValue(userId))
+		}
+		userIdCondition := fmt.Sprintf("user_id IN (%s)", strings.Join(userIds, ","))
+
+		if hasSpeaker {
+			speakerUserIdConditions = append(speakerUserIdConditions, userIdCondition)
+		}
+		if hasVisitor {
+			visitorUserIdConditions = append(visitorUserIdConditions, userIdCondition)
 		}
 	}
 
@@ -9350,13 +9371,25 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		}()
 	}
 
-	if hasVisitor && len(visitorConditions) > 0 {
+	if hasVisitor && (len(visitorConditions) > 0 || len(visitorUserIdConditions) > 0) {
 		go func() {
-			visitorWhereClause := fmt.Sprintf("(%s)", strings.Join(visitorConditions, " OR "))
+			var whereClauses []string
+			if len(visitorConditions) > 0 {
+				whereClauses = append(whereClauses, fmt.Sprintf("(%s)", strings.Join(visitorConditions, " OR ")))
+			}
+			if len(visitorUserIdConditions) > 0 {
+				whereClauses = append(whereClauses, strings.Join(visitorUserIdConditions, " AND "))
+			}
+			visitorWhereClause := strings.Join(whereClauses, " AND ")
+
 			isFilteringByUserName := (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserName) > 0
+			isFilteringByUserId := isUserEntity && len(filterFields.ParsedUserId) > 0
 			var selectField string
 			var entityQualificationPrefix string
-			if isFilteringByUserName {
+			if isFilteringByUserId {
+				selectField = "user_id as person_id"
+				entityQualificationPrefix = "visitor_"
+			} else if isFilteringByUserName {
 				selectField = "user_name as person_name"
 				entityQualificationPrefix = "user_"
 			} else {
@@ -9382,20 +9415,30 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 			data := make(map[uint32][]string)
 			for rows.Next() {
 				var eventID uint32
-				var nameValue string
+				var value string
 
-				if err := rows.Scan(&eventID, &nameValue); err != nil {
-					log.Printf("Error scanning visitor row: %v", err)
-					continue
-				}
-
-				if isFilteringByUserName {
-					nameWithUnderscores := strings.ReplaceAll(nameValue, " ", "_")
-					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+				if isFilteringByUserId {
+					var userId uint32
+					if err := rows.Scan(&eventID, &userId); err != nil {
+						log.Printf("Error scanning visitor row: %v", err)
+						continue
+					}
+					value = fmt.Sprintf("%d", userId)
+					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, value)
 					data[eventID] = append(data[eventID], entityQualification)
 				} else {
-					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameValue)
-					data[eventID] = append(data[eventID], entityQualification)
+					if err := rows.Scan(&eventID, &value); err != nil {
+						log.Printf("Error scanning visitor row: %v", err)
+						continue
+					}
+					if isFilteringByUserName {
+						nameWithUnderscores := strings.ReplaceAll(value, " ", "_")
+						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+						data[eventID] = append(data[eventID], entityQualification)
+					} else {
+						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, value)
+						data[eventID] = append(data[eventID], entityQualification)
+					}
 				}
 			}
 
@@ -9408,16 +9451,34 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		}()
 	}
 
-	if hasSpeaker && len(speakerConditions) > 0 {
+	if hasSpeaker && (len(speakerConditions) > 0 || len(speakerUserIdConditions) > 0) {
 		go func() {
-			speakerWhereClause := fmt.Sprintf("(%s)", strings.Join(speakerConditions, " OR "))
+			var whereClauses []string
+			if len(speakerConditions) > 0 {
+				whereClauses = append(whereClauses, fmt.Sprintf("(%s)", strings.Join(speakerConditions, " OR ")))
+			}
+			if len(speakerUserIdConditions) > 0 {
+				whereClauses = append(whereClauses, strings.Join(speakerUserIdConditions, " AND "))
+			}
+			speakerWhereClause := strings.Join(whereClauses, " AND ")
+
+			isFilteringByUserId := isUserEntity && len(filterFields.ParsedUserId) > 0
+			var selectField string
+			var entityQualificationPrefix string
+			if isFilteringByUserId {
+				selectField = "user_id as person_id"
+				entityQualificationPrefix = "speaker_"
+			} else {
+				selectField = "user_name as person_name"
+				entityQualificationPrefix = "speaker_user_"
+			}
 
 			speakerQuery := fmt.Sprintf(`
-				SELECT DISTINCT event_id, user_name as person_name
+				SELECT DISTINCT event_id, %s
 				FROM testing_db.event_speaker_ch
 				WHERE event_id IN (%s)
 				AND %s
-			`, eventIdsStrJoined, speakerWhereClause)
+			`, selectField, eventIdsStrJoined, speakerWhereClause)
 			log.Printf("Speaker query: %s", speakerQuery)
 
 			rows, err := s.clickhouseService.ExecuteQuery(ctx, speakerQuery)
@@ -9430,16 +9491,26 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 			data := make(map[uint32][]string)
 			for rows.Next() {
 				var eventID uint32
-				var nameValue string
+				var value string
 
-				if err := rows.Scan(&eventID, &nameValue); err != nil {
-					log.Printf("Error scanning speaker row: %v", err)
-					continue
+				if isFilteringByUserId {
+					var userId uint32
+					if err := rows.Scan(&eventID, &userId); err != nil {
+						log.Printf("Error scanning speaker row: %v", err)
+						continue
+					}
+					value = fmt.Sprintf("%d", userId)
+					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, value)
+					data[eventID] = append(data[eventID], entityQualification)
+				} else {
+					if err := rows.Scan(&eventID, &value); err != nil {
+						log.Printf("Error scanning speaker row: %v", err)
+						continue
+					}
+					nameWithUnderscores := strings.ReplaceAll(value, " ", "_")
+					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+					data[eventID] = append(data[eventID], entityQualification)
 				}
-
-				nameWithUnderscores := strings.ReplaceAll(nameValue, " ", "_")
-				entityQualification := fmt.Sprintf("speaker_user_%s", nameWithUnderscores)
-				data[eventID] = append(data[eventID], entityQualification)
 			}
 
 			if err := rows.Err(); err != nil {
@@ -9461,10 +9532,10 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 	if hasOrganizer && len(organizerConditions) > 0 {
 		queryCount++
 	}
-	if hasVisitor && len(visitorConditions) > 0 {
+	if hasVisitor && (len(visitorConditions) > 0 || len(visitorUserIdConditions) > 0) {
 		queryCount++
 	}
-	if hasSpeaker && len(speakerConditions) > 0 {
+	if hasSpeaker && (len(speakerConditions) > 0 || len(speakerUserIdConditions) > 0) {
 		queryCount++
 	}
 
@@ -9687,52 +9758,86 @@ func (s *SharedFunctionService) getTrackerMatchInfoForUser(
 		return result
 	}
 
+	isMatchingByUserId := len(filterFields.ParsedUserId) > 0
+
 	for eventID, fromData := range eventEntityQualifications {
 		uniquePeopleFinder := make(map[string]string)
 		peopleFinderPersonAssociation := make([]string, 0)
+		valuesForMatching := make([]string, 0)
 
 		for _, val := range fromData {
-			var personName string
-			if strings.HasPrefix(val, "speaker_user_") {
-				personName = strings.TrimPrefix(val, "speaker_user_")
-			} else if strings.HasPrefix(val, "user_") {
-				personName = strings.TrimPrefix(val, "user_")
+			processedValue := strings.Replace(val, "user_", "", 1)
+
+			var personValue string
+			var responseValue string
+			var uniqueKey string
+
+			if strings.HasPrefix(processedValue, "speaker_") {
+				personValue = strings.TrimPrefix(processedValue, "speaker_")
+				if isMatchingByUserId {
+					responseValue = processedValue
+					uniqueKey = processedValue
+				} else {
+					responseValue = personValue
+					uniqueKey = personValue
+				}
+			} else if strings.HasPrefix(processedValue, "visitor_") {
+				personValue = strings.TrimPrefix(processedValue, "visitor_")
+				if isMatchingByUserId {
+					responseValue = processedValue
+					uniqueKey = processedValue
+				} else {
+					responseValue = personValue
+					uniqueKey = personValue
+				}
 			} else {
-				continue
+				personValue = processedValue
+				responseValue = processedValue
+				uniqueKey = processedValue
 			}
 
-			lowerCaseVal := strings.ToLower(personName)
-			if _, exists := uniquePeopleFinder[lowerCaseVal]; !exists {
-				uniquePeopleFinder[lowerCaseVal] = personName
-				peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, personName)
+			lowerCaseKey := strings.ToLower(uniqueKey)
+			if _, exists := uniquePeopleFinder[lowerCaseKey]; !exists {
+				uniquePeopleFinder[lowerCaseKey] = responseValue
+				peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, responseValue)
+				valuesForMatching = append(valuesForMatching, personValue)
 			}
 		}
 
 		countMatched := 0
-		for _, personData := range peopleFinderPersonAssociation {
-			personDataLower := strings.ToLower(personData)
-			personDataParts := strings.Split(personDataLower, "_")
-			if len(personDataParts) > 1 {
-				personDataToMatch := personDataParts[1]
-				for _, orgPersonName := range orgPerson {
-					if strings.Contains(orgPersonName, personDataToMatch) {
+		if isMatchingByUserId {
+			for _, personId := range valuesForMatching {
+				personIdLower := strings.ToLower(personId)
+				for _, orgPersonId := range orgPerson {
+					if strings.ToLower(orgPersonId) == personIdLower {
 						countMatched++
+						break
+					}
+				}
+			}
+		} else {
+			for _, personData := range valuesForMatching {
+				parts := strings.Split(strings.ToLower(personData), "_")
+				if len(parts) > 1 {
+					for _, orgPersonName := range orgPerson {
+						if strings.Contains(orgPersonName, parts[1]) {
+							countMatched++
+							break
+						}
 					}
 				}
 			}
 		}
 
-		var matchType string
+		matchType := ""
 		if len(orgPerson) > 0 {
 			match := float64(countMatched) / float64(len(orgPerson)) * 100.0
 			if match > 20 {
 				matchType = "High"
-			} else if match >= 10 && match <= 20 {
+			} else if match >= 10 {
 				matchType = "Medium"
-			} else if match > 0 && match < 10 {
+			} else if match > 0 {
 				matchType = "Low"
-			} else {
-				matchType = ""
 			}
 		}
 
