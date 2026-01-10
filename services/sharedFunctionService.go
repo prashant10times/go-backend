@@ -9767,39 +9767,19 @@ func (s *SharedFunctionService) getTrackerMatchInfoForUser(
 
 		for _, val := range fromData {
 			processedValue := strings.Replace(val, "user_", "", 1)
-
 			var personValue string
-			var responseValue string
-			var uniqueKey string
-
 			if strings.HasPrefix(processedValue, "speaker_") {
 				personValue = strings.TrimPrefix(processedValue, "speaker_")
-				if isMatchingByUserId {
-					responseValue = processedValue
-					uniqueKey = processedValue
-				} else {
-					responseValue = personValue
-					uniqueKey = personValue
-				}
 			} else if strings.HasPrefix(processedValue, "visitor_") {
 				personValue = strings.TrimPrefix(processedValue, "visitor_")
-				if isMatchingByUserId {
-					responseValue = processedValue
-					uniqueKey = processedValue
-				} else {
-					responseValue = personValue
-					uniqueKey = personValue
-				}
 			} else {
 				personValue = processedValue
-				responseValue = processedValue
-				uniqueKey = processedValue
 			}
 
-			lowerCaseKey := strings.ToLower(uniqueKey)
-			if _, exists := uniquePeopleFinder[lowerCaseKey]; !exists {
-				uniquePeopleFinder[lowerCaseKey] = responseValue
-				peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, responseValue)
+			lowerCaseProcessed := strings.ToLower(processedValue)
+			if _, exists := uniquePeopleFinder[lowerCaseProcessed]; !exists {
+				uniquePeopleFinder[lowerCaseProcessed] = processedValue
+				peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, processedValue)
 				valuesForMatching = append(valuesForMatching, personValue)
 			}
 		}
