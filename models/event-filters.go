@@ -397,6 +397,7 @@ type FilterDataDto struct {
 	ParsedAdvancedSearchBy  []string      `json:"-"` // Parsed version of AdvanceSearchBy
 	ParsedPrice             []string      `json:"-"`
 	ParsedEstimatedVisitors []string      `json:"-"`
+	ParsedMaturity          []string      `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -1228,7 +1229,49 @@ func (f *FilterDataDto) Validate() error {
 
 		validation.Field(&f.EstimatedExhibitors, validation.When(f.EstimatedExhibitors != "", validation.In("0-100", "100-500", "500-1000", "1000"))),
 
-		validation.Field(&f.Maturity, validation.When(f.Maturity != "", validation.In("new", "growing", "established", "flagship"))), // Maturity validation
+		validation.Field(&f.Maturity, validation.When(f.Maturity != "", validation.By(func(value interface{}) error {
+			maturityStr := value.(string)
+			if maturityStr == "" {
+				return nil
+			}
+
+			maturities := strings.Split(maturityStr, ",")
+			f.ParsedMaturity = make([]string, 0, len(maturities))
+			validMaturities := map[string]string{
+				"new":         "new",
+				"growing":     "growing",
+				"established": "established",
+				"flagship":    "flagship",
+			}
+
+			var invalidMaturities []string
+			seenMaturities := make(map[string]bool)
+			for _, maturity := range maturities {
+				maturity = strings.TrimSpace(maturity)
+				if maturity != "" {
+					maturityLower := strings.ToLower(maturity)
+					if normalizedValue, exists := validMaturities[maturityLower]; exists {
+						if !seenMaturities[normalizedValue] {
+							f.ParsedMaturity = append(f.ParsedMaturity, normalizedValue)
+							seenMaturities[normalizedValue] = true
+						}
+					} else {
+						invalidMaturities = append(invalidMaturities, maturity)
+					}
+				}
+			}
+
+			if len(invalidMaturities) > 0 {
+				validOptions := []string{"new", "growing", "established", "flagship"}
+				return validation.NewError("invalid_maturity", "Invalid maturity value(s): "+strings.Join(invalidMaturities, ", ")+". Valid values are: "+strings.Join(validOptions, ", "))
+			}
+
+			if len(f.ParsedMaturity) == 0 {
+				return validation.NewError("empty_maturity", "maturity cannot be empty after parsing")
+			}
+
+			return nil
+		}))), // Maturity validation
 
 		validation.Field(&f.Status, validation.When(f.Status != "", validation.By(func(value interface{}) error {
 			statusStr := value.(string)

@@ -1619,8 +1619,16 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if filterFields.Maturity != "" {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.maturity = '%s'", strings.ReplaceAll(filterFields.Maturity, "'", "''")))
+	if len(filterFields.ParsedMaturity) > 0 {
+		escapedMaturities := make([]string, 0, len(filterFields.ParsedMaturity))
+		for _, maturity := range filterFields.ParsedMaturity {
+			escapedMaturities = append(escapedMaturities, fmt.Sprintf("'%s'", strings.ReplaceAll(maturity, "'", "''")))
+		}
+		if len(escapedMaturities) == 1 {
+			whereConditions = append(whereConditions, fmt.Sprintf("ee.maturity = %s", escapedMaturities[0]))
+		} else {
+			whereConditions = append(whereConditions, fmt.Sprintf("ee.maturity IN (%s)", strings.Join(escapedMaturities, ",")))
+		}
 	}
 
 	if filterFields.ParsedAudienceZone != nil {
