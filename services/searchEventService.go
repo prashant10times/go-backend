@@ -1481,7 +1481,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				}
 			case "avgRating":
 				if avgRating, ok := val.(**decimal.Decimal); ok && avgRating != nil && *avgRating != nil {
-					rowData[col] = *avgRating
+					rounded := (*avgRating).Round(1)
+					rowData[col] = rounded.InexactFloat64()
 				} else {
 					rowData[col] = 0.0
 				}
