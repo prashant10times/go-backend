@@ -1933,18 +1933,20 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			}
 			categoriesMap[eventIDStr] = items
 		case "tags":
-			names := strings.Split(value, ", ")
-			uuids := strings.Split(uuidValue, ", ")
-			slugs := strings.Split(slugValue, ", ")
-
 			var items []map[string]string
-			for i, name := range names {
-				if i < len(uuids) && name != "" {
-					items = append(items, map[string]string{
-						"id":   strings.TrimSpace(uuids[i]),
-						"name": strings.TrimSpace(name),
-						"slug": strings.TrimSpace(slugs[i]),
-					})
+			if value != "" && uuidValue != "" {
+				names := strings.Split(value, ", ")
+				uuids := strings.Split(uuidValue, ", ")
+				slugs := strings.Split(slugValue, ", ")
+
+				for i, name := range names {
+					if i < len(uuids) && name != "" {
+						items = append(items, map[string]string{
+							"id":   strings.TrimSpace(uuids[i]),
+							"name": strings.TrimSpace(name),
+							"slug": strings.TrimSpace(slugs[i]),
+						})
+					}
 				}
 			}
 			tagsMap[eventIDStr] = items
@@ -2191,6 +2193,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			categories = []map[string]string{}
 		}
 		tags := tagsMap[eventID]
+		if tags == nil {
+			tags = []map[string]string{}
+		}
 		types := typesMap[eventID]
 		grouper.AddField("categories", categories)
 		grouper.AddField("tags", tags)
