@@ -2371,22 +2371,44 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 		eventRankingConditions := []string{currentMonthCondition}
 
-		hasCountryFilter := len(filterFields.ParsedCountry) > 0
-		hasCategoryFilter := len(filterFields.ParsedCategory) > 0
+		countryUUIDs := filterFields.ParsedCountryIds
+		if len(countryUUIDs) == 0 && len(filterFields.ParsedLocationIds) > 0 {
+			countryUUIDs = filterFields.ParsedLocationIds
+		}
+		hasCountryFilter := len(countryUUIDs) > 0
+		hasCategoryFilter := len(filterFields.ParsedCategoryIds) > 0
 
 		if hasCountryFilter {
-			countries := make([]string, len(filterFields.ParsedCountry))
-			for i, country := range filterFields.ParsedCountry {
-				countries[i] = fmt.Sprintf("'%s'", country)
+			isoCodes, err := s.getISOFromLocationUUIDs(countryUUIDs)
+			if err != nil {
+				log.Printf("Error converting country UUIDs to ISO codes: %v", err)
+				isoCodes = []string{}
 			}
-			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
+
+			if len(isoCodes) > 0 {
+				countries := make([]string, len(isoCodes))
+				for i, iso := range isoCodes {
+					escaped := strings.ReplaceAll(iso, "'", "''")
+					countries[i] = fmt.Sprintf("'%s'", escaped)
+				}
+				eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
+			}
 		}
 		if hasCategoryFilter {
-			categories := make([]string, len(filterFields.ParsedCategory))
-			for i, category := range filterFields.ParsedCategory {
-				categories[i] = fmt.Sprintf("'%s'", category)
+			categoryNames, err := s.getCategoryNamesFromUUIDs(filterFields.ParsedCategoryIds)
+			if err != nil {
+				log.Printf("Error converting category UUIDs to names: %v", err)
+				categoryNames = []string{}
 			}
-			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
+
+			if len(categoryNames) > 0 {
+				categories := make([]string, len(categoryNames))
+				for i, category := range categoryNames {
+					escaped := strings.ReplaceAll(category, "'", "''")
+					categories[i] = fmt.Sprintf("'%s'", escaped)
+				}
+				eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
+			}
 		}
 		if !hasCountryFilter && !hasCategoryFilter {
 			eventRankingConditions = append(eventRankingConditions, "((country = '' AND category_name = ''))")
@@ -3409,22 +3431,44 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 
 		eventRankingConditions := []string{currentMonthCondition}
 
-		hasCountryFilter := len(filterFields.ParsedCountry) > 0
-		hasCategoryFilter := len(filterFields.ParsedCategory) > 0
+		countryUUIDs := filterFields.ParsedCountryIds
+		if len(countryUUIDs) == 0 && len(filterFields.ParsedLocationIds) > 0 {
+			countryUUIDs = filterFields.ParsedLocationIds
+		}
+		hasCountryFilter := len(countryUUIDs) > 0
+		hasCategoryFilter := len(filterFields.ParsedCategoryIds) > 0
 
 		if hasCountryFilter {
-			countries := make([]string, len(filterFields.ParsedCountry))
-			for i, country := range filterFields.ParsedCountry {
-				countries[i] = fmt.Sprintf("'%s'", country)
+			isoCodes, err := s.getISOFromLocationUUIDs(countryUUIDs)
+			if err != nil {
+				log.Printf("Error converting location UUIDs to ISO codes: %v", err)
+				isoCodes = []string{}
 			}
-			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
+
+			if len(isoCodes) > 0 {
+				countries := make([]string, len(isoCodes))
+				for i, iso := range isoCodes {
+					escaped := strings.ReplaceAll(iso, "'", "''")
+					countries[i] = fmt.Sprintf("'%s'", escaped)
+				}
+				eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
+			}
 		}
 		if hasCategoryFilter {
-			categories := make([]string, len(filterFields.ParsedCategory))
-			for i, category := range filterFields.ParsedCategory {
-				categories[i] = fmt.Sprintf("'%s'", category)
+			categoryNames, err := s.getCategoryNamesFromUUIDs(filterFields.ParsedCategoryIds)
+			if err != nil {
+				log.Printf("Error converting category UUIDs to names: %v", err)
+				categoryNames = []string{}
 			}
-			eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
+
+			if len(categoryNames) > 0 {
+				categories := make([]string, len(categoryNames))
+				for i, category := range categoryNames {
+					escaped := strings.ReplaceAll(category, "'", "''")
+					categories[i] = fmt.Sprintf("'%s'", escaped)
+				}
+				eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
+			}
 		}
 		if !hasCountryFilter && !hasCategoryFilter {
 			eventRankingConditions = append(eventRankingConditions, "((country = '' AND category_name = ''))")
@@ -4254,6 +4298,7 @@ func (s *SharedFunctionService) getISOFromLocationUUIDs(locationUUIDs []string) 
 		if value == "" {
 			return ""
 		}
+		value = strings.Trim(value, "'")
 		escaped := strings.ReplaceAll(value, "'", "''")
 		return fmt.Sprintf("'%s'", escaped)
 	}
@@ -4297,6 +4342,69 @@ func (s *SharedFunctionService) getISOFromLocationUUIDs(locationUUIDs []string) 
 
 	log.Printf("Found %d ISO codes from %d location UUIDs", len(isoCodes), len(locationUUIDs))
 	return isoCodes, nil
+}
+
+func (s *SharedFunctionService) getCategoryNamesFromUUIDs(categoryUUIDs []string) ([]string, error) {
+	if len(categoryUUIDs) == 0 {
+		return []string{}, nil
+	}
+
+	escapeSqlValue := func(value string) string {
+		if value == "" {
+			return ""
+		}
+		value = strings.Trim(value, "'")
+		escaped := strings.ReplaceAll(value, "'", "''")
+		return fmt.Sprintf("'%s'", escaped)
+	}
+
+	uuidList := make([]string, 0, len(categoryUUIDs))
+	for _, uuid := range categoryUUIDs {
+		escapedUUID := escapeSqlValue(uuid)
+		uuidList = append(uuidList, escapedUUID)
+	}
+	uuidListStr := strings.Join(uuidList, ",")
+
+	query := fmt.Sprintf(`
+		SELECT DISTINCT name
+		FROM testing_db.event_category_ch
+		WHERE category_uuid IN (%s)
+		AND name IS NOT NULL
+		AND name != ''
+		AND is_group = 1
+	`, uuidListStr)
+
+	log.Printf("Fetching category names from category UUIDs query: %s", query)
+
+	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
+	if err != nil {
+		log.Printf("Error fetching category names from category UUIDs: %v", err)
+		return nil, err
+	}
+	defer rows.Close()
+
+	var categoryNames []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			log.Printf("Error scanning category name row: %v", err)
+			continue
+		}
+		if name != "" {
+			categoryNames = append(categoryNames, name)
+		}
+	}
+
+	log.Printf("Found %d category names from %d category UUIDs", len(categoryNames), len(categoryUUIDs))
+	return categoryNames, nil
+}
+
+func isUUID(s string) bool {
+	if len(s) != 36 {
+		return false
+	}
+	parts := strings.Split(s, "-")
+	return len(parts) == 5 && len(parts[0]) == 8 && len(parts[1]) == 4 && len(parts[2]) == 4 && len(parts[3]) == 4 && len(parts[4]) == 12
 }
 
 type EventLocationData struct {
