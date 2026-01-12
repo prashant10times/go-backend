@@ -5058,16 +5058,34 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	}
 	preFilterSelectStr := strings.Join(preFilterSelectFields, ", ")
 
+	// Build WHERE conditions similar to buildListDataCountQuery
+	whereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		s.buildEditionTypeCondition(filterFields, "ee"),
+	}
+
+	if queryResult.WhereClause != "" {
+		whereConditions = append(whereConditions, queryResult.WhereClause)
+	}
+
+	if queryResult.SearchClause != "" {
+		whereConditions = append(whereConditions, queryResult.SearchClause)
+	}
+
+	// Add join conditions - this was missing!
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		whereConditions = append(whereConditions, cteAndJoinResult.JoinConditions...)
+	}
+
+	whereClause := strings.Join(whereConditions, "\n\t\t\tAND ")
+
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
 				%s
 			FROM testing_db.allevent_ch AS ee%s
-			WHERE %s 
-			AND %s
-			AND %s
-			%s
-			%s
+			WHERE %s
 		)
 		SELECT
 			%s
@@ -5081,21 +5099,7 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 			}
 			return ""
 		}(),
-		s.buildPublishedCondition(filterFields),
-		s.buildStatusCondition(filterFields),
-		s.buildEditionTypeCondition(filterFields, "ee"),
-		func() string {
-			if queryResult.WhereClause != "" {
-				return fmt.Sprintf("AND %s", queryResult.WhereClause)
-			}
-			return ""
-		}(),
-		func() string {
-			if queryResult.SearchClause != "" {
-				return fmt.Sprintf("AND %s", queryResult.SearchClause)
-			}
-			return ""
-		}(),
+		whereClause,
 		selectStr,
 	)
 
@@ -6233,6 +6237,11 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
 		preFilterWhereConditions = append(preFilterWhereConditions, whereClauseFixed)
 	}
+	// Add join conditions to preFilterWhereConditions
+	if joinConditionsStr != "" {
+		joinConditionsFixed := strings.ReplaceAll(joinConditionsStr, "ee.", "e.")
+		preFilterWhereConditions = append(preFilterWhereConditions, strings.TrimPrefix(joinConditionsFixed, "AND "))
+	}
 	preFilterWhereClause := strings.Join(preFilterWhereConditions, " AND ")
 	preFilterWhereClause = strings.ReplaceAll(preFilterWhereClause, "ee.", "e.")
 
@@ -6889,6 +6898,11 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 	if queryResult.WhereClause != "" {
 		whereClauseFixed := strings.ReplaceAll(queryResult.WhereClause, "ee.", "e.")
 		preFilterWhereConditions = append(preFilterWhereConditions, whereClauseFixed)
+	}
+	// Add join conditions to preFilterWhereConditions - this was missing!
+	if joinConditionsStr != "" {
+		joinConditionsFixed := strings.ReplaceAll(joinConditionsStr, "ee.", "e.")
+		preFilterWhereConditions = append(preFilterWhereConditions, strings.TrimPrefix(joinConditionsFixed, "AND "))
 	}
 	preFilterWhereClause := strings.Join(preFilterWhereConditions, " AND ")
 	preFilterWhereClause = strings.ReplaceAll(preFilterWhereClause, "ee.", "e.")
