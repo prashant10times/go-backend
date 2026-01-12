@@ -2360,17 +2360,18 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			viewLower := strings.ToLower(strings.TrimSpace(filterFields.View))
 			if viewLower == "list" || viewLower == "tracker" {
 				shouldIncludeRankings = len(requestedFieldsSet) == 0 || requestedFieldsSet["rankings"]
-				if !shouldIncludeRankings && len(requestedGroupsSet) > 0 {
-					shouldIncludeRankings = requestedGroupsSet[ResponseGroupInsights]
-				}
 			}
 		}
+		if !shouldIncludeRankings {
+			shouldIncludeRankings = requestedGroupsSet[ResponseGroupInsights] || requestedFieldsSet["rankings"]
+		}
 		if shouldIncludeRankings {
-			if rankingsValue, ok := rankingsMap[eventID]; ok && rankingsValue != "" {
+			rankingsValue, hasRankings := rankingsMap[eventID]
+			if hasRankings && rankingsValue != "" {
 				parsedRankings := s.transformDataService.TransformRankings(rankingsValue, filterFields)
-				if parsedRankings != nil {
-					grouper.AddField("rankings", parsedRankings)
-				}
+				grouper.AddField("rankings", parsedRankings)
+			} else {
+				grouper.AddField("rankings", nil)
 			}
 		}
 

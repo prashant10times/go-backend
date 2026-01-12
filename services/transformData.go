@@ -1205,9 +1205,7 @@ func (s *TransformDataService) TransformRankings(rankingsStr string, filterField
 		}
 	}
 
-	rankType := s.DetermineRankingType(filterFields)
-
-	prioritizedRank := s.PrioritizeRankings(filterFields, ranks, rankType)
+	prioritizedRank := s.getRanking(ranks)
 	if prioritizedRank == nil {
 		return nil
 	}
@@ -1375,6 +1373,65 @@ func (s *TransformDataService) PrioritizeRankings(filterFields models.FilterData
 	default:
 		return nil
 	}
+}
+
+func (s *TransformDataService) getRanking(ranks Rankings) *PrioritizedRank {
+	if len(ranks.CategoryCountry) > 0 {
+		bestRank := ranks.CategoryCountry[0]
+		for _, catCountryRank := range ranks.CategoryCountry {
+			if catCountryRank.Rank < bestRank.Rank {
+				bestRank = catCountryRank
+			}
+		}
+		return &PrioritizedRank{
+			Rank:       bestRank.Rank,
+			RankType:   RankingTypeCategoryCountry,
+			RankRange:  s.GetRankRange(bestRank.Rank),
+			CategoryID: &bestRank.CategoryID,
+			CountryID:  &bestRank.CountryID,
+		}
+	}
+
+	// Try Category
+	if len(ranks.Categories) > 0 {
+		bestRank := ranks.Categories[0]
+		for _, catRank := range ranks.Categories {
+			if catRank.Rank < bestRank.Rank {
+				bestRank = catRank
+			}
+		}
+		return &PrioritizedRank{
+			Rank:       bestRank.Rank,
+			RankType:   RankingTypeCategory,
+			RankRange:  s.GetRankRange(bestRank.Rank),
+			CategoryID: &bestRank.ID,
+			CountryID:  nil,
+		}
+	}
+
+	// Try Country
+	if ranks.Country != nil {
+		return &PrioritizedRank{
+			Rank:       ranks.Country.Rank,
+			RankType:   RankingTypeCountry,
+			RankRange:  s.GetRankRange(ranks.Country.Rank),
+			CategoryID: nil,
+			CountryID:  &ranks.Country.ID,
+		}
+	}
+
+	// Try Global
+	if ranks.Global != nil && *ranks.Global != 0 {
+		return &PrioritizedRank{
+			Rank:       *ranks.Global,
+			RankType:   RankingTypeGlobal,
+			RankRange:  s.GetRankRange(*ranks.Global),
+			CategoryID: nil,
+			CountryID:  nil,
+		}
+	}
+
+	return nil
 }
 
 func (s *TransformDataService) GetRankRange(rank int) string {

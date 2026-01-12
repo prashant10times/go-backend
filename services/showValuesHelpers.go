@@ -52,7 +52,20 @@ func (p *ShowValuesProcessor) parseShowValues() {
 }
 
 func (p *ShowValuesProcessor) ShouldIncludeField(fieldName string) bool {
-	return len(p.requestedFieldsSet) == 0 || p.requestedFieldsSet[fieldName]
+	if len(p.requestedFieldsSet) == 0 {
+		return true
+	}
+
+	if p.requestedFieldsSet[fieldName] {
+		return true
+	}
+
+	fieldGroup := GetResponseGroupForField(fieldName)
+	if fieldGroup != "" && p.requestedGroupsSet[fieldGroup] {
+		return true
+	}
+
+	return false
 }
 
 func (p *ShowValuesProcessor) IsGroupedStructure() bool {
@@ -562,26 +575,22 @@ func (b *RelatedDataQueryBuilder) shouldLimitAudienceSpread() bool {
 }
 
 func (b *RelatedDataQueryBuilder) shouldIncludeRankings() bool {
-	if b.processor.GetShowValues() == "" || b.filterFields.View == "" {
-		return false
-	}
-
-	viewLower := strings.ToLower(strings.TrimSpace(b.filterFields.View))
-	if viewLower != "list" && viewLower != "tracker" {
-		return false
-	}
-
 	requestedGroupsSet := b.processor.GetRequestedGroups()
 	requestedFieldsSet := b.processor.GetRequestedFieldsSet()
 
-	if len(requestedGroupsSet) > 0 {
-		if requestedGroupsSet[ResponseGroupInsights] {
-			return true
-		}
+	// Include rankings if ResponseGroupInsights is requested or rankings field is explicitly requested
+	if requestedGroupsSet[ResponseGroupInsights] || requestedFieldsSet["rankings"] {
+		return true
 	}
 
-	if len(requestedFieldsSet) > 0 {
-		return requestedFieldsSet["rankings"]
+	// For list/tracker views, include rankings if no specific fields are requested
+	if b.filterFields.View != "" {
+		viewLower := strings.ToLower(strings.TrimSpace(b.filterFields.View))
+		if viewLower == "list" || viewLower == "tracker" {
+			if len(requestedFieldsSet) == 0 {
+				return true
+			}
+		}
 	}
 
 	return false
@@ -592,14 +601,14 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 		UNION ALL
 
 		SELECT 
-			event_id,
+			er.event_id,
 			'rankings' AS data_type,
 			arrayStringConcat(
 				groupUniqArray(
 					concat(
-						if(toString(country) = '', 'null', toString(country)), '<val-sep>',
-						if(toString(category_name) = '', 'null', toString(category_name)), '<val-sep>',
-						toString(ifNull(event_rank, 0))
+						if(toString(country_loc.id_uuid) = '', 'null', toString(country_loc.id_uuid)), '<val-sep>',
+						if(toString(cat.category_uuid) = '', 'null', toString(cat.category_uuid)), '<val-sep>',
+						toString(ifNull(er.event_rank, 0))
 					)
 				),
 				'<line-sep>'
@@ -607,8 +616,15 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 			'' AS uuid_value,
 			'' AS slug_value,
 			'' AS eventGroupType_value
-		FROM testing_db.event_ranking_ch
-		WHERE event_id IN (` + b.eventIdsStr + `)
-		GROUP BY event_id
+		FROM testing_db.event_ranking_ch AS er
+		LEFT JOIN testing_db.location_ch AS country_loc 
+			ON er.country = country_loc.iso 
+			AND country_loc.location_type = 'COUNTRY'
+			AND country_loc.published = 1
+		LEFT JOIN testing_db.event_category_ch AS cat 
+			ON er.category_name = cat.name 
+			AND cat.is_group = 1
+		WHERE er.event_id IN (` + b.eventIdsStr + `)
+		GROUP BY er.event_id
 		`
 }
