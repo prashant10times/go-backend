@@ -1988,10 +1988,10 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				for _, countryData := range countryArray {
 					transformedCountryData := make(map[string]interface{})
 					if cntryId, ok := countryData["cntry_id"]; ok {
-						transformedCountryData["iso"] = cntryId
+						transformedCountryData["iso"] = strings.ToUpper(cntryId.(string))
 
 						if isoStr, ok := cntryId.(string); ok {
-							countryInfo := s.sharedFunctionService.GetCountryDataByISO(isoStr)
+							countryInfo := s.sharedFunctionService.GetCountryDataByISO(strings.ToUpper(isoStr))
 							if countryInfo != nil {
 								if name, ok := countryInfo["name"].(string); ok {
 									transformedCountryData["name"] = name
