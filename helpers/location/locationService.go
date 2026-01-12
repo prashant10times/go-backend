@@ -26,6 +26,8 @@ type Location struct {
 	LocationType string                 `json:"locationType"`
 	Latitude     *float64               `json:"latitude,omitempty"`
 	Longitude    *float64               `json:"longitude,omitempty"`
+	ID10x        *string                `json:"id10x,omitempty"`
+	ExtractedID  *string                `json:"extractedId,omitempty"`
 	ISO          *string                `json:"iso,omitempty"`
 	City         *LocationDetail        `json:"city,omitempty"`
 	State        *LocationDetail        `json:"state,omitempty"`
@@ -47,6 +49,47 @@ type LocationDetailWithISO struct {
 	Longitude *float64 `json:"longitude,omitempty"`
 	ISO       *string  `json:"iso,omitempty"`
 	Slug      *string  `json:"slug,omitempty"`
+}
+
+func extractIDFromID10x(id10x string, locationType string) string {
+	if id10x == "" {
+		return ""
+	}
+
+	switch locationType {
+	case "STATE":
+		// Remove "state-" prefix and extract until the last "-"
+		// "state-89949-FR" -> "89949"
+		if strings.HasPrefix(id10x, "state-") {
+			withoutPrefix := strings.TrimPrefix(id10x, "state-")
+			// Find the last dash and take everything before it
+			lastDashIndex := strings.LastIndex(withoutPrefix, "-")
+			if lastDashIndex > 0 {
+				return withoutPrefix[:lastDashIndex]
+			}
+			return withoutPrefix
+		}
+	case "CITY":
+		// Remove "city-" prefix
+		// "city-88525" -> "88525"
+		if strings.HasPrefix(id10x, "city-") {
+			return strings.TrimPrefix(id10x, "city-")
+		}
+	case "VENUE":
+		// Remove "venue-" prefix
+		// "venue-275098" -> "275098"
+		if strings.HasPrefix(id10x, "venue-") {
+			return strings.TrimPrefix(id10x, "venue-")
+		}
+	case "COUNTRY":
+		// Remove "country-" prefix
+		// "country-US" -> "US"
+		if strings.HasPrefix(id10x, "country-") {
+			return strings.TrimPrefix(id10x, "country-")
+		}
+	}
+
+	return ""
 }
 
 func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interface{}, error) {
@@ -252,7 +295,8 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			location.location_type,
 			location.latitude,
 			location.longitude,
-			replace(location.id_10x, 'country-', '') AS location_iso,
+			location.id_10x AS location_id_10x,
+			location.iso AS location_iso,
 			city.id_uuid AS city_id,
 			city.name AS city_name,
 			city.latitude AS city_latitude,
@@ -263,7 +307,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			country.latitude AS country_latitude,
 			country.longitude AS country_longitude,
 			country.slug AS country_slug,
-			replace(country.id_10x, 'country-', '') AS country_iso,
+			country.iso AS country_iso,
 			state.id_uuid AS state_id,
 			state.name AS state_name,
 			state.latitude AS state_latitude,
@@ -320,7 +364,8 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			location.location_type,
 			location.latitude,
 			location.longitude,
-			replace(location.id_10x, 'country-', '') AS location_iso,
+			location.id_10x AS location_id_10x,
+			location.iso AS location_iso,
 			city.id_uuid AS city_id,
 			city.name AS city_name,
 			city.latitude AS city_latitude,
@@ -331,7 +376,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			country.latitude AS country_latitude,
 			country.longitude AS country_longitude,
 			country.slug AS country_slug,
-			replace(country.id_10x, 'country-', '') AS country_iso,
+			country.iso AS country_iso,
 			state.id_uuid AS state_id,
 			state.name AS state_name,
 			state.latitude AS state_latitude,
@@ -369,7 +414,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	var locations []Location
 	for rows.Next() {
 		var loc Location
-		var locationSlug, locationISO *string
+		var locationSlug, locationID10x, locationISO *string
 		var cityIDUUID, cityName, citySlug *string
 		var cityLatitude, cityLongitude *float64
 		var countryIDUUID, countryName, countrySlug, countryISO *string
@@ -384,6 +429,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			&loc.LocationType,
 			&loc.Latitude,
 			&loc.Longitude,
+			&locationID10x,
 			&locationISO,
 			&cityIDUUID,
 			&cityName,
@@ -407,6 +453,15 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		}
 
 		loc.Slug = locationSlug
+		loc.ID10x = locationID10x
+
+		// Extract numeric ID from id_10x by removing prefix and suffix
+		if locationID10x != nil && *locationID10x != "" {
+			extractedID := extractIDFromID10x(*locationID10x, loc.LocationType)
+			if extractedID != "" {
+				loc.ExtractedID = &extractedID
+			}
+		}
 
 		displayNameParts := []string{loc.Name}
 		if cityName != nil && *cityName != "" {
@@ -420,7 +475,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		}
 		loc.DisplayName = strings.Join(displayNameParts, ", ")
 
-		if loc.LocationType == "COUNTRY" && locationISO != nil && *locationISO != "" {
+		if locationISO != nil && *locationISO != "" {
 			loc.ISO = locationISO
 		}
 
