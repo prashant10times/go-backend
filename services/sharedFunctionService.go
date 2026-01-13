@@ -193,6 +193,29 @@ func (s *SharedFunctionService) matchWebsiteConverter(fieldName string, searchTe
 	return fmt.Sprintf("lower(%s) LIKE '%%%s%%'", fieldName, strings.ToLower(escapedValue))
 }
 
+func (s *SharedFunctionService) extractDomain(website string) string {
+	website = strings.TrimSpace(website)
+	if website == "" {
+		return ""
+	}
+
+	website = strings.ToLower(website)
+	website = strings.TrimPrefix(website, "https://")
+	website = strings.TrimPrefix(website, "http://")
+
+	website = strings.TrimPrefix(website, "www.")
+
+	if idx := strings.IndexAny(website, "/?#"); idx != -1 {
+		website = website[:idx]
+	}
+
+	if idx := strings.Index(website, ":"); idx != -1 {
+		website = website[:idx]
+	}
+
+	return strings.TrimSpace(website)
+}
+
 func (s *SharedFunctionService) logApiUsage(userId, apiId, endpoint string, responseTime float64, ipAddress string, statusCode int, filterFields models.FilterDataDto, pagination models.PaginationDto, responseFields models.ResponseDataDto, errorMessage *string) error {
 
 	payload := map[string]interface{}{
@@ -9487,16 +9510,22 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						data[eventID] = append(data[eventID], entityQualification)
 					}
 					if companyWebsite != "" {
-						entityQualification := fmt.Sprintf("exhibitor_%s", companyWebsite)
-						data[eventID] = append(data[eventID], entityQualification)
+						domain := s.extractDomain(companyWebsite)
+						if domain != "" {
+							entityQualification := fmt.Sprintf("exhibitor_%s", domain)
+							data[eventID] = append(data[eventID], entityQualification)
+						}
 					}
 				} else if hasCompanyWebsite {
 					if err := rows.Scan(&eventID, &companyWebsite); err != nil {
 						log.Printf("Error scanning exhibitor row: %v", err)
 						continue
 					}
-					entityQualification := fmt.Sprintf("exhibitor_%s", companyWebsite)
-					data[eventID] = append(data[eventID], entityQualification)
+					domain := s.extractDomain(companyWebsite)
+					if domain != "" {
+						entityQualification := fmt.Sprintf("exhibitor_%s", domain)
+						data[eventID] = append(data[eventID], entityQualification)
+					}
 				} else {
 					if err := rows.Scan(&eventID, &companyName); err != nil {
 						log.Printf("Error scanning exhibitor row: %v", err)
@@ -9559,16 +9588,22 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						data[eventID] = append(data[eventID], entityQualification)
 					}
 					if companyWebsite != "" {
-						entityQualification := fmt.Sprintf("sponsor_%s", companyWebsite)
-						data[eventID] = append(data[eventID], entityQualification)
+						domain := s.extractDomain(companyWebsite)
+						if domain != "" {
+							entityQualification := fmt.Sprintf("sponsor_%s", domain)
+							data[eventID] = append(data[eventID], entityQualification)
+						}
 					}
 				} else if hasCompanyWebsite {
 					if err := rows.Scan(&eventID, &companyWebsite); err != nil {
 						log.Printf("Error scanning sponsor row: %v", err)
 						continue
 					}
-					entityQualification := fmt.Sprintf("sponsor_%s", companyWebsite)
-					data[eventID] = append(data[eventID], entityQualification)
+					domain := s.extractDomain(companyWebsite)
+					if domain != "" {
+						entityQualification := fmt.Sprintf("sponsor_%s", domain)
+						data[eventID] = append(data[eventID], entityQualification)
+					}
 				} else {
 					if err := rows.Scan(&eventID, &companyName); err != nil {
 						log.Printf("Error scanning sponsor row: %v", err)
@@ -9631,16 +9666,22 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						data[eventID] = append(data[eventID], entityQualification)
 					}
 					if companyWebsite != "" {
-						entityQualification := fmt.Sprintf("organizer_%s", companyWebsite)
-						data[eventID] = append(data[eventID], entityQualification)
+						domain := s.extractDomain(companyWebsite)
+						if domain != "" {
+							entityQualification := fmt.Sprintf("organizer_%s", domain)
+							data[eventID] = append(data[eventID], entityQualification)
+						}
 					}
 				} else if hasCompanyWebsite {
 					if err := rows.Scan(&eventID, &companyWebsite); err != nil {
 						log.Printf("Error scanning organizer row: %v", err)
 						continue
 					}
-					entityQualification := fmt.Sprintf("organizer_%s", companyWebsite)
-					data[eventID] = append(data[eventID], entityQualification)
+					domain := s.extractDomain(companyWebsite)
+					if domain != "" {
+						entityQualification := fmt.Sprintf("organizer_%s", domain)
+						data[eventID] = append(data[eventID], entityQualification)
+					}
 				} else {
 					if err := rows.Scan(&eventID, &companyName); err != nil {
 						log.Printf("Error scanning organizer row: %v", err)
