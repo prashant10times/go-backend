@@ -83,6 +83,7 @@ var EventResponseKeys = []string{
 	"matchedKeywordsPercentage",
 	"futureExpectedStartDate",
 	"futureExpectedEndDate",
+	"futurePredictionScore",
 }
 
 var ResponseGroupsMap = map[ResponseGroups][]string{
@@ -129,10 +130,8 @@ var ResponseGroupsMap = map[ResponseGroups][]string{
 		"publishStatus",
 		"eventLocation",
 		"jobComposite",
-		"futureExpectedStartDate",
 		"estimatedAttendance",
 		"estimatedVisitorRangeTag",
-		"futureExpectedEndDate",
 	},
 	ResponseGroupAdvance: {
 		"editions",
@@ -141,6 +140,9 @@ var ResponseGroupsMap = map[ResponseGroups][]string{
 		"rehostDate",
 		"maturity",
 		"frequency",
+		"futureExpectedStartDate",
+		"futureExpectedEndDate",
+		"futurePredictionScore",
 	},
 	ResponseGroupInsights: {
 		"estimatedExhibitors",
@@ -191,6 +193,7 @@ var APIFieldToDBSelect = map[string]string{
 	"publishStatus":              "ee.published as publishStatus",
 	"futureExpectedStartDate":    "ee.futureExpexctedStartDate as futureExpectedStartDate",
 	"futureExpectedEndDate":      "ee.futureExpexctedEndDate as futureExpectedEndDate",
+	"futurePredictionScore":      "ee.predictionScore as futurePredictionScore",
 	"estimatedVisitorRangeTag":   "ee.event_estimatedVisitors as estimatedVisitorRangeTag",
 	"estimatedAttendance":        "ee.estimatedSize as estimatedAttendance",
 	"editions":                   "ee.event_editions as editions",
@@ -220,23 +223,24 @@ var APIFieldToDBSelect = map[string]string{
 }
 
 var DBColumnToAPIField = map[string]string{
-	"id":                  "id",
-	"start":               "startDateTime",
-	"end":                 "endDateTime",
-	"logo":                "logoUrl",
-	"avgRating":           "rating",
-	"updated":             "updated",
-	"createdAt":           "createdAt",
-	"PrimaryEventType":    "primaryEventType",
-	"organizer_id":        "organizer",
-	"organizer_name":      "organizer",
-	"organizer_website":   "organizer",
-	"organizer_logoUrl":   "organizer",
-	"organizer_companyId": "organizer",
-	"organizer_address":   "organizer",
-	"organizer_city":      "organizer",
-	"organizer_state":     "organizer",
-	"organizer_country":   "organizer",
+	"id":                    "id",
+	"start":                 "startDateTime",
+	"end":                   "endDateTime",
+	"logo":                  "logoUrl",
+	"avgRating":             "rating",
+	"updated":               "updated",
+	"createdAt":             "createdAt",
+	"PrimaryEventType":      "primaryEventType",
+	"organizer_id":          "organizer",
+	"organizer_name":        "organizer",
+	"organizer_website":     "organizer",
+	"organizer_logoUrl":     "organizer",
+	"organizer_companyId":   "organizer",
+	"organizer_address":     "organizer",
+	"organizer_city":        "organizer",
+	"organizer_state":       "organizer",
+	"organizer_country":     "organizer",
+	"futurePredictionScore": "futurePredictionScore",
 }
 
 var FieldsFromRelatedQueries = map[string]bool{
