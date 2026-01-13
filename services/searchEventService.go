@@ -1378,7 +1378,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				values[i] = new(int32)
 			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown", "shortName", "format", "entryType", "website", "10timesEventPageUrl", "estimatedVisitorRangeTag", "maturity", "frequency", "organizer_id", "organizer_name", "organizer_website", "organizer_logoUrl", "organizer_address", "organizer_city", "organizer_state", "organizer_country", "audienceZone":
 				values[i] = new(string)
-			case "futureExpectedStartDate", "futureExpectedEndDate":
+			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate":
 				values[i] = new(time.Time)
 			case "isBranded", "isSeries":
 				values[i] = new(string)
@@ -1465,7 +1465,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				} else {
 					rowData[col] = nil
 				}
-			case "futureExpectedStartDate", "futureExpectedEndDate":
+			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate":
 				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
 					if dateVal.IsZero() {
 						rowData[col] = nil

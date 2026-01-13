@@ -193,6 +193,7 @@ var APIFieldToDBSelect = map[string]string{
 	"publishStatus":              "ee.published as publishStatus",
 	"futureExpectedStartDate":    "ee.futureExpexctedStartDate as futureExpectedStartDate",
 	"futureExpectedEndDate":      "ee.futureExpexctedEndDate as futureExpectedEndDate",
+	"rehostDate":                 "ee.futureExpexctedStartDate as rehostDate",
 	"futurePredictionScore":      "ee.predictionScore as futurePredictionScore",
 	"estimatedVisitorRangeTag":   "ee.event_estimatedVisitors as estimatedVisitorRangeTag",
 	"estimatedAttendance":        "ee.estimatedSize as estimatedAttendance",
