@@ -9725,10 +9725,10 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				entityQualificationPrefix = "visitor_"
 			} else if selectBothFields {
 				selectField = "user_name as person_name, user_company as company_name"
-				entityQualificationPrefix = "user_"
+				entityQualificationPrefix = "visitor_"
 			} else if isFilteringByUserName {
 				selectField = "user_name as person_name"
-				entityQualificationPrefix = "user_"
+				entityQualificationPrefix = "visitor_"
 			} else {
 				selectField = "user_company as company_name"
 				entityQualificationPrefix = "visitor_"
@@ -9770,15 +9770,11 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						log.Printf("Error scanning visitor row: %v", err)
 						continue
 					}
-					// Combine both person name and company name into format: visitor_user_<username>_<usercompanyname>
 					if personName != "" && companyName != "" {
-						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
-						companyWithUnderscores := strings.ReplaceAll(companyName, " ", "_")
-						entityQualification := fmt.Sprintf("visitor_user_%s_%s", nameWithUnderscores, companyWithUnderscores)
+						entityQualification := fmt.Sprintf("visitor_%s_%s", personName, companyName)
 						data[eventID] = append(data[eventID], entityQualification)
 					} else if personName != "" {
-						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
-						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, personName)
 						data[eventID] = append(data[eventID], entityQualification)
 					} else if companyName != "" {
 						entityQualification := fmt.Sprintf("visitor_%s", companyName)
@@ -9790,8 +9786,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						continue
 					}
 					if isFilteringByUserName {
-						nameWithUnderscores := strings.ReplaceAll(value, " ", "_")
-						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, value)
 						data[eventID] = append(data[eventID], entityQualification)
 					} else {
 						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, value)
@@ -9837,10 +9832,10 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				entityQualificationPrefix = "speaker_"
 			} else if selectBothFields {
 				selectField = "user_name as person_name, user_company as company_name"
-				entityQualificationPrefix = "speaker_user_"
+				entityQualificationPrefix = "speaker_"
 			} else {
 				selectField = "user_name as person_name"
-				entityQualificationPrefix = "speaker_user_"
+				entityQualificationPrefix = "speaker_"
 			}
 
 			speakerQuery := fmt.Sprintf(`
@@ -9879,15 +9874,11 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						log.Printf("Error scanning speaker row: %v", err)
 						continue
 					}
-					// Combine both person name and company name into format: speaker_user_<username>_<usercompanyname>
 					if personName != "" && companyName != "" {
-						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
-						companyWithUnderscores := strings.ReplaceAll(companyName, " ", "_")
-						entityQualification := fmt.Sprintf("speaker_user_%s_%s", nameWithUnderscores, companyWithUnderscores)
+						entityQualification := fmt.Sprintf("speaker_%s_%s", personName, companyName)
 						data[eventID] = append(data[eventID], entityQualification)
 					} else if personName != "" {
-						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
-						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, personName)
 						data[eventID] = append(data[eventID], entityQualification)
 					} else if companyName != "" {
 						entityQualification := fmt.Sprintf("speaker_%s", companyName)
@@ -9898,8 +9889,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						log.Printf("Error scanning speaker row: %v", err)
 						continue
 					}
-					nameWithUnderscores := strings.ReplaceAll(value, " ", "_")
-					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, value)
 					data[eventID] = append(data[eventID], entityQualification)
 				}
 			}
@@ -10068,14 +10058,18 @@ func (s *SharedFunctionService) getTrackerMatchInfoForSpeaker(
 		speakerNamesForMatching := make([]string, 0)
 
 		for _, val := range fromData {
-			if strings.HasPrefix(val, "speaker_user_") {
-				personName := strings.TrimPrefix(val, "speaker_user_")
+			if strings.HasPrefix(val, "speaker_") {
+				personName := strings.TrimPrefix(val, "speaker_")
+				parts := strings.Split(personName, "_")
+				if len(parts) > 1 {
+					personName = parts[0]
+				}
 				lowerCaseVal := strings.ToLower(personName)
 
 				if _, exists := uniqueSpeakers[lowerCaseVal]; !exists {
 					speakerNamesForMatching = append(speakerNamesForMatching, personName)
 					uniqueSpeakers[lowerCaseVal] = personName
-					speakerPersonAssociation = append(speakerPersonAssociation, personName)
+					speakerPersonAssociation = append(speakerPersonAssociation, val)
 				}
 			}
 		}
@@ -10157,34 +10151,38 @@ func (s *SharedFunctionService) getTrackerMatchInfoForUser(
 		valuesForMatching := make([]string, 0)
 
 		for _, val := range fromData {
-			// Handle combined format: speaker_user_<username>_<usercompanyname> or visitor_user_<username>_<usercompanyname>
-			if strings.HasPrefix(val, "speaker_user_") || strings.HasPrefix(val, "visitor_user_") {
-				// This is the combined format, use it as-is
-				lowerCaseProcessed := strings.ToLower(val)
-				if _, exists := uniquePeopleFinder[lowerCaseProcessed]; !exists {
-					uniquePeopleFinder[lowerCaseProcessed] = val
-					peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, val)
-					parts := strings.Split(val, "_")
-					if len(parts) >= 4 {
-						personValue := parts[2]
-						valuesForMatching = append(valuesForMatching, personValue)
+			lowerCaseProcessed := strings.ToLower(val)
+			if _, exists := uniquePeopleFinder[lowerCaseProcessed]; !exists {
+				uniquePeopleFinder[lowerCaseProcessed] = val
+				peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, val)
+
+				parts := strings.Split(val, "_")
+				var personValue string
+
+				if strings.HasPrefix(val, "speaker_") {
+					if len(parts) >= 3 {
+						personValue = parts[1]
+					} else if len(parts) >= 2 {
+						personValue = strings.TrimPrefix(val, "speaker_")
+					}
+				} else if strings.HasPrefix(val, "visitor_") {
+					if len(parts) >= 3 {
+						personValue = parts[1]
+					} else if len(parts) >= 2 {
+						personValue = strings.TrimPrefix(val, "visitor_")
+					}
+				} else {
+					processedValue := strings.Replace(val, "user_", "", 1)
+					if strings.HasPrefix(processedValue, "speaker_") {
+						personValue = strings.TrimPrefix(processedValue, "speaker_")
+					} else if strings.HasPrefix(processedValue, "visitor_") {
+						personValue = strings.TrimPrefix(processedValue, "visitor_")
+					} else {
+						personValue = processedValue
 					}
 				}
-			} else {
-				processedValue := strings.Replace(val, "user_", "", 1)
-				var personValue string
-				if strings.HasPrefix(processedValue, "speaker_") {
-					personValue = strings.TrimPrefix(processedValue, "speaker_")
-				} else if strings.HasPrefix(processedValue, "visitor_") {
-					personValue = strings.TrimPrefix(processedValue, "visitor_")
-				} else {
-					personValue = processedValue
-				}
 
-				lowerCaseProcessed := strings.ToLower(processedValue)
-				if _, exists := uniquePeopleFinder[lowerCaseProcessed]; !exists {
-					uniquePeopleFinder[lowerCaseProcessed] = processedValue
-					peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, processedValue)
+				if personValue != "" {
 					valuesForMatching = append(valuesForMatching, personValue)
 				}
 			}
@@ -10203,13 +10201,11 @@ func (s *SharedFunctionService) getTrackerMatchInfoForUser(
 			}
 		} else {
 			for _, personData := range valuesForMatching {
-				parts := strings.Split(strings.ToLower(personData), "_")
-				if len(parts) > 1 {
-					for _, orgPersonName := range orgPerson {
-						if strings.Contains(orgPersonName, parts[1]) {
-							countMatched++
-							break
-						}
+				personDataLower := strings.ToLower(personData)
+				for _, orgPersonName := range orgPerson {
+					if strings.Contains(orgPersonName, personDataLower) || strings.Contains(personDataLower, orgPersonName) {
+						countMatched++
+						break
 					}
 				}
 			}
