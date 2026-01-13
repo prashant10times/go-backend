@@ -9252,6 +9252,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 	result := make(map[uint32][]string)
 
 	hasCompanyName := len(filterFields.ParsedCompanyName) > 0
+	hasUserCompanyName := len(filterFields.ParsedUserCompanyName) > 0
 	isSpeakerEntity := false
 	isUserEntity := false
 
@@ -9264,7 +9265,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 	hasUserNameForEntity := (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserName) > 0
 	hasUserIdForEntity := (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserId) > 0
 
-	if (!hasCompanyName && !hasUserNameForEntity && !hasUserIdForEntity) || len(eventIds) == 0 {
+	if (!hasCompanyName && !hasUserCompanyName && !hasUserNameForEntity && !hasUserIdForEntity) || len(eventIds) == 0 {
 		return result, nil
 	}
 
@@ -9343,9 +9344,27 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		}
 	}
 
+	if hasSpeaker && (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserCompanyName) > 0 {
+		for _, companyName := range filterFields.ParsedUserCompanyName {
+			speakerCondition := s.matchPhraseConverter("user_company", companyName)
+			if speakerCondition != "" {
+				speakerConditions = append(speakerConditions, speakerCondition)
+			}
+		}
+	}
+
 	if hasVisitor && (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserName) > 0 {
 		for _, userName := range filterFields.ParsedUserName {
 			visitorCondition := s.matchPhraseConverter("user_name", userName)
+			if visitorCondition != "" {
+				visitorConditions = append(visitorConditions, visitorCondition)
+			}
+		}
+	}
+
+	if hasVisitor && (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserCompanyName) > 0 {
+		for _, companyName := range filterFields.ParsedUserCompanyName {
+			visitorCondition := s.matchPhraseConverter("user_company", companyName)
 			if visitorCondition != "" {
 				visitorConditions = append(visitorConditions, visitorCondition)
 			}
@@ -9514,11 +9533,22 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 
 			isFilteringByUserName := (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserName) > 0
 			isFilteringByUserId := isUserEntity && len(filterFields.ParsedUserId) > 0
+			// Check if company name conditions exist (from either ParsedCompanyName or ParsedUserCompanyName)
+			hasCompanyNameConditions := (hasCompanyName || hasUserCompanyName) && len(visitorConditions) > 0
+			// Check if there are both user name and company name conditions
+			hasBothNameAndCompanyConditions := isFilteringByUserName && hasCompanyNameConditions
+
+			// When searchByEntity=user and both userName and companyName exist, select both fields
+			selectBothFields := isUserEntity && hasBothNameAndCompanyConditions && !isFilteringByUserId
+
 			var selectField string
 			var entityQualificationPrefix string
 			if isFilteringByUserId {
 				selectField = "user_id as person_id"
 				entityQualificationPrefix = "visitor_"
+			} else if selectBothFields {
+				selectField = "user_name as person_name, user_company as company_name"
+				entityQualificationPrefix = "user_"
 			} else if isFilteringByUserName {
 				selectField = "user_name as person_name"
 				entityQualificationPrefix = "user_"
@@ -9556,6 +9586,22 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					value = fmt.Sprintf("%d", userId)
 					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, value)
 					data[eventID] = append(data[eventID], entityQualification)
+				} else if selectBothFields {
+					var personName string
+					var companyName string
+					if err := rows.Scan(&eventID, &personName, &companyName); err != nil {
+						log.Printf("Error scanning visitor row: %v", err)
+						continue
+					}
+					if personName != "" {
+						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
+						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+						data[eventID] = append(data[eventID], entityQualification)
+					}
+					if companyName != "" {
+						entityQualification := fmt.Sprintf("visitor_%s", companyName)
+						data[eventID] = append(data[eventID], entityQualification)
+					}
 				} else {
 					if err := rows.Scan(&eventID, &value); err != nil {
 						log.Printf("Error scanning visitor row: %v", err)
@@ -9593,11 +9639,23 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 			speakerWhereClause := strings.Join(whereClauses, " AND ")
 
 			isFilteringByUserId := isUserEntity && len(filterFields.ParsedUserId) > 0
+			isFilteringByUserName := (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserName) > 0
+			// Check if company name conditions exist (from either ParsedCompanyName or ParsedUserCompanyName)
+			hasCompanyNameConditions := (hasCompanyName || hasUserCompanyName) && len(speakerConditions) > 0
+			// Check if there are both user name and company name conditions
+			hasBothNameAndCompanyConditions := isFilteringByUserName && hasCompanyNameConditions
+
+			// When searchByEntity=user and both userName and companyName exist, select both fields
+			selectBothFields := isUserEntity && hasBothNameAndCompanyConditions && !isFilteringByUserId
+
 			var selectField string
 			var entityQualificationPrefix string
 			if isFilteringByUserId {
 				selectField = "user_id as person_id"
 				entityQualificationPrefix = "speaker_"
+			} else if selectBothFields {
+				selectField = "user_name as person_name, user_company as company_name"
+				entityQualificationPrefix = "speaker_user_"
 			} else {
 				selectField = "user_name as person_name"
 				entityQualificationPrefix = "speaker_user_"
@@ -9632,6 +9690,24 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					value = fmt.Sprintf("%d", userId)
 					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, value)
 					data[eventID] = append(data[eventID], entityQualification)
+				} else if selectBothFields {
+					var personName string
+					var companyName string
+					if err := rows.Scan(&eventID, &personName, &companyName); err != nil {
+						log.Printf("Error scanning speaker row: %v", err)
+						continue
+					}
+					// Add person association if person name exists
+					if personName != "" {
+						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
+						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
+						data[eventID] = append(data[eventID], entityQualification)
+					}
+					// Add company association if company name exists
+					if companyName != "" {
+						entityQualification := fmt.Sprintf("speaker_%s", companyName)
+						data[eventID] = append(data[eventID], entityQualification)
+					}
 				} else {
 					if err := rows.Scan(&eventID, &value); err != nil {
 						log.Printf("Error scanning speaker row: %v", err)
