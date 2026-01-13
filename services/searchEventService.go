@@ -1620,6 +1620,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					}
 				} else if ptr, ok := val.(*uint32); ok && ptr != nil {
 					rowData[col] = *ptr
+				} else if ptr, ok := val.(*int32); ok && ptr != nil {
+					rowData[col] = *ptr
 				} else if ptr, ok := val.(*float64); ok && ptr != nil {
 					rowData[col] = *ptr
 				} else {
