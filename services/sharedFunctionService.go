@@ -9589,12 +9589,17 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						log.Printf("Error scanning visitor row: %v", err)
 						continue
 					}
-					if personName != "" {
+					// Combine both person name and company name into format: visitor_user_<username>_<usercompanyname>
+					if personName != "" && companyName != "" {
+						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
+						companyWithUnderscores := strings.ReplaceAll(companyName, " ", "_")
+						entityQualification := fmt.Sprintf("visitor_user_%s_%s", nameWithUnderscores, companyWithUnderscores)
+						data[eventID] = append(data[eventID], entityQualification)
+					} else if personName != "" {
 						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
 						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
 						data[eventID] = append(data[eventID], entityQualification)
-					}
-					if companyName != "" {
+					} else if companyName != "" {
 						entityQualification := fmt.Sprintf("visitor_%s", companyName)
 						data[eventID] = append(data[eventID], entityQualification)
 					}
@@ -9693,14 +9698,17 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						log.Printf("Error scanning speaker row: %v", err)
 						continue
 					}
-					// Add person association if person name exists
-					if personName != "" {
+					// Combine both person name and company name into format: speaker_user_<username>_<usercompanyname>
+					if personName != "" && companyName != "" {
+						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
+						companyWithUnderscores := strings.ReplaceAll(companyName, " ", "_")
+						entityQualification := fmt.Sprintf("speaker_user_%s_%s", nameWithUnderscores, companyWithUnderscores)
+						data[eventID] = append(data[eventID], entityQualification)
+					} else if personName != "" {
 						nameWithUnderscores := strings.ReplaceAll(personName, " ", "_")
 						entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, nameWithUnderscores)
 						data[eventID] = append(data[eventID], entityQualification)
-					}
-					// Add company association if company name exists
-					if companyName != "" {
+					} else if companyName != "" {
 						entityQualification := fmt.Sprintf("speaker_%s", companyName)
 						data[eventID] = append(data[eventID], entityQualification)
 					}
@@ -9968,21 +9976,36 @@ func (s *SharedFunctionService) getTrackerMatchInfoForUser(
 		valuesForMatching := make([]string, 0)
 
 		for _, val := range fromData {
-			processedValue := strings.Replace(val, "user_", "", 1)
-			var personValue string
-			if strings.HasPrefix(processedValue, "speaker_") {
-				personValue = strings.TrimPrefix(processedValue, "speaker_")
-			} else if strings.HasPrefix(processedValue, "visitor_") {
-				personValue = strings.TrimPrefix(processedValue, "visitor_")
+			// Handle combined format: speaker_user_<username>_<usercompanyname> or visitor_user_<username>_<usercompanyname>
+			if strings.HasPrefix(val, "speaker_user_") || strings.HasPrefix(val, "visitor_user_") {
+				// This is the combined format, use it as-is
+				lowerCaseProcessed := strings.ToLower(val)
+				if _, exists := uniquePeopleFinder[lowerCaseProcessed]; !exists {
+					uniquePeopleFinder[lowerCaseProcessed] = val
+					peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, val)
+					parts := strings.Split(val, "_")
+					if len(parts) >= 4 {
+						personValue := parts[2]
+						valuesForMatching = append(valuesForMatching, personValue)
+					}
+				}
 			} else {
-				personValue = processedValue
-			}
+				processedValue := strings.Replace(val, "user_", "", 1)
+				var personValue string
+				if strings.HasPrefix(processedValue, "speaker_") {
+					personValue = strings.TrimPrefix(processedValue, "speaker_")
+				} else if strings.HasPrefix(processedValue, "visitor_") {
+					personValue = strings.TrimPrefix(processedValue, "visitor_")
+				} else {
+					personValue = processedValue
+				}
 
-			lowerCaseProcessed := strings.ToLower(processedValue)
-			if _, exists := uniquePeopleFinder[lowerCaseProcessed]; !exists {
-				uniquePeopleFinder[lowerCaseProcessed] = processedValue
-				peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, processedValue)
-				valuesForMatching = append(valuesForMatching, personValue)
+				lowerCaseProcessed := strings.ToLower(processedValue)
+				if _, exists := uniquePeopleFinder[lowerCaseProcessed]; !exists {
+					uniquePeopleFinder[lowerCaseProcessed] = processedValue
+					peopleFinderPersonAssociation = append(peopleFinderPersonAssociation, processedValue)
+					valuesForMatching = append(valuesForMatching, personValue)
+				}
 			}
 		}
 
