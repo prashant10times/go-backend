@@ -2425,11 +2425,6 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("entity_required", "searchByEntity is required when companyWebsite is provided")
 			}
 
-			searchByEntityLower := strings.ToLower(strings.TrimSpace(f.SearchByEntity))
-			if searchByEntityLower != "company" {
-				return validation.NewError("invalid_entity_for_company_website", "searchByEntity must be 'company' when companyWebsite is provided")
-			}
-
 			return nil
 		}))),
 
