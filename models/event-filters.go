@@ -2398,35 +2398,6 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("entity_required", "searchByEntity is required when companyName is provided")
 			}
 
-			var searchByEntityValues []string
-			if len(f.ParsedSearchByEntity) > 0 {
-				searchByEntityValues = f.ParsedSearchByEntity
-			} else {
-				searchByEntityParts := strings.Split(f.SearchByEntity, ",")
-				searchByEntityValues = make([]string, 0, len(searchByEntityParts))
-				for _, part := range searchByEntityParts {
-					part = strings.ToLower(strings.TrimSpace(part))
-					if part != "" {
-						searchByEntityValues = append(searchByEntityValues, part)
-					}
-				}
-			}
-
-			validForCompanyName := map[string]bool{
-				"company": true,
-			}
-
-			var invalidValues []string
-			for _, val := range searchByEntityValues {
-				if !validForCompanyName[val] {
-					invalidValues = append(invalidValues, val)
-				}
-			}
-
-			if len(invalidValues) > 0 {
-				return validation.NewError("invalid_entity_for_company_name", "searchByEntity must be 'company' when companyName is provided. Invalid value(s): "+strings.Join(invalidValues, ", "))
-			}
-
 			return nil
 		}))),
 

@@ -9269,11 +9269,33 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		return result, nil
 	}
 
-	hasExhibitor := true
-	hasSponsor := true
-	hasOrganizer := true
-	hasVisitor := true
-	hasSpeaker := true
+	hasExhibitor := false
+	hasSponsor := false
+	hasOrganizer := false
+	hasVisitor := false
+	hasSpeaker := false
+
+	if len(filterFields.ParsedAdvancedSearchBy) > 0 {
+		for _, entity := range filterFields.ParsedAdvancedSearchBy {
+			switch entity {
+			case "exhibitor":
+				hasExhibitor = true
+			case "sponsor":
+				hasSponsor = true
+			case "organizer":
+				hasOrganizer = true
+			case "visitor":
+				hasVisitor = true
+			case "speaker":
+				hasSpeaker = true
+			}
+		}
+	} else {
+		// Default: if no advancedSearchBy specified, run company-related queries
+		hasExhibitor = true
+		hasSponsor = true
+		hasOrganizer = true
+	}
 
 	if !hasExhibitor && !hasSponsor && !hasOrganizer && !hasVisitor && !hasSpeaker {
 		return result, nil
