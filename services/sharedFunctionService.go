@@ -701,7 +701,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			if minCount == 1 && len(filterFields.ParsedUserName) == 1 && len(filterFields.ParsedUserCompanyName) == 1 {
 				nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[0])
 				companyCondition := s.matchPhraseConverter("user_company", filterFields.ParsedUserCompanyName[0])
-				allConditions = append(allConditions, fmt.Sprintf("(%s OR %s)", nameCondition, companyCondition))
+				allConditions = append(allConditions, fmt.Sprintf("(%s AND %s)", nameCondition, companyCondition))
 			} else {
 				for i := 0; i < minCount; i++ {
 					nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[i])
@@ -9533,12 +9533,8 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 
 			isFilteringByUserName := (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserName) > 0
 			isFilteringByUserId := isUserEntity && len(filterFields.ParsedUserId) > 0
-			// Check if company name conditions exist (from either ParsedCompanyName or ParsedUserCompanyName)
 			hasCompanyNameConditions := (hasCompanyName || hasUserCompanyName) && len(visitorConditions) > 0
-			// Check if there are both user name and company name conditions
 			hasBothNameAndCompanyConditions := isFilteringByUserName && hasCompanyNameConditions
-
-			// When searchByEntity=user and both userName and companyName exist, select both fields
 			selectBothFields := isUserEntity && hasBothNameAndCompanyConditions && !isFilteringByUserId
 
 			var selectField string
