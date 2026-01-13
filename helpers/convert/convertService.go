@@ -591,7 +591,8 @@ func (s *ConvertService) convertLocationIds(ctx context.Context, uuids []string)
 			id,
 			name,
 			slug,
-			replace(id_10x, 'country-', '') as iso,
+			id_10x,
+			iso,
 			toInt32OrNull(replace(id_10x, 'city-', '')) as city_id
 		FROM testing_db.location_ch
 		WHERE location_type IN ('COUNTRY', 'CITY', 'STATE', 'VENUE')
@@ -618,18 +619,20 @@ func (s *ConvertService) convertLocationIds(ctx context.Context, uuids []string)
 	venueMap := result["venue"].(map[string]interface{})
 
 	for rows.Next() {
-		var locationUUID, locationType, iso string
+		var locationUUID, locationType, id10x, iso string
 		var name, slug *string
 		var id *uint32
 		var cityID *int32
 
-		if err := rows.Scan(&locationUUID, &locationType, &id, &name, &slug, &iso, &cityID); err != nil {
+		if err := rows.Scan(&locationUUID, &locationType, &id, &name, &slug, &id10x, &iso, &cityID); err != nil {
 			return nil, err
 		}
 
 		locationData := map[string]interface{}{
-			"name": "",
-			"slug": "",
+			"name":   "",
+			"slug":   "",
+			"id_10x": id10x,
+			"iso":    iso,
 		}
 		if name != nil {
 			locationData["name"] = *name
