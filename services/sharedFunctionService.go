@@ -266,6 +266,37 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 
 	byPassAccess := s.ByPassAccess(userId)
 
+	if byPassAccess {
+		var allFilters []models.APIFilter
+		err := s.db.Where("api_id = ? AND is_active = ?", apiId, true).
+			Select("filter_name").
+			Find(&allFilters).Error
+		if err != nil {
+			return nil, err
+		}
+
+		var allFilterNames []string
+		for _, filter := range allFilters {
+			allFilterNames = append(allFilterNames, filter.FilterName)
+		}
+		result.AllowedFilters = allFilterNames
+
+		var allParameters []models.APIParameter
+		err = s.db.Where("api_id = ? AND is_active = ? AND parameter_type = ?", apiId, true, "ADVANCED").
+			Select("parameter_name").
+			Find(&allParameters).Error
+		if err != nil {
+			return nil, err
+		}
+
+		for _, param := range allParameters {
+			result.AllowedAdvancedParameters = append(result.AllowedAdvancedParameters, param.ParameterName)
+		}
+
+		log.Printf("User %s has unlimited access - skipping quota and granting access to all filters and parameters", userId)
+		return &result, nil
+	}
+
 	err := s.db.Transaction(func(tx *gorm.DB) error {
 
 		var updated int64
@@ -278,37 +309,6 @@ func (s *SharedFunctionService) quotaAndFilterVerification(userId, apiId string)
 
 		if updated == 0 {
 			return gorm.ErrRecordNotFound
-		}
-
-		if byPassAccess {
-			var allFilters []models.APIFilter
-			err = tx.Where("api_id = ? AND is_active = ?", apiId, true).
-				Select("filter_name").
-				Find(&allFilters).Error
-			if err != nil {
-				return err
-			}
-
-			var allFilterNames []string
-			for _, filter := range allFilters {
-				allFilterNames = append(allFilterNames, filter.FilterName)
-			}
-			result.AllowedFilters = allFilterNames
-
-			var allParameters []models.APIParameter
-			err = tx.Where("api_id = ? AND is_active = ? AND parameter_type = ?", apiId, true, "ADVANCED").
-				Select("parameter_name").
-				Find(&allParameters).Error
-			if err != nil {
-				return err
-			}
-
-			for _, param := range allParameters {
-				result.AllowedAdvancedParameters = append(result.AllowedAdvancedParameters, param.ParameterName)
-			}
-
-			log.Printf("User %s has unlimited access - granting access to all filters and parameters", userId)
-			return nil
 		}
 
 		var basicFilters []models.APIFilter
