@@ -52,11 +52,13 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 
 	convertService := convert.NewConvertService(clickhouseService)
 	convertController := convert.NewConvertController(convertService)
+	queryHandler := handlers.NewQueryHandler(clickhouseService) //test query
 
 	api := app.Group("/v1")
 	api.Get("/health", healthHandler.HealthCheck)
 	api.Post("/register", authHandler.Register)
 	api.Post("/login", loginHandler.Login)
+	api.Post("/query", queryHandler.ExecuteQuery)
 
 	// helper module routes
 	app.Get("/categories", categoryController.GetCategories)
@@ -65,7 +67,6 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	app.Get("/convert/ids", convertController.ConvertIds)
 	app.Get("/event-types", eventTypeController.GetAll)
 	app.Get("/events/:eventId/polygons", locationPolygonController.GetLocationPolygons)
-
 	api.Get("/events/:eventId/ranking", rankingHandler.Ranking)
 	//protected route
 	api.Use(middleware.JwtAuthMiddleware(dbService.DB))

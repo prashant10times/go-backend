@@ -1428,7 +1428,6 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	// When nil, we want all events for past/active counts, but still use createdAt in SELECT for "new" count
 	if len(filterFields.CreatedAt) > 0 && filterFields.ParsedGetNew != nil && *filterFields.ParsedGetNew {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_created >= '%s'", filterFields.CreatedAt))
 	}
@@ -2809,47 +2808,112 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 	forecasted := filterFields.Forecasted
 	tableAlias := "ee"
 
-	activeFilters := []struct {
-		key       string
-		field     string
-		fieldType string
-		operator  string
-	}{
-		{"ActiveGte", "end_date", "end", ">="},
-		{"ActiveLte", "start_date", "start", "<="},
-		{"ActiveGt", "end_date", "end", ">"},
-		{"ActiveLt", "start_date", "start", "<"},
-	}
+	activeGteValue := s.getFilterValue(filterFields, "ActiveGte")
+	hasActiveGte := activeGteValue != ""
 
-	if forecasted == "included" {
-		var originalConditions []string
-		var futureConditions []string
-
-		for _, filter := range activeFilters {
-			value := s.getFilterValue(filterFields, filter.key)
-			if value != "" {
-				originalField := s.getDateFieldName("", filter.fieldType, tableAlias)
-				futureField := s.getDateFieldName("only", filter.fieldType, tableAlias)
-				originalConditions = append(originalConditions, fmt.Sprintf("%s %s '%s'", originalField, filter.operator, value))
-				futureConditions = append(futureConditions, fmt.Sprintf("%s %s '%s'", futureField, filter.operator, value))
+	if activeGteValue != "" {
+		if forecasted == "included" {
+			originalField := s.getDateFieldName("", "end", tableAlias)
+			futureField := s.getDateFieldName("only", "end", tableAlias)
+			originalCondition := fmt.Sprintf("%s >= '%s'", originalField, activeGteValue)
+			futureCondition := fmt.Sprintf("%s >= '%s'", futureField, activeGteValue)
+			*whereConditions = append(*whereConditions, fmt.Sprintf("((%s) OR (%s))", originalCondition, futureCondition))
+		} else {
+			switch forecasted {
+			case "only":
+				futureField := s.getDateFieldName("only", "end", tableAlias)
+				*whereConditions = append(*whereConditions, fmt.Sprintf("%s >= '%s'", futureField, activeGteValue))
+			default:
+				*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date >= '%s'", activeGteValue))
 			}
 		}
+	}
 
-		if len(originalConditions) > 0 {
-			originalGroup := strings.Join(originalConditions, " AND ")
-			futureGroup := strings.Join(futureConditions, " AND ")
-			*whereConditions = append(*whereConditions, fmt.Sprintf("((%s) OR (%s))", originalGroup, futureGroup))
+	if activeGtValue := s.getFilterValue(filterFields, "ActiveGt"); activeGtValue != "" {
+		if forecasted == "included" {
+			originalField := s.getDateFieldName("", "end", tableAlias)
+			futureField := s.getDateFieldName("only", "end", tableAlias)
+			originalCondition := fmt.Sprintf("%s > '%s'", originalField, activeGtValue)
+			futureCondition := fmt.Sprintf("%s > '%s'", futureField, activeGtValue)
+			*whereConditions = append(*whereConditions, fmt.Sprintf("((%s) OR (%s))", originalCondition, futureCondition))
+		} else {
+			switch forecasted {
+			case "only":
+				futureField := s.getDateFieldName("only", "end", tableAlias)
+				*whereConditions = append(*whereConditions, fmt.Sprintf("%s > '%s'", futureField, activeGtValue))
+			default:
+				*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date > '%s'", activeGtValue))
+			}
 		}
-	} else {
-		for _, filter := range activeFilters {
-			value := s.getFilterValue(filterFields, filter.key)
-			if value != "" {
+	}
+
+	if activeLteValue := s.getFilterValue(filterFields, "ActiveLte"); activeLteValue != "" {
+		if hasActiveGte {
+			if forecasted == "included" {
+				originalField := s.getDateFieldName("", "start", tableAlias)
+				futureField := s.getDateFieldName("only", "start", tableAlias)
+				originalCondition := fmt.Sprintf("%s <= '%s'", originalField, activeLteValue)
+				futureCondition := fmt.Sprintf("%s <= '%s'", futureField, activeLteValue)
+				*whereConditions = append(*whereConditions, fmt.Sprintf("((%s) OR (%s))", originalCondition, futureCondition))
+			} else {
 				switch forecasted {
 				case "only":
-					futureField := s.getDateFieldName("only", filter.fieldType, tableAlias)
-					*whereConditions = append(*whereConditions, fmt.Sprintf("%s %s '%s'", futureField, filter.operator, value))
+					futureField := s.getDateFieldName("only", "start", tableAlias)
+					*whereConditions = append(*whereConditions, fmt.Sprintf("%s <= '%s'", futureField, activeLteValue))
 				default:
-					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.%s %s '%s'", filter.field, filter.operator, value))
+					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.start_date <= '%s'", activeLteValue))
+				}
+			}
+		} else {
+			if forecasted == "included" {
+				originalField := s.getDateFieldName("", "end", tableAlias)
+				futureField := s.getDateFieldName("only", "end", tableAlias)
+				originalCondition := fmt.Sprintf("%s < '%s'", originalField, activeLteValue)
+				futureCondition := fmt.Sprintf("%s < '%s'", futureField, activeLteValue)
+				*whereConditions = append(*whereConditions, fmt.Sprintf("((%s) OR (%s))", originalCondition, futureCondition))
+			} else {
+				switch forecasted {
+				case "only":
+					futureField := s.getDateFieldName("only", "end", tableAlias)
+					*whereConditions = append(*whereConditions, fmt.Sprintf("%s < '%s'", futureField, activeLteValue))
+				default:
+					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date < '%s'", activeLteValue))
+				}
+			}
+		}
+	}
+
+	if activeLtValue := s.getFilterValue(filterFields, "ActiveLt"); activeLtValue != "" {
+		if hasActiveGte {
+			if forecasted == "included" {
+				originalField := s.getDateFieldName("", "start", tableAlias)
+				futureField := s.getDateFieldName("only", "start", tableAlias)
+				originalCondition := fmt.Sprintf("%s < '%s'", originalField, activeLtValue)
+				futureCondition := fmt.Sprintf("%s < '%s'", futureField, activeLtValue)
+				*whereConditions = append(*whereConditions, fmt.Sprintf("((%s) OR (%s))", originalCondition, futureCondition))
+			} else {
+				switch forecasted {
+				case "only":
+					futureField := s.getDateFieldName("only", "start", tableAlias)
+					*whereConditions = append(*whereConditions, fmt.Sprintf("%s < '%s'", futureField, activeLtValue))
+				default:
+					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.start_date < '%s'", activeLtValue))
+				}
+			}
+		} else {
+			if forecasted == "included" {
+				originalField := s.getDateFieldName("", "end", tableAlias)
+				futureField := s.getDateFieldName("only", "end", tableAlias)
+				originalCondition := fmt.Sprintf("%s < '%s'", originalField, activeLtValue)
+				futureCondition := fmt.Sprintf("%s < '%s'", futureField, activeLtValue)
+				*whereConditions = append(*whereConditions, fmt.Sprintf("((%s) OR (%s))", originalCondition, futureCondition))
+			} else {
+				switch forecasted {
+				case "only":
+					futureField := s.getDateFieldName("only", "end", tableAlias)
+					*whereConditions = append(*whereConditions, fmt.Sprintf("%s < '%s'", futureField, activeLtValue))
+				default:
+					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date < '%s'", activeLtValue))
 				}
 			}
 		}
