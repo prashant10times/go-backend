@@ -1287,8 +1287,9 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addRangeFilters("editions", "event_editions", &whereConditions, filterFields, false)
 	s.addRangeFilters("start", "start_date", &whereConditions, filterFields, true)
 	s.addRangeFilters("end", "end_date", &whereConditions, filterFields, true)
-	// Only add createdAt range filters if getNew is not false
-	if filterFields.ParsedGetNew == nil || *filterFields.ParsedGetNew {
+
+	// When nil, we want all events for past/active counts, but still use createdAt in SELECT for "new" count
+	if filterFields.ParsedGetNew != nil && *filterFields.ParsedGetNew {
 		s.addRangeFilters("createdAt", "event_created", &whereConditions, filterFields, true)
 	}
 	s.addRangeFilters("inboundScore", "inboundScore", &whereConditions, filterFields, false)
@@ -1427,8 +1428,8 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	// Only add createdAt condition if getNew is not false
-	if len(filterFields.CreatedAt) > 0 && (filterFields.ParsedGetNew == nil || *filterFields.ParsedGetNew) {
+	// When nil, we want all events for past/active counts, but still use createdAt in SELECT for "new" count
+	if len(filterFields.CreatedAt) > 0 && filterFields.ParsedGetNew != nil && *filterFields.ParsedGetNew {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_created >= '%s'", filterFields.CreatedAt))
 	}
 
