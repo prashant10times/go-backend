@@ -1621,10 +1621,31 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		for _, mode := range filterFields.ParsedMode {
 			escapedModes = append(escapedModes, fmt.Sprintf("'%s'", strings.ReplaceAll(mode, "'", "''")))
 		}
+
+		// Check if all three modes (ONLINE, OFFLINE, HYBRID) are present
+		hasOnline := false
+		hasOffline := false
+		hasHybrid := false
+		for _, mode := range filterFields.ParsedMode {
+			switch mode {
+			case "ONLINE":
+				hasOnline = true
+			case "OFFLINE":
+				hasOffline = true
+			case "HYBRID":
+				hasHybrid = true
+			}
+		}
+		allModesPresent := hasOnline && hasOffline && hasHybrid
+
 		if len(escapedModes) == 1 {
 			whereConditions = append(whereConditions, fmt.Sprintf("ee.event_format = %s", escapedModes[0]))
 		} else {
-			whereConditions = append(whereConditions, fmt.Sprintf("ee.event_format IN (%s)", strings.Join(escapedModes, ",")))
+			condition := fmt.Sprintf("ee.event_format IN (%s)", strings.Join(escapedModes, ","))
+			if allModesPresent {
+				condition = fmt.Sprintf("(%s OR ee.event_format IS NULL)", condition)
+			}
+			whereConditions = append(whereConditions, condition)
 		}
 	}
 
