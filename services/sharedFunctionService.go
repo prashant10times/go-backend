@@ -1428,8 +1428,10 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if len(filterFields.CreatedAt) > 0 && filterFields.ParsedGetNew != nil && *filterFields.ParsedGetNew {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_created >= '%s'", filterFields.CreatedAt))
+	if len(filterFields.CreatedAt) > 0 {
+		if filterFields.ParsedGetNew == nil || (filterFields.ParsedGetNew != nil && *filterFields.ParsedGetNew == true) {
+			whereConditions = append(whereConditions, fmt.Sprintf("ee.event_created >= '%s'", filterFields.CreatedAt))
+		}
 	}
 
 	if len(filterFields.ParsedDates) > 0 {
