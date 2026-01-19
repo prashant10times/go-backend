@@ -1362,10 +1362,10 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 			latField := "COALESCE(ee.venue_lat, ee.edition_city_lat)"
 			lonField := "COALESCE(ee.venue_long, ee.edition_city_long)"
-			whereConditions = append(whereConditions, "(ee.venue_lat IS NOT NULL AND ee.venue_long IS NOT NULL) OR (ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL)")
-
-			whereConditions = append(whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
-				geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters))
+			coordinateExistsCondition := "(ee.venue_lat IS NOT NULL AND ee.venue_long IS NOT NULL) OR (ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL)"
+			distanceCondition := fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
+				geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters)
+			whereConditions = append(whereConditions, fmt.Sprintf("(%s) AND %s", coordinateExistsCondition, distanceCondition))
 
 			if filterFields.EventDistanceOrder != "" {
 				orderDirection := "ASC"
@@ -1401,10 +1401,10 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 					latField := "COALESCE(ee.venue_lat, ee.edition_city_lat)"
 					lonField := "COALESCE(ee.venue_long, ee.edition_city_long)"
-					whereConditions = append(whereConditions, "(ee.venue_lat IS NOT NULL AND ee.venue_long IS NOT NULL) OR (ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL)")
-
-					whereConditions = append(whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
-						geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters))
+					coordinateExistsCondition := "(ee.venue_lat IS NOT NULL AND ee.venue_long IS NOT NULL) OR (ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL)"
+					distanceCondition := fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
+						geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters)
+					whereConditions = append(whereConditions, fmt.Sprintf("(%s) AND %s", coordinateExistsCondition, distanceCondition))
 				}
 				// case models.BoundTypeBox:
 				// 	var boxCoords []float64
