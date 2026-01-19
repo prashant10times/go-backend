@@ -959,8 +959,8 @@ func (s *SearchEventService) buildOrderByClauses(sortClause []SortClause, queryR
 			case "event_updated":
 				eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "event_updated", "updated")
 			}
-			eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
 		}
+		eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
 	}
 
 	return orderByClause, eventFilterOrderBy, nil
