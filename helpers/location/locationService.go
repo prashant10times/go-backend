@@ -272,7 +272,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			state.country_uuid AS state_country_id
 		FROM location_ids
 		LEFT JOIN testing_db.location_ch AS location
-			ON location_ids.id_uuid = location.id_uuid 
+			ON location_ids.id = location.id_uuid 
 			AND location.location_type IN ('VENUE', 'CITY', 'COUNTRY', 'STATE') 
 			AND location.published = 1
 		LEFT JOIN testing_db.location_ch AS city
