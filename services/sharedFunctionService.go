@@ -5550,7 +5550,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		eventGroupCountConditions := []string{}
 
 		if publishedMap["4"] {
-			eventGroupCountConditions = append(eventGroupCountConditions, "(e.published = '4' AND has(et.groups, 'unattended'))")
+			eventGroupCountConditions = append(eventGroupCountConditions, "(ee.published = '4' AND has(et.groups, 'unattended'))")
 		}
 
 		businessSocialPublished := []string{}
@@ -5564,20 +5564,20 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		if len(businessSocialPublished) > 0 {
 			publishedCondition := ""
 			if len(businessSocialPublished) == 1 {
-				publishedCondition = fmt.Sprintf("e.published = %s", businessSocialPublished[0])
+				publishedCondition = fmt.Sprintf("ee.published = %s", businessSocialPublished[0])
 			} else {
-				publishedCondition = fmt.Sprintf("e.published IN (%s)", strings.Join(businessSocialPublished, ", "))
+				publishedCondition = fmt.Sprintf("ee.published IN (%s)", strings.Join(businessSocialPublished, ", "))
 			}
 
-			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'business') and et.event_audience = e.editions_audiance_type)", publishedCondition))
-			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'social') and et.event_audience = e.editions_audiance_type)", publishedCondition))
+			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'business') and et.event_audience = ee.editions_audiance_type)", publishedCondition))
+			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'social') and et.event_audience = ee.editions_audiance_type)", publishedCondition))
 		}
 
 		if len(eventGroupCountConditions) == 0 {
 			eventGroupCountConditions = []string{
-				"(e.published = '4' AND has(et.groups, 'unattended'))",
-				"(e.published = '1' AND has(et.groups, 'business') and et.event_audience = e.editions_audiance_type)",
-				"(e.published = '1' AND has(et.groups, 'social') and et.event_audience = e.editions_audiance_type)",
+				"(ee.published = '4' AND has(et.groups, 'unattended'))",
+				"(ee.published = '1' AND has(et.groups, 'business') and et.event_audience = ee.editions_audiance_type)",
+				"(ee.published = '1' AND has(et.groups, 'social') and et.event_audience = ee.editions_audiance_type)",
 			}
 		}
 
@@ -5585,10 +5585,14 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 
 		groupedSelectClauses := []string{
 			"CASE WHEN has(et.groups, 'unattended') THEN 'unattended' WHEN has(et.groups, 'business') THEN 'business' WHEN has(et.groups, 'social') THEN 'social' END AS group_name",
-			"uniq(e.event_id) AS event_count",
+			"uniq(ee.event_id) AS event_count",
 		}
 		if len(selectClauses) > 0 {
-			groupedSelectClauses = append(groupedSelectClauses, selectClauses...)
+			updatedSelectClauses := make([]string, len(selectClauses))
+			for i, clause := range selectClauses {
+				updatedSelectClauses[i] = strings.ReplaceAll(clause, "e.", "ee.")
+			}
+			groupedSelectClauses = append(groupedSelectClauses, updatedSelectClauses...)
 		}
 		groupedSelectStr := strings.Join(groupedSelectClauses, ", ")
 
@@ -5629,8 +5633,8 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			grouped AS (
 				SELECT
 					%s
-				FROM preFilterEvent e
-				INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1
+				FROM preFilterEvent AS ee
+				INNER JOIN testing_db.event_type_ch et ON ee.event_id = et.event_id and et.published = 1
 				WHERE %s
 				GROUP BY group_name
 			)
