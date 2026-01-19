@@ -2705,25 +2705,54 @@ func (s *SharedFunctionService) addRangeFilters(filterKey string, dbField string
 }
 
 func (s *SharedFunctionService) addEstimatedExhibitorsFilter(whereConditions *[]string, filterFields models.FilterDataDto) {
-	if filterFields.EstimatedExhibitors == "" {
+	var ranges []string
+
+	if len(filterFields.ParsedEstimatedExhibitors) > 0 {
+		ranges = filterFields.ParsedEstimatedExhibitors
+	} else if filterFields.EstimatedExhibitors != "" {
+		ranges = strings.Split(filterFields.EstimatedExhibitors, ",")
+		for i, r := range ranges {
+			ranges[i] = strings.TrimSpace(r)
+		}
+	} else {
 		return
 	}
 
-	var gte, lte int
-	switch filterFields.EstimatedExhibitors {
-	case "0-100":
-		gte, lte = 0, 100
-	case "100-500":
-		gte, lte = 100, 500
-	case "500-1000":
-		gte, lte = 500, 1000
-	case "1000":
-		gte, lte = 1000, 1000000
-	default:
+	if len(ranges) == 0 {
 		return
 	}
 
-	condition := fmt.Sprintf("ee.exhibitors_mean IS NOT NULL AND ee.exhibitors_mean >= %d AND ee.exhibitors_mean <= %d", gte, lte)
+	var rangeConditions []string
+
+	for _, rangeStr := range ranges {
+		if rangeStr == "" {
+			continue
+		}
+
+		var gte, lte int
+
+		switch rangeStr {
+		case "0-100":
+			gte, lte = 0, 100
+		case "100-500":
+			gte, lte = 100, 500
+		case "500-1000":
+			gte, lte = 500, 1000
+		case "1000":
+			gte, lte = 1000, 1000000
+		default:
+			continue
+		}
+
+		rangeConditions = append(rangeConditions, fmt.Sprintf("(e.\"estimatedExhibitorMean\" >= %d AND e.\"estimatedExhibitorMean\" <= %d)", gte, lte))
+	}
+
+	if len(rangeConditions) == 0 {
+		return
+	}
+
+	// Combine all range conditions with OR and add NULL check
+	condition := fmt.Sprintf("e.\"estimatedExhibitorMean\" IS NOT NULL AND (%s)", strings.Join(rangeConditions, " OR "))
 	*whereConditions = append(*whereConditions, condition)
 }
 

@@ -374,30 +374,31 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedAvgRating         []RatingRange `json:"-"`
-	ParsedTrackerDates      []string      `json:"-"`
-	ParsedCalendarType      *string       `json:"-"`
-	ParsedDateView          *string       `json:"-"`
-	ParsedColumns           []string      `json:"-"`
-	ParsedGroupByTrends     *string       `json:"-"`
-	ParsedRegions           []string      `json:"-"`
-	ParsedCountryIds        []string      `json:"-"`
-	ParsedStateIds          []string      `json:"-"`
-	ParsedCityIds           []string      `json:"-"`
-	ParsedVenueIds          []string      `json:"-"`
-	ParsedCategoryIds       []string      `json:"-"`
-	ParsedUserId            []string      `json:"-"`
-	ParsedUserName          []string      `json:"-"`
-	ParsedUserCompanyName   []string      `json:"-"`
-	ParsedCompanyId         []string      `json:"-"`
-	ParsedCompanyName       []string      `json:"-"`
-	ParsedFrequency         []string      `json:"-"`
-	ParsedCompanyWebsite    []string      `json:"-"`
-	ParsedSearchByEntity    []string      `json:"-"`
-	ParsedAdvancedSearchBy  []string      `json:"-"` // Parsed version of AdvanceSearchBy
-	ParsedPrice             []string      `json:"-"`
-	ParsedEstimatedVisitors []string      `json:"-"`
-	ParsedMaturity          []string      `json:"-"`
+	ParsedAvgRating           []RatingRange `json:"-"`
+	ParsedTrackerDates        []string      `json:"-"`
+	ParsedCalendarType        *string       `json:"-"`
+	ParsedDateView            *string       `json:"-"`
+	ParsedColumns             []string      `json:"-"`
+	ParsedGroupByTrends       *string       `json:"-"`
+	ParsedRegions             []string      `json:"-"`
+	ParsedCountryIds          []string      `json:"-"`
+	ParsedStateIds            []string      `json:"-"`
+	ParsedCityIds             []string      `json:"-"`
+	ParsedVenueIds            []string      `json:"-"`
+	ParsedCategoryIds         []string      `json:"-"`
+	ParsedUserId              []string      `json:"-"`
+	ParsedUserName            []string      `json:"-"`
+	ParsedUserCompanyName     []string      `json:"-"`
+	ParsedCompanyId           []string      `json:"-"`
+	ParsedCompanyName         []string      `json:"-"`
+	ParsedFrequency           []string      `json:"-"`
+	ParsedCompanyWebsite      []string      `json:"-"`
+	ParsedSearchByEntity      []string      `json:"-"`
+	ParsedAdvancedSearchBy    []string      `json:"-"` // Parsed version of AdvanceSearchBy
+	ParsedPrice               []string      `json:"-"`
+	ParsedEstimatedVisitors   []string      `json:"-"`
+	ParsedEstimatedExhibitors []string      `json:"-"`
+	ParsedMaturity            []string      `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -1227,7 +1228,48 @@ func (f *FilterDataDto) Validate() error {
 			return nil
 		}))), // EstimatedVisitors validation
 
-		validation.Field(&f.EstimatedExhibitors, validation.When(f.EstimatedExhibitors != "", validation.In("0-100", "100-500", "500-1000", "1000"))),
+		validation.Field(&f.EstimatedExhibitors, validation.When(f.EstimatedExhibitors != "", validation.By(func(value interface{}) error {
+			estimatedExhibitorsStr := value.(string)
+			if estimatedExhibitorsStr == "" {
+				return nil
+			}
+
+			estimatedExhibitors := strings.Split(estimatedExhibitorsStr, ",")
+			f.ParsedEstimatedExhibitors = make([]string, 0, len(estimatedExhibitors))
+
+			predefinedValues := map[string]bool{
+				"0-100":    true,
+				"100-500":  true,
+				"500-1000": true,
+				"1000":     true,
+			}
+
+			var invalidValues []string
+			seenValues := make(map[string]bool)
+			for _, ee := range estimatedExhibitors {
+				ee = strings.TrimSpace(ee)
+				if ee != "" {
+					if predefinedValues[ee] {
+						if !seenValues[ee] {
+							f.ParsedEstimatedExhibitors = append(f.ParsedEstimatedExhibitors, ee)
+							seenValues[ee] = true
+						}
+					} else {
+						invalidValues = append(invalidValues, ee)
+					}
+				}
+			}
+
+			if len(invalidValues) > 0 {
+				return validation.NewError("invalid_estimated_exhibitors", "Invalid estimatedExhibitors value(s): "+strings.Join(invalidValues, ", ")+". Valid values are: 0-100, 100-500, 500-1000, 1000")
+			}
+
+			if len(f.ParsedEstimatedExhibitors) == 0 {
+				return validation.NewError("empty_estimated_exhibitors", "estimatedExhibitors cannot be empty after parsing")
+			}
+
+			return nil
+		}))), // EstimatedExhibitors validation
 
 		validation.Field(&f.Maturity, validation.When(f.Maturity != "", validation.By(func(value interface{}) error {
 			maturityStr := value.(string)
