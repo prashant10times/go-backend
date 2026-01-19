@@ -2744,7 +2744,7 @@ func (s *SharedFunctionService) addEstimatedExhibitorsFilter(whereConditions *[]
 			continue
 		}
 
-		rangeConditions = append(rangeConditions, fmt.Sprintf("(e.\"estimatedExhibitorMean\" >= %d AND e.\"estimatedExhibitorMean\" <= %d)", gte, lte))
+		rangeConditions = append(rangeConditions, fmt.Sprintf("(ee.exhibitors_mean >= %d AND ee.exhibitors_mean <= %d)", gte, lte))
 	}
 
 	if len(rangeConditions) == 0 {
@@ -2752,7 +2752,7 @@ func (s *SharedFunctionService) addEstimatedExhibitorsFilter(whereConditions *[]
 	}
 
 	// Combine all range conditions with OR and add NULL check
-	condition := fmt.Sprintf("e.\"estimatedExhibitorMean\" IS NOT NULL AND (%s)", strings.Join(rangeConditions, " OR "))
+	condition := fmt.Sprintf("ee.exhibitors_mean IS NOT NULL AND (%s)", strings.Join(rangeConditions, " OR "))
 	*whereConditions = append(*whereConditions, condition)
 }
 
