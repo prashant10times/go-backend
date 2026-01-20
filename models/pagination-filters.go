@@ -51,7 +51,7 @@ func (p *PaginationDto) Validate() error {
 	p.SetDefaultValues()
 
 	return validation.ValidateStruct(p,
-		validation.Field(&p.Limit, validation.Max(100).Error("Limit must be less than or equal to 500")),
+		validation.Field(&p.Limit, validation.Max(500).Error("Limit must be less than or equal to 500")),
 		validation.Field(&p.Offset, validation.Min(0).Error("Offset must be non-negative")),
 		validation.Field(&p.Sort, validation.By(func(value interface{}) error {
 			sortStr := value.(string)
