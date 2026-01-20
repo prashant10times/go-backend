@@ -466,7 +466,9 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	}
 
 	if len(locations) == 0 {
-		return nil, middleware.NewNotFoundError("No record found", "")
+		return map[string]interface{}{
+			"formattedLocations": []Location{},
+		}, nil
 	}
 
 	return map[string]interface{}{
