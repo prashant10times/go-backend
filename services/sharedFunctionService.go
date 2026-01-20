@@ -9398,6 +9398,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 	hasCompanyName := len(filterFields.ParsedCompanyName) > 0
 	hasUserCompanyName := len(filterFields.ParsedUserCompanyName) > 0
 	hasCompanyWebsite := len(filterFields.ParsedCompanyWebsite) > 0
+	hasCompanyId := len(filterFields.ParsedCompanyId) > 0
 	isSpeakerEntity := false
 	isUserEntity := false
 
@@ -9410,7 +9411,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 	hasUserNameForEntity := (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserName) > 0
 	hasUserIdForEntity := (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserId) > 0
 
-	if (!hasCompanyName && !hasUserCompanyName && !hasCompanyWebsite && !hasUserNameForEntity && !hasUserIdForEntity) || len(eventIds) == 0 {
+	if (!hasCompanyName && !hasUserCompanyName && !hasCompanyWebsite && !hasCompanyId && !hasUserNameForEntity && !hasUserIdForEntity) || len(eventIds) == 0 {
 		return result, nil
 	}
 
@@ -9576,6 +9577,15 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		}
 		if hasVisitor {
 			visitorUserIdConditions = append(visitorUserIdConditions, userIdCondition)
+		}
+	}
+
+	// Prepare companyId flag for ID-based queries
+	var hasCompanyIdQueries bool
+	if hasCompanyId && len(filterFields.ParsedCompanyId) > 0 {
+		// Set flags to indicate we have companyId queries
+		if hasExhibitor || hasSponsor || hasOrganizer || hasVisitor || hasSpeaker {
+			hasCompanyIdQueries = true
 		}
 	}
 
@@ -10024,6 +10034,209 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		}()
 	}
 
+	// Check if we have name-based conditions (companyId queries should only run if no name-based conditions exist)
+	hasNameBasedConditions := len(exhibitorConditions) > 0 || len(sponsorConditions) > 0 || len(organizerConditions) > 0 || len(visitorConditions) > 0 || len(speakerConditions) > 0 || len(speakerUserIdConditions) > 0 || len(visitorUserIdConditions) > 0
+
+	// Execute companyId-based queries (only if no name-based conditions exist)
+	if hasCompanyIdQueries && !hasNameBasedConditions && len(filterFields.ParsedCompanyId) > 0 {
+		escapeSqlValue := func(value string) string {
+			return strings.ReplaceAll(value, "'", "''")
+		}
+		companyIds := make([]string, 0, len(filterFields.ParsedCompanyId))
+		for _, companyId := range filterFields.ParsedCompanyId {
+			escaped := escapeSqlValue(companyId)
+			companyIds = append(companyIds, fmt.Sprintf("'%s'", escaped))
+		}
+		companyIdCondition := fmt.Sprintf("company_id IN (%s)", strings.Join(companyIds, ","))
+		userCompanyIdCondition := fmt.Sprintf("user_company_id IN (%s)", strings.Join(companyIds, ","))
+		companyIdValue := filterFields.ParsedCompanyId[0]
+
+		if hasExhibitor {
+			go func() {
+				exhibitorQuery := fmt.Sprintf(`
+					SELECT DISTINCT event_id
+					FROM testing_db.event_exhibitor_ch
+					WHERE event_id IN (%s)
+					AND %s
+				`, eventIdsStrJoined, companyIdCondition)
+				log.Printf("Exhibitor companyId query: %s", exhibitorQuery)
+
+				rows, err := s.clickhouseService.ExecuteQuery(ctx, exhibitorQuery)
+				if err != nil {
+					queryChan <- queryResult{EntityType: "exhibitor", Data: nil, Err: err}
+					return
+				}
+				defer rows.Close()
+
+				data := make(map[uint32][]string)
+				for rows.Next() {
+					var eventID uint32
+					if err := rows.Scan(&eventID); err != nil {
+						log.Printf("Error scanning exhibitor companyId row: %v", err)
+						continue
+					}
+					entityQualification := fmt.Sprintf("exhibitor_%s", companyIdValue)
+					data[eventID] = append(data[eventID], entityQualification)
+				}
+
+				if err := rows.Err(); err != nil {
+					queryChan <- queryResult{EntityType: "exhibitor", Data: nil, Err: err}
+					return
+				}
+
+				queryChan <- queryResult{EntityType: "exhibitor", Data: data, Err: nil}
+			}()
+		}
+
+		if hasSponsor {
+			go func() {
+				sponsorQuery := fmt.Sprintf(`
+					SELECT DISTINCT event_id
+					FROM testing_db.event_sponsors_ch
+					WHERE event_id IN (%s)
+					AND %s
+				`, eventIdsStrJoined, companyIdCondition)
+				log.Printf("Sponsor companyId query: %s", sponsorQuery)
+
+				rows, err := s.clickhouseService.ExecuteQuery(ctx, sponsorQuery)
+				if err != nil {
+					queryChan <- queryResult{EntityType: "sponsor", Data: nil, Err: err}
+					return
+				}
+				defer rows.Close()
+
+				data := make(map[uint32][]string)
+				for rows.Next() {
+					var eventID uint32
+					if err := rows.Scan(&eventID); err != nil {
+						log.Printf("Error scanning sponsor companyId row: %v", err)
+						continue
+					}
+					entityQualification := fmt.Sprintf("sponsor_%s", companyIdValue)
+					data[eventID] = append(data[eventID], entityQualification)
+				}
+
+				if err := rows.Err(); err != nil {
+					queryChan <- queryResult{EntityType: "sponsor", Data: nil, Err: err}
+					return
+				}
+
+				queryChan <- queryResult{EntityType: "sponsor", Data: data, Err: nil}
+			}()
+		}
+
+		if hasOrganizer {
+			go func() {
+				organizerQuery := fmt.Sprintf(`
+					SELECT DISTINCT event_id
+					FROM testing_db.allevent_ch
+					WHERE event_id IN (%s)
+					AND %s
+				`, eventIdsStrJoined, companyIdCondition)
+				log.Printf("Organizer companyId query: %s", organizerQuery)
+
+				rows, err := s.clickhouseService.ExecuteQuery(ctx, organizerQuery)
+				if err != nil {
+					queryChan <- queryResult{EntityType: "organizer", Data: nil, Err: err}
+					return
+				}
+				defer rows.Close()
+
+				data := make(map[uint32][]string)
+				for rows.Next() {
+					var eventID uint32
+					if err := rows.Scan(&eventID); err != nil {
+						log.Printf("Error scanning organizer companyId row: %v", err)
+						continue
+					}
+					entityQualification := fmt.Sprintf("organizer_%s", companyIdValue)
+					data[eventID] = append(data[eventID], entityQualification)
+				}
+
+				if err := rows.Err(); err != nil {
+					queryChan <- queryResult{EntityType: "organizer", Data: nil, Err: err}
+					return
+				}
+
+				queryChan <- queryResult{EntityType: "organizer", Data: data, Err: nil}
+			}()
+		}
+
+		if hasVisitor {
+			go func() {
+				visitorQuery := fmt.Sprintf(`
+					SELECT DISTINCT event_id
+					FROM testing_db.event_visitors_ch
+					WHERE event_id IN (%s)
+					AND %s
+				`, eventIdsStrJoined, userCompanyIdCondition)
+				log.Printf("Visitor companyId query: %s", visitorQuery)
+
+				rows, err := s.clickhouseService.ExecuteQuery(ctx, visitorQuery)
+				if err != nil {
+					queryChan <- queryResult{EntityType: "visitor", Data: nil, Err: err}
+					return
+				}
+				defer rows.Close()
+
+				data := make(map[uint32][]string)
+				for rows.Next() {
+					var eventID uint32
+					if err := rows.Scan(&eventID); err != nil {
+						log.Printf("Error scanning visitor companyId row: %v", err)
+						continue
+					}
+					entityQualification := fmt.Sprintf("visitor_%s", companyIdValue)
+					data[eventID] = append(data[eventID], entityQualification)
+				}
+
+				if err := rows.Err(); err != nil {
+					queryChan <- queryResult{EntityType: "visitor", Data: nil, Err: err}
+					return
+				}
+
+				queryChan <- queryResult{EntityType: "visitor", Data: data, Err: nil}
+			}()
+		}
+
+		if hasSpeaker {
+			go func() {
+				speakerQuery := fmt.Sprintf(`
+					SELECT DISTINCT event_id
+					FROM testing_db.event_speaker_ch
+					WHERE event_id IN (%s)
+					AND %s
+				`, eventIdsStrJoined, userCompanyIdCondition)
+				log.Printf("Speaker companyId query: %s", speakerQuery)
+
+				rows, err := s.clickhouseService.ExecuteQuery(ctx, speakerQuery)
+				if err != nil {
+					queryChan <- queryResult{EntityType: "speaker", Data: nil, Err: err}
+					return
+				}
+				defer rows.Close()
+
+				data := make(map[uint32][]string)
+				for rows.Next() {
+					var eventID uint32
+					if err := rows.Scan(&eventID); err != nil {
+						log.Printf("Error scanning speaker companyId row: %v", err)
+						continue
+					}
+					entityQualification := fmt.Sprintf("speaker_%s", companyIdValue)
+					data[eventID] = append(data[eventID], entityQualification)
+				}
+
+				if err := rows.Err(); err != nil {
+					queryChan <- queryResult{EntityType: "speaker", Data: nil, Err: err}
+					return
+				}
+
+				queryChan <- queryResult{EntityType: "speaker", Data: data, Err: nil}
+			}()
+		}
+	}
+
 	queryCount := 0
 	if hasExhibitor && len(exhibitorConditions) > 0 {
 		queryCount++
@@ -10039,6 +10252,24 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 	}
 	if hasSpeaker && (len(speakerConditions) > 0 || len(speakerUserIdConditions) > 0) {
 		queryCount++
+	}
+	// Count companyId queries (only if no name-based conditions exist)
+	if hasCompanyIdQueries && !hasNameBasedConditions {
+		if hasExhibitor {
+			queryCount++
+		}
+		if hasSponsor {
+			queryCount++
+		}
+		if hasOrganizer {
+			queryCount++
+		}
+		if hasVisitor {
+			queryCount++
+		}
+		if hasSpeaker {
+			queryCount++
+		}
 	}
 
 	for i := 0; i < queryCount; i++ {
