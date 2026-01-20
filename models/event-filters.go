@@ -2050,6 +2050,12 @@ func (f *FilterDataDto) Validate() error {
 				return nil
 			}
 
+			if len(viewBoundStr) >= 2 && viewBoundStr[0] == '"' && viewBoundStr[len(viewBoundStr)-1] == '"' {
+				var jsonStr string
+				if err := json.Unmarshal([]byte(viewBoundStr), &jsonStr); err == nil {
+					viewBoundStr = jsonStr
+				}
+			}
 			var viewBound ViewBound
 			if err := json.Unmarshal([]byte(viewBoundStr), &viewBound); err != nil {
 				return validation.NewError("invalid_view_bound", "Invalid viewBound JSON: "+err.Error())
@@ -2123,6 +2129,13 @@ func (f *FilterDataDto) Validate() error {
 			viewBoundsStr = strings.TrimSpace(viewBoundsStr)
 			if viewBoundsStr == "" {
 				return nil
+			}
+
+			if len(viewBoundsStr) >= 2 && viewBoundsStr[0] == '"' && viewBoundsStr[len(viewBoundsStr)-1] == '"' {
+				var jsonStr string
+				if err := json.Unmarshal([]byte(viewBoundsStr), &jsonStr); err == nil {
+					viewBoundsStr = jsonStr
+				}
 			}
 
 			var viewBoundsArray []ViewBound
