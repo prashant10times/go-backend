@@ -971,6 +971,7 @@ func (s *SearchEventService) buildEventFilterFields(
 	queryResult *ClickHouseQueryResult,
 	dbToAliasMap map[string]string,
 	conditionalFields []string,
+	eventFilterOrderBy string,
 ) (*EventFilterFields, []string) {
 	eventFilterSelectFields := []string{"ee.event_id as event_id", "ee.edition_id as edition_id"}
 	eventFilterGroupByFields := []string{"ee.event_id", "ee.edition_id"}
@@ -1007,7 +1008,6 @@ func (s *SearchEventService) buildEventFilterFields(
 		}
 	}
 
-	eventFilterOrderBy := ""
 	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
 		if strings.Contains(queryResult.DistanceOrderClause, "COALESCE") {
 			latAdded := false
@@ -1080,6 +1080,24 @@ func (s *SearchEventService) buildEventFilterFields(
 		}
 	}
 
+	// If eventFilterOrderBy requires event_score, ensure it's in the fields
+	if eventFilterOrderBy == "ORDER BY event_score ASC" || eventFilterOrderBy == "" {
+		hasEventScore := false
+		for _, field := range eventFilterSelectFields {
+			if strings.Contains(field, "event_score") || strings.Contains(field, "score") {
+				hasEventScore = true
+				break
+			}
+		}
+		if !hasEventScore {
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.event_score as event_score")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "ee.event_score")
+		}
+		if eventFilterOrderBy == "" {
+			eventFilterOrderBy = "ORDER BY event_score ASC"
+		}
+	}
+
 	return &EventFilterFields{
 		SelectFields:  eventFilterSelectFields,
 		GroupByFields: eventFilterGroupByFields,
@@ -1122,9 +1140,10 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}, nil
 	}
 
-	eventFilterFields, conditionalFields := s.buildEventFilterFields(sortClause, queryResult, fieldCtx.DBToAliasMap, conditionalFields)
+	eventFilterFields, conditionalFields := s.buildEventFilterFields(sortClause, queryResult, fieldCtx.DBToAliasMap, conditionalFields, eventFilterOrderBy)
 	requiredFieldsStatic = append(fieldCtx.BaseFields, conditionalFields...)
 
+	eventFilterOrderBy = eventFilterFields.OrderBy
 	eventFilterSelectStr := strings.Join(eventFilterFields.SelectFields, ", ")
 	eventFilterGroupByStr := strings.Join(eventFilterFields.GroupByFields, ", ")
 
@@ -1223,6 +1242,20 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	hasEndDateFilters := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
 		filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != "" ||
 		filterFields.CreatedAt != "" || len(filterFields.ParsedEventIds) > 0 || len(filterFields.ParsedNotEventIds) > 0 || len(filterFields.ParsedSourceEventIds) > 0 || len(filterFields.ParsedDates) > 0 || filterFields.ParsedPastBetween != nil || filterFields.ParsedActiveBetween != nil
+
+	// If no explicit order clause, default to score - ensure score is in fields
+	if finalOrderClause == "" {
+		hasScore := false
+		for _, field := range requiredFieldsStatic {
+			if strings.Contains(field, "score") || strings.Contains(field, "event_score") {
+				hasScore = true
+				break
+			}
+		}
+		if !hasScore {
+			requiredFieldsStatic = append(requiredFieldsStatic, "ee.event_score as score")
+		}
+	}
 
 	fieldsString := strings.Join(requiredFieldsStatic, ", ")
 	finalGroupByClause := s.buildGroupByClause(requiredFieldsStatic)
