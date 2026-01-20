@@ -2029,15 +2029,16 @@ func (f *FilterDataDto) Validate() error {
 			eventTypeGroupLower := strings.ToLower(strings.TrimSpace(eventTypeGroupStr))
 
 			validGroups := map[string]Groups{
-				"social":   GroupSocial,
-				"business": GroupBusiness,
+				"social":     GroupSocial,
+				"business":   GroupBusiness,
+				"unattended": GroupUnattended,
 			}
 
 			if group, exists := validGroups[eventTypeGroupLower]; exists {
 				f.ParsedEventTypeGroup = &group
 				f.EventTypeGroup = eventTypeGroupLower
 			} else {
-				validOptions := []string{"social", "business"}
+				validOptions := []string{"social", "business", "unattended"}
 				return validation.NewError("invalid_event_type_group", "Invalid event type group: "+eventTypeGroupStr+". Valid options are: "+strings.Join(validOptions, ", "))
 			}
 			return nil
