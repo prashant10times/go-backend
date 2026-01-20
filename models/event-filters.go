@@ -1323,6 +1323,7 @@ func (f *FilterDataDto) Validate() error {
 				"active":    "A",
 				"cancelled": "C",
 				"postponed": "P",
+				"predicted": "PR",
 			}
 			for _, status := range statuses {
 				status = strings.TrimSpace(strings.ToLower(status))
@@ -1330,7 +1331,7 @@ func (f *FilterDataDto) Validate() error {
 					if dbCode, exists := validStatuses[status]; exists {
 						f.ParsedStatus = append(f.ParsedStatus, dbCode)
 					} else {
-						return validation.NewError("invalid_status", "Invalid status value: "+status+". Valid values are: active, cancelled, postponed")
+						return validation.NewError("invalid_status", "Invalid status value: "+status+". Valid values are: active, cancelled, postponed, predicted")
 					}
 				}
 			}
