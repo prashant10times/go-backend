@@ -1323,7 +1323,7 @@ func (f *FilterDataDto) Validate() error {
 				"active":    "A",
 				"cancelled": "C",
 				"postponed": "P",
-				"predicted": "PR",
+				"predicted": "R",
 			}
 			for _, status := range statuses {
 				status = strings.TrimSpace(strings.ToLower(status))
