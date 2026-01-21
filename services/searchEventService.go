@@ -2178,14 +2178,21 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				hasOrganizerData = true
 			}
 
-			if idUint, ok := event["organizer_companyId"].(uint32); ok && idUint != 0 {
-				organizer["prospectId"] = idUint
-				hasOrganizerData = true
-			} else if idStr, ok := event["organizer_companyId"].(string); ok && idStr != "" {
-				if idInt, err := strconv.ParseUint(idStr, 10, 32); err == nil {
-					organizer["prospectId"] = uint32(idInt)
+			var companyIdStr string
+			if idStr, ok := event["organizer_companyId"].(string); ok && idStr != "" {
+				companyIdStr = idStr
+			} else if idUint, ok := event["organizer_companyId"].(uint32); ok {
+				companyIdStr = fmt.Sprintf("%d", idUint)
+			}
+			if companyIdStr != "" {
+				textToEncrypt := companyIdStr + s.cfg.TEN_TIMES_ID_ENCRYPT_KEY
+				encrypted, err := s.Encrypt(textToEncrypt)
+				if err != nil {
+					log.Printf("Error encrypting prospectId: %v", err)
+
+					organizer["prospectId"] = companyIdStr
 				} else {
-					organizer["prospectId"] = idStr
+					organizer["prospectId"] = encrypted
 				}
 				hasOrganizerData = true
 			}
