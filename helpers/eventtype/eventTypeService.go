@@ -25,7 +25,7 @@ type EventType struct {
 	Name           string   `json:"name"`
 	Slug           string   `json:"slug,omitempty"`
 	EventGroupType string   `json:"eventGroupType,omitempty"`
-	Groups         []string `json:"groups,omitempty"`
+	Groups         []string `json:"groups"`
 }
 
 func (s *EventTypeService) GetAll(query models.SearchEventTypeDto) (interface{}, error) {
@@ -156,6 +156,9 @@ func (s *EventTypeService) GetAll(query models.SearchEventTypeDto) (interface{},
 		if err := rows.Scan(&eventType.ID, &eventType.ID10x, &eventType.Priority, &eventType.Name, &eventType.Slug, &eventType.EventGroupType, &groupsStr); err != nil {
 			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
 		}
+
+		// Initialize Groups as empty array to ensure it's never nil
+		eventType.Groups = []string{}
 
 		if groupsStr != "" {
 			groupsStr = strings.Trim(groupsStr, "[]")
