@@ -1774,7 +1774,7 @@ func (s *TransformDataService) TransformAlertsCount(params models.AlertSearchPar
 
 func (s *TransformDataService) TransformAlerts(rows driver.Rows) []interface{} {
 	columns := rows.Columns()
-	var events []interface{}
+	events := []interface{}{}
 
 	for rows.Next() {
 		values := make([]interface{}, len(columns))

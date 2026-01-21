@@ -533,7 +533,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		}
 
 		if alertsMap, ok := alertsResult.Data.(map[string]interface{}); ok {
-			if e, exists := alertsMap["events"]; exists {
+			if e, exists := alertsMap["data"]; exists {
 				if eventsSlice, ok := e.([]interface{}); ok {
 					events = eventsSlice
 				} else if eventsMapSlice, ok := e.([]map[string]interface{}); ok {
@@ -545,9 +545,13 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			}
 		}
 
+		if events == nil {
+			events = []interface{}{}
+		}
+
 		responseData := fiber.Map{
-			"count":  count,
-			"events": events,
+			"count": count,
+			"data":  events,
 		}
 
 		responseTime := time.Since(startTime).Seconds()
@@ -767,7 +771,7 @@ func (s *SearchEventService) executeAlertQuery(params models.AlertSearchParams) 
 			}
 			return map[string]interface{}{"count": 0}, nil
 		}
-		return map[string]interface{}{"events": []interface{}{}}, nil
+		return map[string]interface{}{"data": []interface{}{}}, nil
 	}
 
 	log.Printf("Executing alert query: %s", query)
@@ -785,7 +789,10 @@ func (s *SearchEventService) executeAlertQuery(params models.AlertSearchParams) 
 		return map[string]interface{}{"count": count}, nil
 	} else {
 		events := s.transformDataService.TransformAlerts(rows)
-		return map[string]interface{}{"events": events}, nil
+		if events == nil {
+			events = []interface{}{}
+		}
+		return map[string]interface{}{"data": events}, nil
 	}
 }
 
