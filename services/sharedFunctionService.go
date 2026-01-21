@@ -7302,12 +7302,16 @@ func (s *SharedFunctionService) BuildAlertQuery(params models.AlertSearchParams)
 			dateRangeConditions = append(dateRangeConditions, "a.startDate <= ds.day")
 			dateRangeConditions = append(dateRangeConditions, "a.endDate >= ds.day")
 		} else {
-			dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.startDate <= '%s'", *params.EndDate))
-			dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.endDate >= '%s'", *params.StartDate))
+			if strings.TrimSpace(*params.EndDate) != "" {
+				dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.startDate <= '%s'", *params.EndDate))
+			}
+			if strings.TrimSpace(*params.StartDate) != "" {
+				dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.endDate >= '%s'", *params.StartDate))
+			}
 		}
-	} else if params.EndDate != nil {
+	} else if params.EndDate != nil && strings.TrimSpace(*params.EndDate) != "" {
 		dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.startDate <= '%s'", *params.EndDate))
-	} else if params.StartDate != nil {
+	} else if params.StartDate != nil && strings.TrimSpace(*params.StartDate) != "" {
 		dateRangeConditions = append(dateRangeConditions, fmt.Sprintf("a.endDate >= '%s'", *params.StartDate))
 	}
 
@@ -7509,9 +7513,9 @@ func (s *SharedFunctionService) BuildEventIdsAlertQuery(params models.AlertSearc
 	defaultFilterFields.SetDefaultValues()
 	editionTypeCondition := s.buildEditionTypeCondition(defaultFilterFields, "ee")
 	cteParts = append(cteParts, fmt.Sprintf(`filtered_event_ids AS (
-			SELECT DISTINCT event_id
-			FROM testing_db.allevent_ch
-			WHERE event_uuid IN (%s)
+			SELECT DISTINCT ee.event_id
+			FROM testing_db.allevent_ch AS ee
+			WHERE ee.event_uuid IN (%s)
 				AND %s
 		)`, eventUuidsClause, editionTypeCondition))
 	withClause := "WITH " + strings.Join(cteParts, ",\n\t\t")
