@@ -2185,22 +2185,16 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				hasOrganizerData = true
 			}
 
-			var companyIdStr string
-			if idStr, ok := event["organizer_companyId"].(string); ok && idStr != "" {
-				companyIdStr = idStr
-			} else if idUint, ok := event["organizer_companyId"].(uint32); ok {
-				companyIdStr = fmt.Sprintf("%d", idUint)
-			}
-			if companyIdStr != "" {
-				textToEncrypt := companyIdStr + s.cfg.TEN_TIMES_ID_ENCRYPT_KEY
-				encrypted, err := s.Encrypt(textToEncrypt)
-				if err != nil {
-					log.Printf("Error encrypting prospectId: %v", err)
-
-					organizer["prospectId"] = companyIdStr
-				} else {
-					organizer["prospectId"] = encrypted
+			var companyId uint32
+			if idUint, ok := event["organizer_companyId"].(uint32); ok {
+				companyId = idUint
+			} else if idStr, ok := event["organizer_companyId"].(string); ok && idStr != "" {
+				if parsedId, err := strconv.ParseUint(idStr, 10, 32); err == nil {
+					companyId = uint32(parsedId)
 				}
+			}
+			if companyId != 0 {
+				organizer["prospectId"] = companyId
 				hasOrganizerData = true
 			}
 
