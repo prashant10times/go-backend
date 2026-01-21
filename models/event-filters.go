@@ -2140,7 +2140,7 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			var viewBoundsArray []ViewBound
-
+			
 			if strings.Contains(viewBoundsStr, "<sep>") {
 				parts := strings.Split(viewBoundsStr, "<sep>")
 				viewBoundsArray = make([]ViewBound, 0, len(parts))
@@ -2156,6 +2156,7 @@ func (f *FilterDataDto) Validate() error {
 					viewBoundsArray = append(viewBoundsArray, viewBound)
 				}
 			} else {
+				// Try to parse as JSON array (standard format)
 				if err := json.Unmarshal([]byte(viewBoundsStr), &viewBoundsArray); err != nil {
 					return validation.NewError("invalid_view_bounds", "Invalid viewBounds JSON array: "+err.Error())
 				}
