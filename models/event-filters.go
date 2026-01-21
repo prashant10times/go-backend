@@ -2140,8 +2140,25 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			var viewBoundsArray []ViewBound
-			if err := json.Unmarshal([]byte(viewBoundsStr), &viewBoundsArray); err != nil {
-				return validation.NewError("invalid_view_bounds", "Invalid viewBounds JSON array: "+err.Error())
+
+			if strings.Contains(viewBoundsStr, "<sep>") {
+				parts := strings.Split(viewBoundsStr, "<sep>")
+				viewBoundsArray = make([]ViewBound, 0, len(parts))
+				for i, part := range parts {
+					part = strings.TrimSpace(part)
+					if part == "" {
+						continue
+					}
+					var viewBound ViewBound
+					if err := json.Unmarshal([]byte(part), &viewBound); err != nil {
+						return validation.NewError("invalid_view_bounds", fmt.Sprintf("Invalid viewBounds JSON object at index %d: %s", i, err.Error()))
+					}
+					viewBoundsArray = append(viewBoundsArray, viewBound)
+				}
+			} else {
+				if err := json.Unmarshal([]byte(viewBoundsStr), &viewBoundsArray); err != nil {
+					return validation.NewError("invalid_view_bounds", "Invalid viewBounds JSON array: "+err.Error())
+				}
 			}
 
 			if len(viewBoundsArray) == 0 {
