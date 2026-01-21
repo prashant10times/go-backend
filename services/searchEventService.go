@@ -1622,7 +1622,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				}
 			case "PrimaryEventType":
 				if uuidVal, ok := val.(*string); ok && uuidVal != nil && *uuidVal != "" {
-					if eventTypeName, exists := EventTypeById[*uuidVal]; exists {
+					if eventTypeName, exists := models.EventTypeById[*uuidVal]; exists {
 						rowData[col] = eventTypeName
 					} else {
 						rowData[col] = nil
@@ -2792,7 +2792,7 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 			case "PrimaryEventType":
 				if uuid, ok := val.(*string); ok && uuid != nil {
 					// Convert UUID to slug using EventTypeById map
-					if slug, exists := EventTypeById[*uuid]; exists {
+					if slug, exists := models.EventTypeById[*uuid]; exists {
 						rowData["eventType"] = slug
 					} else {
 						rowData["eventType"] = nil

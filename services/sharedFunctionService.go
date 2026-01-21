@@ -4279,12 +4279,12 @@ func findValidEventTypes(eventTypes []string, eventTypeGroup string) []string {
 			continue
 		}
 
-		eventTypeSlug, exists := EventTypeById[eventType]
+		eventTypeSlug, exists := models.EventTypeById[eventType]
 		if !exists {
 			continue
 		}
 
-		et, exists := EventTypeGroups[eventTypeSlug]
+		et, exists := models.EventTypeGroups[eventTypeSlug]
 		if !exists {
 			continue
 		}
@@ -5576,10 +5576,56 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			publishedMap[pub] = true
 		}
 
+		// Helper function to escape SQL values
+		escapeSqlValue := func(value string) string {
+			value = strings.ReplaceAll(value, "'", "''")
+			value = strings.ReplaceAll(value, "%", "\\%")
+			value = strings.ReplaceAll(value, "_", "\\_")
+			return value
+		}
+
+		// Helper function to build event type UUID condition
+		buildEventTypeCondition := func(group string) string {
+			eventTypeIDs := GetEventTypeIDsByGroup(group)
+			if len(eventTypeIDs) == 0 {
+				return ""
+			}
+
+			// If event types are already filtered in the request, intersect them
+			if len(filterFields.ParsedEventTypes) > 0 {
+				requestedTypes := make(map[string]bool)
+				for _, et := range filterFields.ParsedEventTypes {
+					requestedTypes[et] = true
+				}
+				filteredTypes := make([]string, 0)
+				for _, et := range eventTypeIDs {
+					if requestedTypes[et] {
+						filteredTypes = append(filteredTypes, et)
+					}
+				}
+				eventTypeIDs = filteredTypes
+			}
+
+			if len(eventTypeIDs) == 0 {
+				return ""
+			}
+
+			escapedTypes := make([]string, len(eventTypeIDs))
+			for i, et := range eventTypeIDs {
+				escapedTypes[i] = fmt.Sprintf("'%s'", escapeSqlValue(et))
+			}
+			return fmt.Sprintf("et.eventtype_uuid IN (%s)", strings.Join(escapedTypes, ", "))
+		}
+
 		eventGroupCountConditions := []string{}
 
 		if publishedMap["4"] {
-			eventGroupCountConditions = append(eventGroupCountConditions, "(ee.published = '4' AND has(et.groups, 'unattended'))")
+			eventTypeCondition := buildEventTypeCondition("unattended")
+			if eventTypeCondition != "" {
+				eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND ee.published = '4' AND has(et.groups, 'unattended'))", eventTypeCondition))
+			} else {
+				eventGroupCountConditions = append(eventGroupCountConditions, "(ee.published = '4' AND has(et.groups, 'unattended'))")
+			}
 		}
 
 		businessSocialPublished := []string{}
@@ -5598,15 +5644,48 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 				publishedCondition = fmt.Sprintf("ee.published IN (%s)", strings.Join(businessSocialPublished, ", "))
 			}
 
-			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'business') and et.event_audience = ee.editions_audiance_type)", publishedCondition))
-			eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'social') and et.event_audience = ee.editions_audiance_type)", publishedCondition))
+			// Business group
+			businessEventTypeCondition := buildEventTypeCondition("business")
+			if businessEventTypeCondition != "" {
+				eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND %s AND has(et.groups, 'business') and et.event_audience = ee.editions_audiance_type)", businessEventTypeCondition, publishedCondition))
+			} else {
+				eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'business') and et.event_audience = ee.editions_audiance_type)", publishedCondition))
+			}
+
+			// Social group
+			socialEventTypeCondition := buildEventTypeCondition("social")
+			if socialEventTypeCondition != "" {
+				eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND %s AND has(et.groups, 'social') and et.event_audience = ee.editions_audiance_type)", socialEventTypeCondition, publishedCondition))
+			} else {
+				eventGroupCountConditions = append(eventGroupCountConditions, fmt.Sprintf("(%s AND has(et.groups, 'social') and et.event_audience = ee.editions_audiance_type)", publishedCondition))
+			}
 		}
 
 		if len(eventGroupCountConditions) == 0 {
+			// Default conditions with event type filtering
+			unattendedEventTypeCondition := buildEventTypeCondition("unattended")
+			businessEventTypeCondition := buildEventTypeCondition("business")
+			socialEventTypeCondition := buildEventTypeCondition("social")
+
+			unattendedCondition := "ee.published = '4' AND has(et.groups, 'unattended')"
+			if unattendedEventTypeCondition != "" {
+				unattendedCondition = fmt.Sprintf("%s AND %s", unattendedEventTypeCondition, unattendedCondition)
+			}
+
+			businessCondition := "ee.published = '1' AND has(et.groups, 'business') and et.event_audience = ee.editions_audiance_type"
+			if businessEventTypeCondition != "" {
+				businessCondition = fmt.Sprintf("%s AND %s", businessEventTypeCondition, businessCondition)
+			}
+
+			socialCondition := "ee.published = '1' AND has(et.groups, 'social') and et.event_audience = ee.editions_audiance_type"
+			if socialEventTypeCondition != "" {
+				socialCondition = fmt.Sprintf("%s AND %s", socialEventTypeCondition, socialCondition)
+			}
+
 			eventGroupCountConditions = []string{
-				"(ee.published = '4' AND has(et.groups, 'unattended'))",
-				"(ee.published = '1' AND has(et.groups, 'business') and et.event_audience = ee.editions_audiance_type)",
-				"(ee.published = '1' AND has(et.groups, 'social') and et.event_audience = ee.editions_audiance_type)",
+				fmt.Sprintf("(%s)", unattendedCondition),
+				fmt.Sprintf("(%s)", businessCondition),
+				fmt.Sprintf("(%s)", socialCondition),
 			}
 		}
 
@@ -8484,7 +8563,7 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		}
 
 		if primaryEventType != nil {
-			if slug, exists := EventTypeById[*primaryEventType]; exists {
+			if slug, exists := models.EventTypeById[*primaryEventType]; exists {
 				event["primaryEventType"] = slug
 			} else {
 				event["primaryEventType"] = nil
