@@ -460,7 +460,7 @@ func (b *RelatedDataQueryBuilder) buildBaseQuery() string {
 		SELECT 
 			event AS event_id,
 			'tags' AS data_type,
-			arrayStringConcat(groupArray(name), ', ') AS value,
+			arrayStringConcat(groupArray(name), '<sep>') AS value,
 			arrayStringConcat(groupArray(product_uuid), ', ') AS uuid_value,
 			arrayStringConcat(groupArray(slug), ', ') AS slug_value,
 			'' AS eventGroupType_value

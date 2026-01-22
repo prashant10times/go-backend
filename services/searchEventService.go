@@ -1977,7 +1977,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		case "tags":
 			var items []map[string]string
 			if value != "" && uuidValue != "" {
-				names := strings.Split(value, ", ")
+				names := strings.Split(value, "<sep>")
 				uuids := strings.Split(uuidValue, ", ")
 				slugs := strings.Split(slugValue, ", ")
 
