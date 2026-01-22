@@ -465,7 +465,8 @@ func (b *RelatedDataQueryBuilder) buildBaseQuery() string {
 			arrayStringConcat(groupArray(slug), ', ') AS slug_value,
 			'' AS eventGroupType_value
 		FROM testing_db.event_product_ch
-		WHERE event IN (%s) 
+		WHERE event_product_published in (0,1)
+		and event IN (%s) 
 		GROUP BY event
 
 		UNION ALL
