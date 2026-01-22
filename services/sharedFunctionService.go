@@ -3278,7 +3278,9 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 		var qConditions []string
 
 		for _, keyword := range queryKeywords {
-			cleanKeyword := strings.TrimSpace(strings.ReplaceAll(keyword, "'", "''"))
+			cleanKeyword := strings.TrimSpace(keyword)
+			cleanKeyword = strings.ReplaceAll(cleanKeyword, "\\", "\\\\")
+			cleanKeyword = strings.ReplaceAll(cleanKeyword, "'", "''")
 			if cleanKeyword != "" {
 				qConditions = append(qConditions, fmt.Sprintf("ee.event_name ILIKE '%%%s%%'", cleanKeyword))
 			}
