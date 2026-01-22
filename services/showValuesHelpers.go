@@ -461,12 +461,11 @@ func (b *RelatedDataQueryBuilder) buildBaseQuery() string {
 			event AS event_id,
 			'tags' AS data_type,
 			arrayStringConcat(groupArray(name), ', ') AS value,
-			arrayStringConcat(groupArray(category_uuid), ', ') AS uuid_value,
+			arrayStringConcat(groupArray(product_uuid), ', ') AS uuid_value,
 			arrayStringConcat(groupArray(slug), ', ') AS slug_value,
 			'' AS eventGroupType_value
-		FROM testing_db.event_category_ch
+		FROM testing_db.event_product_ch
 		WHERE event IN (%s) 
-		  AND is_group = 0
 		GROUP BY event
 
 		UNION ALL
