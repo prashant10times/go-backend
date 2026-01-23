@@ -4281,7 +4281,7 @@ func findValidEventTypes(eventTypes []string, eventTypeGroup string) []string {
 			continue
 		}
 
-		eventTypeSlug, exists := EventTypeById[eventType]
+		eventTypeSlug, exists := models.EventTypeById[eventType]
 		if !exists {
 			continue
 		}
@@ -8548,7 +8548,7 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		}
 
 		if primaryEventType != nil {
-			if slug, exists := EventTypeById[*primaryEventType]; exists {
+			if slug, exists := models.EventTypeById[*primaryEventType]; exists {
 				event["primaryEventType"] = slug
 			} else {
 				event["primaryEventType"] = nil
