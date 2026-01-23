@@ -6157,9 +6157,6 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		return nil, fmt.Errorf("unsupported location groupBy: %s", groupBy)
 	}
 
-	if whereClause != "" && strings.Contains(whereClause, "keywords") {
-		selectFields += ", e.keywords"
-	}
 
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
