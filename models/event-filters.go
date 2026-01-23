@@ -634,8 +634,7 @@ func (f *FilterDataDto) Validate() error {
 			validPrices := map[string]string{
 				"free":          "free",
 				"paid":          "paid",
-				"not_available": "not_available",
-				"free-paid":     "free-paid",
+				"free_and_paid": "free_and_paid",
 			}
 
 			var invalidPrices []string
@@ -656,7 +655,7 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			if len(invalidPrices) > 0 {
-				validOptions := []string{"free", "paid", "not_available", "free-paid"}
+				validOptions := []string{"free", "paid", "free_and_paid"}
 				return validation.NewError("invalid_price", "Invalid price value(s): "+strings.Join(invalidPrices, ", ")+". Valid values are: "+strings.Join(validOptions, ", "))
 			}
 
