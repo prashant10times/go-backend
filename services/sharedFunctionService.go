@@ -6157,6 +6157,10 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		return nil, fmt.Errorf("unsupported location groupBy: %s", groupBy)
 	}
 
+	if whereClause != "" && strings.Contains(whereClause, "keywords") {
+		selectFields += ", e.keywords"
+	}
+
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
@@ -6478,6 +6482,11 @@ func (s *SharedFunctionService) GetEventCountByDay(
 
 	preFilterSelect := "e.event_id, e.impactScore"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
+	
+	if (filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords")) ||
+		(preFilterWhereClause != "" && strings.Contains(preFilterWhereClause, "keywords")) {
+		preFilterSelect += ", e.keywords"
+	}
 
 	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
@@ -6707,6 +6716,10 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 
 	forecasted := filterFields.Forecasted
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
+	
+	if filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords") {
+		preFilterSelect += ", e.keywords"
+	}
 
 	dateJoinCondition := s.buildTrendsDateCondition(forecasted, "e", "dateJoin", "", "")
 	if dateJoinCondition == "" {
@@ -6992,6 +7005,10 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		}
 	}
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
+	
+	if filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords") {
+		preFilterSelect += ", e.keywords"
+	}
 
 	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
@@ -7143,6 +7160,11 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 
 	preFilterSelect := "e.event_id"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
+	
+	if (filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords")) ||
+		(preFilterWhereClause != "" && strings.Contains(preFilterWhereClause, "keywords")) {
+		preFilterSelect += ", e.keywords"
+	}
 
 	finalWhereDateCondition := s.buildTrendsDateCondition(forecasted, "e", "finalDatesJoin", "", "")
 	if finalWhereDateCondition == "" {
