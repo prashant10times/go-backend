@@ -460,7 +460,7 @@ func validateAndNormalizeDate(dateStr *string, fieldName string) validation.Rule
 	}))
 }
 
-func getEventTypeGroupsFromIDs(eventTypeIDs []string) map[string]bool {
+func GetEventTypeGroupsFromIDs(eventTypeIDs []string) map[string]bool {
 	eventTypeGroups := map[string]string{
 		"festival":          "social",
 		"sport":             "social",
@@ -484,7 +484,7 @@ func getEventTypeGroupsFromIDs(eventTypeIDs []string) map[string]bool {
 	return groups
 }
 
-func getAllEventTypeIDsByGroup(eventTypeGroup Groups) []string {
+func GetAllEventTypeIDsByGroup(eventTypeGroup Groups) []string {
 	eventTypeGroups := map[string]string{
 		"festival":          "social",
 		"sport":             "social",
@@ -518,7 +518,7 @@ func filterEventTypesByGroup(eventTypeIDs []string, eventTypeGroup Groups) []str
 
 	filteredEventTypes := make([]string, 0)
 	for _, eventTypeID := range eventTypeIDs {
-		eventTypeGroups := getEventTypeGroupsFromIDs([]string{eventTypeID})
+		eventTypeGroups := GetEventTypeGroupsFromIDs([]string{eventTypeID})
 		if eventTypeGroups[targetGroup] {
 			filteredEventTypes = append(filteredEventTypes, eventTypeID)
 		}
@@ -532,7 +532,7 @@ func (f *FilterDataDto) applyEventTypeBasedMappings(wasPublishedExplicitlyProvid
 		return
 	}
 
-	groups := getEventTypeGroupsFromIDs(f.ParsedEventTypes)
+	groups := GetEventTypeGroupsFromIDs(f.ParsedEventTypes)
 	hasHoliday := groups["unattended"]
 	hasSocial := groups["social"]
 	hasBusiness := groups["business"]
@@ -2127,7 +2127,7 @@ func (f *FilterDataDto) Validate() error {
 			}
 
 			var viewBoundsArray []ViewBound
-			
+
 			if strings.Contains(viewBoundsStr, "<sep>") {
 				parts := strings.Split(viewBoundsStr, "<sep>")
 				viewBoundsArray = make([]ViewBound, 0, len(parts))
@@ -2715,7 +2715,7 @@ func (f *FilterDataDto) Validate() error {
 			}
 			f.ParsedEventTypes = filteredEventTypes
 		} else {
-			allEventTypes := getAllEventTypeIDsByGroup(*f.ParsedEventTypeGroup)
+			allEventTypes := GetAllEventTypeIDsByGroup(*f.ParsedEventTypeGroup)
 			if len(allEventTypes) == 0 {
 				return validation.NewError("no_event_types_for_group", "No event types found for the specified event type group")
 			}

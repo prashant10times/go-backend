@@ -1748,6 +1748,26 @@ type CTEAndJoinResult struct {
 	JoinClausesStr string // JOIN clauses
 }
 
+func GetEventTypePublishedConditionForJoin(eventTypeIDs []string, tableAlias string) string {
+	if len(eventTypeIDs) == 0 {
+		return tableAlias + ".published = 1"
+	}
+	groups := models.GetEventTypeGroupsFromIDs(eventTypeIDs)
+	hasHoliday := groups["unattended"]
+	hasOther := groups["business"] || groups["social"]
+	prefix := tableAlias + ".published"
+	if hasHoliday && !hasOther {
+		return prefix + " = 4"
+	}
+	if !hasHoliday && hasOther {
+		return prefix + " IN (1, 2)"
+	}
+	if hasHoliday && hasOther {
+		return prefix + " IN (1, 4)"
+	}
+	return tableAlias + ".published = 1"
+}
+
 func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsVisitorJoin bool,
 	needsSpeakerJoin bool,
@@ -2340,8 +2360,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		// result.CTEClauses = append(result.CTEClauses, typeQuery)
 		// previousCTE = "filtered_types"
 
-		// Type uses JOIN
-		typeJoinOnClause := "etc.event_id = ee.event_id and etc.published = 1"
+		eventTypePublishedCond := GetEventTypePublishedConditionForJoin(filterFields.ParsedEventTypes, "etc")
+		typeJoinOnClause := "etc.event_id = ee.event_id and " + eventTypePublishedCond
 		if len(typeWhereConditions) > 0 {
 			typeJoinOnClause += fmt.Sprintf("\n\t\t\tAND %s", strings.Join(typeWhereConditions, " AND "))
 		}
