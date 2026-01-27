@@ -1959,7 +1959,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 		switch dataType {
 		case "category":
-			names := strings.Split(value, ", ")
+			names := strings.Split(value, "<sep>")
 			uuids := strings.Split(uuidValue, ", ")
 			slugs := strings.Split(slugValue, ", ")
 
