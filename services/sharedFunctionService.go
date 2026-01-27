@@ -1311,11 +1311,11 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addInFilter("companyState", "company_state", &whereConditions, filterFields)
 
 	if len(filterFields.ParsedEventIds) > 0 {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_uuid IN (%s)", strings.Join(filterFields.ParsedEventIds, ",")))
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id IN (SELECT event_id FROM testing_db.allevent_ch WHERE event_uuid IN (%s))", strings.Join(filterFields.ParsedEventIds, ",")))
 	}
 
 	if len(filterFields.ParsedNotEventIds) > 0 {
-		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_uuid NOT IN (%s)", strings.Join(filterFields.ParsedNotEventIds, ",")))
+		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id NOT IN (SELECT event_id FROM testing_db.allevent_ch WHERE event_uuid IN (%s))", strings.Join(filterFields.ParsedNotEventIds, ",")))
 	}
 
 	if len(filterFields.ParsedSourceEventIds) > 0 {
