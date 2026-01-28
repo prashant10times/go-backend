@@ -1804,6 +1804,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	userIdWhereConditions []string,
 	needsCompanyIdUnionCTE bool,
 	companyIdWhereConditions []string,
+	mainWhereClause string,
+	mainSearchClause string,
 	filterFields models.FilterDataDto,
 ) CTEAndJoinResult {
 	result := CTEAndJoinResult{
@@ -2402,8 +2404,18 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		if !hasUserEndDateFilter {
 			preEventFilterConditions = append(preEventFilterConditions, fmt.Sprintf("end_date >= '%s'", today))
 		}
+		if strings.TrimSpace(mainWhereClause) != "" {
+			preEventFilterConditions = append(preEventFilterConditions, mainWhereClause)
+		}
+		if strings.TrimSpace(mainSearchClause) != "" {
+			preEventFilterConditions = append(preEventFilterConditions, mainSearchClause)
+		}
 
 		preEventFilterWhereClause := strings.Join(preEventFilterConditions, " AND ")
+		preEventFilterFrom := "FROM testing_db.allevent_ch AS ee"
+		if result.JoinClausesStr != "" {
+			preEventFilterFrom += "\n\t\t" + result.JoinClausesStr
+		}
 
 		if previousCTE != "" {
 			var selectColumn string
@@ -2414,21 +2426,21 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			}
 			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
 				SELECT event_id, edition_id, event_score
-				FROM testing_db.allevent_ch AS ee
+				%s
 				WHERE event_id IN (SELECT %s FROM %s)
 				AND %s
 				GROUP BY event_id, edition_id, event_score
 				ORDER BY event_score DESC
-			)`, selectColumn, previousCTE, preEventFilterWhereClause)
+			)`, preEventFilterFrom, selectColumn, previousCTE, preEventFilterWhereClause)
 			result.CTEClauses = append(result.CTEClauses, preEventFilterCTE)
 		} else {
 			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
 				SELECT event_id, edition_id, event_score
-				FROM testing_db.allevent_ch AS ee
+				%s
 				WHERE %s
 				GROUP BY event_id, edition_id, event_score
 				ORDER BY event_score DESC
-			)`, preEventFilterWhereClause)
+			)`, preEventFilterFrom, preEventFilterWhereClause)
 			result.CTEClauses = append(result.CTEClauses, preEventFilterCTE)
 		}
 
@@ -3210,6 +3222,8 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 		queryResult.UserIdWhereConditions,
 		queryResult.NeedsCompanyIdUnionCTE,
 		queryResult.CompanyIdWhereConditions,
+		queryResult.WhereClause,
+		queryResult.SearchClause,
 		filterFields,
 	)
 
@@ -3554,9 +3568,16 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 			s.buildEditionTypeCondition(filterFields, "ee"),
 		}
 
-		hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != ""
+		hasUserEndDateFilter := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
+			filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != ""
 		if !hasUserEndDateFilter {
 			preEventFilterConditions = append(preEventFilterConditions, fmt.Sprintf("end_date >= '%s'", today))
+		}
+		if strings.TrimSpace(queryResult.WhereClause) != "" {
+			preEventFilterConditions = append(preEventFilterConditions, queryResult.WhereClause)
+		}
+		if strings.TrimSpace(queryResult.SearchClause) != "" {
+			preEventFilterConditions = append(preEventFilterConditions, queryResult.SearchClause)
 		}
 
 		preEventFilterWhereClause := strings.Join(preEventFilterConditions, " AND ")
@@ -6177,7 +6198,6 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		return nil, fmt.Errorf("unsupported location groupBy: %s", groupBy)
 	}
 
-
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
@@ -6499,7 +6519,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 
 	preFilterSelect := "e.event_id, e.impactScore"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
-	
+
 	if (filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords")) ||
 		(preFilterWhereClause != "" && strings.Contains(preFilterWhereClause, "keywords")) {
 		preFilterSelect += ", e.keywords"
@@ -6733,7 +6753,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 
 	forecasted := filterFields.Forecasted
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
-	
+
 	if filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords") {
 		preFilterSelect += ", e.keywords"
 	}
@@ -7022,7 +7042,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		}
 	}
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
-	
+
 	if filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords") {
 		preFilterSelect += ", e.keywords"
 	}
@@ -7177,7 +7197,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 
 	preFilterSelect := "e.event_id"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
-	
+
 	if (filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords")) ||
 		(preFilterWhereClause != "" && strings.Contains(preFilterWhereClause, "keywords")) {
 		preFilterSelect += ", e.keywords"
@@ -7912,6 +7932,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.UserIdWhereConditions,
 			queryResult.NeedsCompanyIdUnionCTE,
 			queryResult.CompanyIdWhereConditions,
+			queryResult.WhereClause,
+			queryResult.SearchClause,
 			filterFields,
 		)
 
@@ -8087,6 +8109,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.UserIdWhereConditions,
 			queryResult.NeedsCompanyIdUnionCTE,
 			queryResult.CompanyIdWhereConditions,
+			queryResult.WhereClause,
+			queryResult.SearchClause,
 			filterFields,
 		)
 
@@ -8231,6 +8255,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.UserIdWhereConditions,
 			queryResult.NeedsCompanyIdUnionCTE,
 			queryResult.CompanyIdWhereConditions,
+			queryResult.WhereClause,
+			queryResult.SearchClause,
 			filterFields,
 		)
 
@@ -8419,6 +8445,8 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		queryResult.UserIdWhereConditions,
 		queryResult.NeedsCompanyIdUnionCTE,
 		queryResult.CompanyIdWhereConditions,
+		queryResult.WhereClause,
+		queryResult.SearchClause,
 		filterFields,
 	)
 
@@ -8675,6 +8703,8 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 		queryResult.UserIdWhereConditions,
 		queryResult.NeedsCompanyIdUnionCTE,
 		queryResult.CompanyIdWhereConditions,
+		queryResult.WhereClause,
+		queryResult.SearchClause,
 		filterFields,
 	)
 

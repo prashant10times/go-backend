@@ -1243,6 +1243,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.UserIdWhereConditions,
 		queryResult.NeedsCompanyIdUnionCTE,
 		queryResult.CompanyIdWhereConditions,
+		queryResult.WhereClause,
+		queryResult.SearchClause,
 		filterFields,
 	)
 
@@ -2616,6 +2618,8 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		queryResult.UserIdWhereConditions,
 		queryResult.NeedsCompanyIdUnionCTE,
 		queryResult.CompanyIdWhereConditions,
+		queryResult.WhereClause,
+		queryResult.SearchClause,
 		filterFields,
 	)
 
@@ -3756,6 +3760,8 @@ func (s *SearchEventService) handleGroupByRequest(
 		queryResult.UserIdWhereConditions,
 		queryResult.NeedsCompanyIdUnionCTE,
 		queryResult.CompanyIdWhereConditions,
+		queryResult.WhereClause,
+		queryResult.SearchClause,
 		filterFields,
 	)
 
