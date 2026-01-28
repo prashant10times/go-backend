@@ -1414,7 +1414,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		values := make([]interface{}, len(columns))
 		for i, col := range columns {
 			switch col {
-			case "event_id", "edition_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors", "inboundScore", "internationalScore", "inboundAttendance", "internationalAttendance", "exhibitorsCount", "speakersCount", "sponsorsCount", "editions", "estimatedAttendanceMean", "organizer_companyId", "trustScore":
+			case "event_id", "edition_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors", "inboundScore", "internationalScore", "inboundAttendance", "internationalAttendance", "exhibitorsCount", "speakersCount", "sponsorsCount", "editions", "estimatedAttendanceMean", "estimatedVisitorsMean", "organizer_companyId", "trustScore":
 				values[i] = new(uint32)
 			case "score", "duration", "futurePredictionScore":
 				values[i] = new(int32)
