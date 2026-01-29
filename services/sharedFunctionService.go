@@ -1768,6 +1768,65 @@ func GetEventTypePublishedConditionForJoin(eventTypeIDs []string, tableAlias str
 	return tableAlias + ".published = 1"
 }
 
+func (s *SharedFunctionService) GetEventRankingScopeResolved(filterFields models.FilterDataDto) (countryIsos []string, categoryNames []string, err error) {
+	countryUUIDs := filterFields.ParsedCountryIds
+	if len(countryUUIDs) == 0 && len(filterFields.ParsedLocationIds) > 0 {
+		countryUUIDs = filterFields.ParsedLocationIds
+	}
+	if len(countryUUIDs) > 0 {
+		countryIsos, err = s.getISOFromLocationUUIDs(countryUUIDs)
+		if err != nil {
+			log.Printf("Error converting country UUIDs to ISO codes: %v", err)
+			return nil, nil, err
+		}
+	}
+	if len(filterFields.ParsedCategoryIds) > 0 {
+		categoryNames, err = s.getCategoryNamesFromUUIDs(filterFields.ParsedCategoryIds)
+		if err != nil {
+			log.Printf("Error converting category UUIDs to names: %v", err)
+			return nil, nil, err
+		}
+	}
+	return countryIsos, categoryNames, nil
+}
+
+func (s *SharedFunctionService) BuildEventRankingScopeConditions(filterFields models.FilterDataDto, resolvedCountryIsos []string, resolvedCategoryNames []string) (string, error) {
+	countryUUIDs := filterFields.ParsedCountryIds
+	if len(countryUUIDs) == 0 && len(filterFields.ParsedLocationIds) > 0 {
+		countryUUIDs = filterFields.ParsedLocationIds
+	}
+	hasCountryFilter := len(countryUUIDs) > 0
+	hasCategoryFilter := len(filterFields.ParsedCategoryIds) > 0
+
+	var conditions []string
+	if hasCountryFilter && len(resolvedCountryIsos) > 0 {
+		countries := make([]string, len(resolvedCountryIsos))
+		for i, iso := range resolvedCountryIsos {
+			escaped := strings.ReplaceAll(iso, "'", "''")
+			countries[i] = fmt.Sprintf("'%s'", escaped)
+		}
+		conditions = append(conditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
+	}
+	if hasCategoryFilter && len(resolvedCategoryNames) > 0 {
+		categories := make([]string, len(resolvedCategoryNames))
+		for i, category := range resolvedCategoryNames {
+			escaped := strings.ReplaceAll(category, "'", "''")
+			categories[i] = fmt.Sprintf("'%s'", escaped)
+		}
+		conditions = append(conditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
+	}
+	if !hasCountryFilter && !hasCategoryFilter {
+		conditions = append(conditions, "((country = '' AND category_name = ''))")
+	}
+	if hasCountryFilter && !hasCategoryFilter {
+		conditions = append(conditions, "category_name = ''")
+	}
+	if hasCategoryFilter && !hasCountryFilter {
+		conditions = append(conditions, "country = ''")
+	}
+	return strings.Join(conditions, " AND "), nil
+}
+
 func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsVisitorJoin bool,
 	needsSpeakerJoin bool,
@@ -1806,6 +1865,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	companyIdWhereConditions []string,
 	mainWhereClause string,
 	mainSearchClause string,
+	resolvedCountryIsos []string,
+	resolvedCategoryNames []string,
 	filterFields models.FilterDataDto,
 ) CTEAndJoinResult {
 	result := CTEAndJoinResult{
@@ -2448,50 +2509,13 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		currentMonthCondition := fmt.Sprintf("MONTH(created) = %d", currentMonth)
 
 		eventRankingConditions := []string{currentMonthCondition}
-
-		countryUUIDs := filterFields.ParsedCountryIds
-		if len(countryUUIDs) == 0 && len(filterFields.ParsedLocationIds) > 0 {
-			countryUUIDs = filterFields.ParsedLocationIds
+		scopeConditions, err := s.BuildEventRankingScopeConditions(filterFields, resolvedCountryIsos, resolvedCategoryNames)
+		if err != nil {
+			scopeConditions = "((country = '' AND category_name = ''))"
 		}
-		hasCountryFilter := len(countryUUIDs) > 0
-		hasCategoryFilter := len(filterFields.ParsedCategoryIds) > 0
-
-		if hasCountryFilter {
-			isoCodes, err := s.getISOFromLocationUUIDs(countryUUIDs)
-			if err != nil {
-				log.Printf("Error converting country UUIDs to ISO codes: %v", err)
-				isoCodes = []string{}
-			}
-
-			if len(isoCodes) > 0 {
-				countries := make([]string, len(isoCodes))
-				for i, iso := range isoCodes {
-					escaped := strings.ReplaceAll(iso, "'", "''")
-					countries[i] = fmt.Sprintf("'%s'", escaped)
-				}
-				eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
-			}
+		if scopeConditions != "" {
+			eventRankingConditions = append(eventRankingConditions, scopeConditions)
 		}
-		if hasCategoryFilter {
-			categoryNames, err := s.getCategoryNamesFromUUIDs(filterFields.ParsedCategoryIds)
-			if err != nil {
-				log.Printf("Error converting category UUIDs to names: %v", err)
-				categoryNames = []string{}
-			}
-
-			if len(categoryNames) > 0 {
-				categories := make([]string, len(categoryNames))
-				for i, category := range categoryNames {
-					escaped := strings.ReplaceAll(category, "'", "''")
-					categories[i] = fmt.Sprintf("'%s'", escaped)
-				}
-				eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
-			}
-		}
-		if !hasCountryFilter && !hasCategoryFilter {
-			eventRankingConditions = append(eventRankingConditions, "((country = '' AND category_name = ''))")
-		}
-
 		if len(eventRankingWhereConditions) > 0 {
 			eventRankingConditions = append(eventRankingConditions, eventRankingWhereConditions...)
 		}
@@ -3186,6 +3210,11 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
 	eventFilterGroupByStr := strings.Join(eventFilterGroupByFields, ", ")
 
+	var resolvedCountryIsos, resolvedCategoryNames []string
+	if queryResult.NeedsEventRankingJoin {
+		resolvedCountryIsos, resolvedCategoryNames, _ = s.GetEventRankingScopeResolved(filterFields)
+	}
+
 	cteAndJoinResult := s.buildFilterCTEsAndJoins(
 		queryResult.NeedsVisitorJoin,
 		queryResult.NeedsSpeakerJoin,
@@ -3224,6 +3253,8 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 		queryResult.CompanyIdWhereConditions,
 		queryResult.WhereClause,
 		queryResult.SearchClause,
+		resolvedCountryIsos,
+		resolvedCategoryNames,
 		filterFields,
 	)
 
@@ -3562,6 +3593,8 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		previousCTE = "filtered_types"
 	}
 	if queryResult.NeedsEventRankingJoin {
+		resolvedCountryIsos, resolvedCategoryNames, _ := s.GetEventRankingScopeResolved(filterFields)
+
 		preEventFilterConditions := []string{
 			s.buildPublishedCondition(filterFields),
 			s.buildStatusCondition(filterFields),
@@ -3613,50 +3646,13 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		currentMonthCondition := fmt.Sprintf("MONTH(created) = %d", currentMonth)
 
 		eventRankingConditions := []string{currentMonthCondition}
-
-		countryUUIDs := filterFields.ParsedCountryIds
-		if len(countryUUIDs) == 0 && len(filterFields.ParsedLocationIds) > 0 {
-			countryUUIDs = filterFields.ParsedLocationIds
+		scopeConditionsHierarchical, err := s.BuildEventRankingScopeConditions(filterFields, resolvedCountryIsos, resolvedCategoryNames)
+		if err != nil {
+			scopeConditionsHierarchical = "((country = '' AND category_name = ''))"
 		}
-		hasCountryFilter := len(countryUUIDs) > 0
-		hasCategoryFilter := len(filterFields.ParsedCategoryIds) > 0
-
-		if hasCountryFilter {
-			isoCodes, err := s.getISOFromLocationUUIDs(countryUUIDs)
-			if err != nil {
-				log.Printf("Error converting location UUIDs to ISO codes: %v", err)
-				isoCodes = []string{}
-			}
-
-			if len(isoCodes) > 0 {
-				countries := make([]string, len(isoCodes))
-				for i, iso := range isoCodes {
-					escaped := strings.ReplaceAll(iso, "'", "''")
-					countries[i] = fmt.Sprintf("'%s'", escaped)
-				}
-				eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("country IN (%s)", strings.Join(countries, ",")))
-			}
+		if scopeConditionsHierarchical != "" {
+			eventRankingConditions = append(eventRankingConditions, scopeConditionsHierarchical)
 		}
-		if hasCategoryFilter {
-			categoryNames, err := s.getCategoryNamesFromUUIDs(filterFields.ParsedCategoryIds)
-			if err != nil {
-				log.Printf("Error converting category UUIDs to names: %v", err)
-				categoryNames = []string{}
-			}
-
-			if len(categoryNames) > 0 {
-				categories := make([]string, len(categoryNames))
-				for i, category := range categoryNames {
-					escaped := strings.ReplaceAll(category, "'", "''")
-					categories[i] = fmt.Sprintf("'%s'", escaped)
-				}
-				eventRankingConditions = append(eventRankingConditions, fmt.Sprintf("category_name IN (%s)", strings.Join(categories, ",")))
-			}
-		}
-		if !hasCountryFilter && !hasCategoryFilter {
-			eventRankingConditions = append(eventRankingConditions, "((country = '' AND category_name = ''))")
-		}
-
 		if len(queryResult.EventRankingWhereConditions) > 0 {
 			eventRankingConditions = append(eventRankingConditions, queryResult.EventRankingWhereConditions...)
 		}
@@ -7934,6 +7930,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.CompanyIdWhereConditions,
 			queryResult.WhereClause,
 			queryResult.SearchClause,
+			nil,
+			nil,
 			filterFields,
 		)
 
@@ -8111,6 +8109,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.CompanyIdWhereConditions,
 			queryResult.WhereClause,
 			queryResult.SearchClause,
+			nil,
+			nil,
 			filterFields,
 		)
 
@@ -8257,6 +8257,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.CompanyIdWhereConditions,
 			queryResult.WhereClause,
 			queryResult.SearchClause,
+			nil,
+			nil,
 			filterFields,
 		)
 
@@ -8447,6 +8449,8 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		queryResult.CompanyIdWhereConditions,
 		queryResult.WhereClause,
 		queryResult.SearchClause,
+		nil,
+		nil,
 		filterFields,
 	)
 
@@ -8705,6 +8709,8 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 		queryResult.CompanyIdWhereConditions,
 		queryResult.WhereClause,
 		queryResult.SearchClause,
+		nil,
+		nil,
 		filterFields,
 	)
 

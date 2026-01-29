@@ -390,18 +390,20 @@ func (s *BaseFieldsSelector) FixOrderByForFields(orderByClause string, selectedF
 }
 
 type RelatedDataQueryBuilder struct {
-	processor    *ShowValuesProcessor
-	filterFields models.FilterDataDto
-	queryResult  *ClickHouseQueryResult
-	eventIdsStr  string
+	processor              *ShowValuesProcessor
+	filterFields           models.FilterDataDto
+	queryResult            *ClickHouseQueryResult
+	eventIdsStr            string
+	rankingScopeConditions string
 }
 
-func NewRelatedDataQueryBuilder(processor *ShowValuesProcessor, filterFields models.FilterDataDto, queryResult *ClickHouseQueryResult, eventIdsStr string) *RelatedDataQueryBuilder {
+func NewRelatedDataQueryBuilder(processor *ShowValuesProcessor, filterFields models.FilterDataDto, queryResult *ClickHouseQueryResult, eventIdsStr string, rankingScopeConditions string) *RelatedDataQueryBuilder {
 	return &RelatedDataQueryBuilder{
-		processor:    processor,
-		filterFields: filterFields,
-		queryResult:  queryResult,
-		eventIdsStr:  eventIdsStr,
+		processor:              processor,
+		filterFields:           filterFields,
+		queryResult:            queryResult,
+		eventIdsStr:            eventIdsStr,
+		rankingScopeConditions: rankingScopeConditions,
 	}
 }
 
@@ -597,6 +599,10 @@ func (b *RelatedDataQueryBuilder) shouldIncludeRankings() bool {
 }
 
 func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
+	whereClause := "er.event_id IN (" + b.eventIdsStr + ")"
+	if strings.TrimSpace(b.rankingScopeConditions) != "" {
+		whereClause += " AND " + b.rankingScopeConditions
+	}
 	return `
 		UNION ALL
 
@@ -606,8 +612,8 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 			arrayStringConcat(
 				groupUniqArray(
 					concat(
-						if(toString(country_loc.id_uuid) = '', 'null', toString(country_loc.id_uuid)), '<val-sep>',
-						if(toString(cat.category_uuid) = '', 'null', toString(cat.category_uuid)), '<val-sep>',
+						if(empty(toString(country_loc.id_uuid)), 'null', toString(country_loc.id_uuid)), '<val-sep>',
+						if(empty(toString(cat.category_uuid)), 'null', toString(cat.category_uuid)), '<val-sep>',
 						toString(ifNull(er.event_rank, 0))
 					)
 				),
@@ -624,7 +630,7 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 		LEFT JOIN testing_db.event_category_ch AS cat 
 			ON er.category_name = cat.name 
 			AND cat.is_group = 1
-		WHERE er.event_id IN (` + b.eventIdsStr + `)
+		WHERE ` + whereClause + `
 		GROUP BY er.event_id
 		`
 }

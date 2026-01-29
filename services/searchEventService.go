@@ -1207,6 +1207,11 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 	}
 
+	var resolvedCountryIsos, resolvedCategoryNames []string
+	if queryResult.NeedsEventRankingJoin {
+		resolvedCountryIsos, resolvedCategoryNames, _ = s.sharedFunctionService.GetEventRankingScopeResolved(filterFields)
+	}
+
 	cteAndJoinResult := s.sharedFunctionService.buildFilterCTEsAndJoins(
 		queryResult.NeedsVisitorJoin,
 		queryResult.NeedsSpeakerJoin,
@@ -1245,6 +1250,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.CompanyIdWhereConditions,
 		queryResult.WhereClause,
 		queryResult.SearchClause,
+		resolvedCountryIsos,
+		resolvedCategoryNames,
 		filterFields,
 	)
 
@@ -1694,7 +1701,12 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
 
-	queryBuilder := NewRelatedDataQueryBuilder(fieldCtx.Processor, filterFields, queryResult, eventIdsStrJoined)
+	rankingScopeConditions := ""
+	if scope, err := s.sharedFunctionService.BuildEventRankingScopeConditions(filterFields, resolvedCountryIsos, resolvedCategoryNames); err == nil {
+		rankingScopeConditions = scope
+	}
+
+	queryBuilder := NewRelatedDataQueryBuilder(fieldCtx.Processor, filterFields, queryResult, eventIdsStrJoined, rankingScopeConditions)
 	relatedDataQuery := queryBuilder.BuildQuery()
 
 	log.Printf("Related data query: %s", relatedDataQuery)
@@ -2620,6 +2632,8 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		queryResult.CompanyIdWhereConditions,
 		queryResult.WhereClause,
 		queryResult.SearchClause,
+		nil,
+		nil,
 		filterFields,
 	)
 
@@ -3762,6 +3776,8 @@ func (s *SearchEventService) handleGroupByRequest(
 		queryResult.CompanyIdWhereConditions,
 		queryResult.WhereClause,
 		queryResult.SearchClause,
+		nil,
+		nil,
 		filterFields,
 	)
 

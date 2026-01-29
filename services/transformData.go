@@ -65,6 +65,7 @@ const (
 	RankingTypeCountry         RankingType = "country"
 	RankingTypeCategory        RankingType = "category"
 	RankingTypeCategoryCountry RankingType = "category_country"
+	NilUUID                                = "00000000-0000-0000-0000-000000000000"
 )
 
 type PrioritizedRank struct {
@@ -1172,10 +1173,10 @@ func (s *TransformDataService) TransformRankings(rankingsStr string, filterField
 		}
 
 		var countryID, categoryID *string
-		if parts[0] != "null" && parts[0] != "" {
+		if parts[0] != "null" && parts[0] != "" && parts[0] != NilUUID {
 			countryID = &parts[0]
 		}
-		if parts[1] != "null" && parts[1] != "" {
+		if parts[1] != "null" && parts[1] != "" && parts[1] != NilUUID {
 			categoryID = &parts[1]
 		}
 
@@ -1215,12 +1216,12 @@ func (s *TransformDataService) TransformRankings(rankingsStr string, filterField
 		"rankType":  string(prioritizedRank.RankType),
 		"rankRange": prioritizedRank.RankRange,
 	}
-	if prioritizedRank.CategoryID != nil {
+	if prioritizedRank.CategoryID != nil && *prioritizedRank.CategoryID != NilUUID {
 		result["categoryId"] = *prioritizedRank.CategoryID
 	} else {
 		result["categoryId"] = nil
 	}
-	if prioritizedRank.CountryID != nil {
+	if prioritizedRank.CountryID != nil && *prioritizedRank.CountryID != NilUUID {
 		result["countryId"] = *prioritizedRank.CountryID
 	} else {
 		result["countryId"] = nil
