@@ -1435,12 +1435,15 @@ func (s *TransformDataService) getRanking(ranks Rankings) *PrioritizedRank {
 	return nil
 }
 
+// getRankRange mirrors: rank <= 100 ? '100' : rank <= 500 ? '500' : rank <= 1000 ? '1000' : '1000+'
 func (s *TransformDataService) GetRankRange(rank int) string {
 	if rank <= 100 {
 		return "100"
-	} else if rank <= 500 {
+	}
+	if rank <= 500 {
 		return "500"
-	} else if rank <= 1000 {
+	}
+	if rank <= 1000 {
 		return "1000"
 	}
 	return "1000+"
