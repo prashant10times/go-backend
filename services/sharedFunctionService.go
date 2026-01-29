@@ -2425,21 +2425,21 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 				selectColumn = "event_id"
 			}
 			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
-				SELECT event_id, edition_id, event_score
+				SELECT ee.event_id as event_id, ee.edition_id, ee.event_score
 				%s
-				WHERE event_id IN (SELECT %s FROM %s)
+				WHERE ee.event_id IN (SELECT %s FROM %s)
 				AND %s
-				GROUP BY event_id, edition_id, event_score
-				ORDER BY event_score DESC
+				GROUP BY ee.event_id, ee.edition_id, ee.event_score
+				ORDER BY ee.event_score DESC
 			)`, preEventFilterFrom, selectColumn, previousCTE, preEventFilterWhereClause)
 			result.CTEClauses = append(result.CTEClauses, preEventFilterCTE)
 		} else {
 			preEventFilterCTE := fmt.Sprintf(`pre_event_filter AS (
-				SELECT event_id, edition_id, event_score
+				SELECT ee.event_id as event_id, ee.edition_id, ee.event_score
 				%s
 				WHERE %s
-				GROUP BY event_id, edition_id, event_score
-				ORDER BY event_score DESC
+				GROUP BY ee.event_id, ee.edition_id, ee.event_score
+				ORDER BY ee.event_score DESC
 			)`, preEventFilterFrom, preEventFilterWhereClause)
 			result.CTEClauses = append(result.CTEClauses, preEventFilterCTE)
 		}
@@ -2498,11 +2498,11 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		eventRankingLimit := filterFields.ParsedEventRanking[0]
 
 		eventRankingQuery := fmt.Sprintf(`filtered_event_ranking AS (
-			SELECT event_id
-			FROM testing_db.event_ranking_ch
-			WHERE event_id IN (SELECT event_id FROM pre_event_filter)
-			AND %s
-			GROUP BY event_id LIMIT %s
+			SELECT er.event_id
+			FROM testing_db.event_ranking_ch AS er
+			INNER JOIN (SELECT event_id FROM pre_event_filter) AS pef ON er.event_id = pef.event_id
+			WHERE %s
+			GROUP BY er.event_id LIMIT %s
 		)`, strings.Join(eventRankingConditions, " AND "), eventRankingLimit)
 
 		result.CTEClauses = append(result.CTEClauses, eventRankingQuery)
@@ -3663,11 +3663,11 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		eventRankingLimit := filterFields.ParsedEventRanking[0]
 
 		filteredEventRankingCTE := fmt.Sprintf(`filtered_event_ranking AS (
-			SELECT event_id
-			FROM testing_db.event_ranking_ch
-			WHERE event_id IN (SELECT event_id FROM pre_event_filter)
-			AND %s
-			GROUP BY event_id LIMIT %s
+			SELECT er.event_id
+			FROM testing_db.event_ranking_ch AS er
+			INNER JOIN (SELECT event_id FROM pre_event_filter) AS pef ON er.event_id = pef.event_id
+			WHERE %s
+			GROUP BY er.event_id LIMIT %s
 		)`, strings.Join(eventRankingConditions, " AND "), eventRankingLimit)
 
 		cteClauses = append(cteClauses, filteredEventRankingCTE)
