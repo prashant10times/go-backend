@@ -6656,17 +6656,17 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
 		switch column {
 		case "hotel":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Accommodation'))) AS hotel")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation'))) AS hotel")
 		case "food":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Food & Beverages'))) AS food")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages'))) AS food")
 		case "entertainment":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Entertainment'))) AS entertainment")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment'))) AS entertainment")
 		case "airline":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Flights'))) AS airline")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights'))) AS airline")
 		case "transport":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Transportation'))) AS transport")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation'))) AS transport")
 		case "utilitie":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Utilities'))) AS utilitie")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities'))) AS utilitie")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -6705,7 +6705,8 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		}
 	}
 	dateJoinCond := s.buildTrendsDateCondition(filterFields.Forecasted, "e", "dateJoin", "", "")
-	if dateJoinCond != "" {
+	isDayWiseEconomicColumn := columnStr == "hotel" || columnStr == "food" || columnStr == "entertainment" || columnStr == "airline" || columnStr == "transport" || columnStr == "utilitie"
+	if dateJoinCond != "" && !isDayWiseEconomicColumn {
 		whereConditions = append(whereConditions, dateJoinCond)
 	}
 	if needsEventTypeJoin && len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
@@ -6713,6 +6714,9 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	}
 
 	whereClause := strings.Join(whereConditions, " AND ")
+	if whereClause == "" {
+		whereClause = "1 = 1"
+	}
 
 	groupByStr := "ds.date"
 	if len(groupByClauses) > 0 {
@@ -6743,7 +6747,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "economicImpact":
 			preFilterSelect += ", e.event_economic_value"
 		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.event_economic_breakdown"
+			preFilterSelect += ", e.event_economic_dayWiseEconomicImpact"
 		}
 	}
 
@@ -6758,6 +6762,9 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	if dateJoinCondition == "" {
 		dateJoinCondition = "e.start_date <= ds.date AND e.end_date >= ds.date"
 	}
+	if columnStr == "hotel" || columnStr == "food" || columnStr == "entertainment" || columnStr == "airline" || columnStr == "transport" || columnStr == "utilitie" {
+		dateJoinCondition = "JSONHas(toJSONString(e.event_economic_dayWiseEconomicImpact), formatDateTime(ds.date, '%Y-%m-%d'))"
+	}
 
 	startDateParsed, err := time.Parse("2006-01-02", startDate)
 	if err != nil {
@@ -6771,7 +6778,60 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		preFilterWhereWithDate = fmt.Sprintf("%s AND %s", preFilterWhereClause, preFilterDateCondition)
 	}
 
-	query := fmt.Sprintf(`
+	var query string
+	if isDayWiseEconomicColumn {
+		joinStrE2 := strings.ReplaceAll(joinStr, "e.event_id", "e2.event_id")
+		selectStrWithDateAlias := strings.Replace(selectStr, "ds.date", "ds.date AS date", 1)
+		query = fmt.Sprintf(`
+		WITH %sdate_series AS (
+			SELECT toDate(addDays(toDate('%s'), number)) AS date
+			FROM numbers(%d)
+		),
+		preFilterEvent AS (
+			SELECT
+				%s
+			FROM testing_db.allevent_ch AS e
+			%s
+			WHERE %s
+		),
+		exploded AS (
+			SELECT e.event_id, toDate(kv.1) AS date, kv.2 AS value_json
+			FROM preFilterEvent e
+			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
+			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
+		)
+		SELECT
+			%s
+		FROM exploded e2
+		INNER JOIN date_series ds ON e2.date = ds.date
+		%s
+		WHERE %s
+		GROUP BY %s
+		ORDER BY ds.date
+		`,
+			cteClausesStr,
+			startDate,
+			daysDiff,
+			preFilterSelect,
+			func() string {
+				if joinClausesStr != "" {
+					return "\t\t" + joinClausesStr
+				}
+				return ""
+			}(),
+			preFilterWhereWithDate,
+			selectStrWithDateAlias,
+			func() string {
+				if joinStrE2 != "" {
+					return "\n            " + joinStrE2
+				}
+				return ""
+			}(),
+			whereClause,
+			groupByStr,
+		)
+	} else {
+		query = fmt.Sprintf(`
 		WITH %sdate_series AS (
 			SELECT toDate(addDays(toDate('%s'), number)) AS date
 			FROM numbers(%d)
@@ -6792,23 +6852,24 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		GROUP BY %s
 		ORDER BY ds.date
 		`,
-		cteClausesStr,
-		startDate,
-		daysDiff,
-		preFilterSelect,
-		func() string {
-			if joinClausesStr != "" {
-				return "\t\t" + joinClausesStr
-			}
-			return ""
-		}(),
-		preFilterWhereWithDate,
-		selectStr,
-		dateJoinCondition,
-		joinStr,
-		whereClause,
-		groupByStr,
-	)
+			cteClausesStr,
+			startDate,
+			daysDiff,
+			preFilterSelect,
+			func() string {
+				if joinClausesStr != "" {
+					return "\t\t" + joinClausesStr
+				}
+				return ""
+			}(),
+			preFilterWhereWithDate,
+			selectStr,
+			dateJoinCondition,
+			joinStr,
+			whereClause,
+			groupByStr,
+		)
+	}
 
 	log.Printf("Trends count by day query: %s", query)
 
@@ -6929,6 +6990,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	var groupByClauses []string
 	var joinClauses []string
 	needsEventTypeJoin := false
+	useDayWiseExplodedCTE := false
 
 	switch column {
 	case "eventCount":
@@ -6944,19 +7006,23 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "economicImpact":
 		selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
+		useDayWiseExplodedCTE = true
+		dayWiseSumFromE2 := func(categoryKey string) string {
+			return "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', " + "'" + categoryKey + "'" + ")))"
+		}
 		switch column {
 		case "hotel":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Accommodation'))) AS hotel")
+			selectors = append(selectors, dayWiseSumFromE2("Accommodation")+" AS hotel")
 		case "food":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Food & Beverages'))) AS food")
+			selectors = append(selectors, dayWiseSumFromE2("Food & Beverages")+" AS food")
 		case "entertainment":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Entertainment'))) AS entertainment")
+			selectors = append(selectors, dayWiseSumFromE2("Entertainment")+" AS entertainment")
 		case "airline":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Flights'))) AS airline")
+			selectors = append(selectors, dayWiseSumFromE2("Flights")+" AS airline")
 		case "transport":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Transportation'))) AS transport")
+			selectors = append(selectors, dayWiseSumFromE2("Transportation")+" AS transport")
 		case "utilitie":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Utilities'))) AS utilitie")
+			selectors = append(selectors, dayWiseSumFromE2("Utilities")+" AS utilitie")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -6976,14 +7042,18 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 
 	if needsEventTypeJoin {
-		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1")
+		eventTableAlias := "e"
+		if useDayWiseExplodedCTE {
+			eventTableAlias = "e2"
+		}
+		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON "+eventTableAlias+".event_id = et.event_id and et.published = 1")
 		if len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 			joinClauses = append(joinClauses, "ARRAY JOIN et.groups AS group_name")
 		}
 	}
 
 	whereConditions := []string{}
-	if filterWhereClause != "" {
+	if !useDayWiseExplodedCTE && filterWhereClause != "" {
 		cleaned := strings.ReplaceAll(filterWhereClause, "ee.", "e.")
 		cleaned = strings.ReplaceAll(cleaned, "e.event_id = et.event_id", "")
 		cleaned = strings.TrimSpace(cleaned)
@@ -6996,7 +7066,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 	forecasted := filterFields.Forecasted
 	finalDatesJoinCond := s.buildTrendsDateCondition(forecasted, "e", "finalDatesJoin", "", "")
-	if finalDatesJoinCond != "" {
+	if finalDatesJoinCond != "" && !useDayWiseExplodedCTE {
 		whereConditions = append(whereConditions, finalDatesJoinCond)
 	}
 	if needsEventTypeJoin && len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
@@ -7004,6 +7074,9 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 
 	whereClause := strings.Join(whereConditions, " AND ")
+	if whereClause == "" {
+		whereClause = "1 = 1"
+	}
 
 	groupByStr := "fd.start_date, fd.end_date"
 	if len(groupByClauses) > 0 {
@@ -7034,7 +7107,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		case "economicImpact":
 			preFilterSelect += ", e.event_economic_value"
 		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.event_economic_breakdown"
+			preFilterSelect += ", e.event_economic_dayWiseEconomicImpact"
 		}
 	}
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
@@ -7043,7 +7116,76 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		preFilterSelect += ", e.keywords"
 	}
 
-	query := fmt.Sprintf(`
+	var query string
+	if useDayWiseExplodedCTE {
+		query = fmt.Sprintf(`
+		WITH %sdate_series AS (
+			SELECT toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL number %s AS duration_start
+			FROM numbers(toUInt32(dateDiff('%s', toStartOfInterval(toDate('%s'), INTERVAL 1 %s), toStartOfInterval(toDate('%s'), INTERVAL 1 %s)) + 1))
+		),
+		final_dates AS (
+			SELECT
+				toDate('%s') AS start_date,
+				least(
+					toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL 1 %s - INTERVAL 1 DAY,
+					toDate('%s')
+				) AS end_date
+			UNION ALL
+			SELECT
+				duration_start AS start_date,
+				least(
+					duration_start + INTERVAL 1 %s - INTERVAL 1 DAY,
+					toDate('%s')
+				) AS end_date
+			FROM date_series
+			WHERE duration_start > toDate('%s')
+		),
+		preFilterEvent AS (
+			SELECT
+				%s
+			FROM testing_db.allevent_ch AS e
+			%s
+			WHERE %s
+		),
+		exploded AS (
+			SELECT e.event_id, toDate(kv.1) AS date, kv.2 AS value_json
+			FROM preFilterEvent e
+			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
+			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
+		)
+		SELECT
+			%s
+		FROM exploded e2
+		INNER JOIN final_dates fd ON e2.date >= fd.start_date AND e2.date <= fd.end_date
+		%s
+		WHERE %s
+		GROUP BY %s
+		ORDER BY fd.start_date
+		`,
+			cteClausesStr,
+			startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
+			startDate, startDate, intervalUnit, intervalUnit, endDate,
+			intervalUnit, endDate, startDate,
+			preFilterSelect,
+			func() string {
+				if joinClausesStr != "" {
+					return "\t\t" + joinClausesStr
+				}
+				return ""
+			}(),
+			preFilterWhereClause,
+			selectStr,
+			func() string {
+				if joinStr != "" {
+					return "\n            " + joinStr
+				}
+				return ""
+			}(),
+			whereClause,
+			groupByStr,
+		)
+	} else {
+		query = fmt.Sprintf(`
 		WITH %sdate_series AS (
 			SELECT toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL number %s AS duration_start
 			FROM numbers(toUInt32(dateDiff('%s', toStartOfInterval(toDate('%s'), INTERVAL 1 %s), toStartOfInterval(toDate('%s'), INTERVAL 1 %s)) + 1))
@@ -7080,29 +7222,30 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		WHERE %s
 		GROUP BY %s
 		ORDER BY fd.start_date
-	`,
-		cteClausesStr,
-		startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
-		startDate, startDate, intervalUnit, intervalUnit, endDate,
-		intervalUnit, endDate, startDate,
-		preFilterSelect,
-		func() string {
-			if joinClausesStr != "" {
-				return "\t\t" + joinClausesStr
-			}
-			return ""
-		}(),
-		preFilterWhereClause,
-		selectStr,
-		func() string {
-			if joinStr != "" {
-				return "\n            " + joinStr
-			}
-			return ""
-		}(),
-		whereClause,
-		groupByStr,
-	)
+		`,
+			cteClausesStr,
+			startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
+			startDate, startDate, intervalUnit, intervalUnit, endDate,
+			intervalUnit, endDate, startDate,
+			preFilterSelect,
+			func() string {
+				if joinClausesStr != "" {
+					return "\t\t" + joinClausesStr
+				}
+				return ""
+			}(),
+			preFilterWhereClause,
+			selectStr,
+			func() string {
+				if joinStr != "" {
+					return "\n            " + joinStr
+				}
+				return ""
+			}(),
+			whereClause,
+			groupByStr,
+		)
+	}
 
 	log.Printf("Trends count by %s query: %s", duration, query)
 
