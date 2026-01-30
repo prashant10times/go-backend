@@ -621,6 +621,14 @@ func (f *FilterDataDto) Validate() error {
 
 	f.SetDefaultValues()
 
+
+	if f.ActiveGte != "" && f.ActiveLte != "" {
+		activeGteNorm := strings.TrimSpace(f.ActiveGte)
+		if activeGteNorm == "1990-01-01" || activeGteNorm == "1970-01-01" {
+			f.ActiveGte = ""
+		}
+	}
+
 	err := validation.ValidateStruct(f,
 		validation.Field(&f.Price, validation.When(f.Price != "", validation.By(func(value interface{}) error {
 			priceStr := value.(string)
