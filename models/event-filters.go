@@ -1319,6 +1319,7 @@ func (f *FilterDataDto) Validate() error {
 				"cancelled": "C",
 				"postponed": "P",
 				"predicted": "R",
+				"unverified": "U",
 			}
 			for _, status := range statuses {
 				status = strings.TrimSpace(strings.ToLower(status))
