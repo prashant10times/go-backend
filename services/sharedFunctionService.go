@@ -1984,11 +1984,12 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		}
 	}
 
+	const publishedConditionCh = " AND published IN (1, 2)"
 	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 && !visitorHasCompanyNameCondition {
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
 		visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_visitors_ch
-			WHERE %s`, userIdCondition)
+			WHERE %s%s`, userIdCondition, publishedConditionCh)
 		unifiedUnionParts = append(unifiedUnionParts, visitorPart)
 	}
 
@@ -1996,7 +1997,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
 		speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_speaker_ch
-			WHERE %s`, userIdCondition)
+			WHERE %s%s`, userIdCondition, publishedConditionCh)
 		unifiedUnionParts = append(unifiedUnionParts, speakerPart)
 	}
 
@@ -2004,7 +2005,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " OR ")
 		exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_exhibitor_ch
-			WHERE %s`, exhibitorWhereClause)
+			WHERE %s%s`, exhibitorWhereClause, publishedConditionCh)
 		unifiedUnionParts = append(unifiedUnionParts, exhibitorPart)
 	}
 
@@ -2012,7 +2013,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		sponsorWhereClause := strings.Join(sponsorWhereConditions, " OR ")
 		sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_sponsors_ch
-			WHERE %s`, sponsorWhereClause)
+			WHERE %s%s`, sponsorWhereClause, publishedConditionCh)
 		unifiedUnionParts = append(unifiedUnionParts, sponsorPart)
 	}
 
@@ -2036,7 +2037,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			visitorWhereClause := strings.Join(visitorWhereConditions, " AND ")
 			visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_visitors_ch
-				WHERE %s`, visitorWhereClause)
+				WHERE %s%s`, visitorWhereClause, publishedConditionCh)
 			unifiedUnionParts = append(unifiedUnionParts, visitorPart)
 			visitorAddedToUnion = true
 		}
@@ -2054,7 +2055,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			speakerWhereClause := strings.Join(speakerWhereConditions, " AND ")
 			speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_speaker_ch
-				WHERE %s`, speakerWhereClause)
+				WHERE %s%s`, speakerWhereClause, publishedConditionCh)
 			unifiedUnionParts = append(unifiedUnionParts, speakerPart)
 			speakerAddedToUnion = true
 		}
@@ -2075,7 +2076,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if !visitorAddedToUnion {
 				visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 					FROM testing_db.event_visitors_ch
-					WHERE %s`, userIdCondition)
+					WHERE %s%s`, userIdCondition, publishedConditionCh)
 				unifiedUnionParts = append(unifiedUnionParts, visitorPart)
 				visitorAddedToUnion = true
 			}
@@ -2084,7 +2085,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if !speakerAddedToUnion {
 				speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 					FROM testing_db.event_speaker_ch
-					WHERE %s`, userIdCondition)
+					WHERE %s%s`, userIdCondition, publishedConditionCh)
 				unifiedUnionParts = append(unifiedUnionParts, speakerPart)
 				speakerAddedToUnion = true
 			}
@@ -2150,31 +2151,32 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 		var unionParts []string
 
+		const publishedConditionCh = " AND published IN (1, 2)"
 		if hasVisitor {
 			visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_visitors_ch
-			WHERE %s`, userCompanyIdCondition)
+			WHERE %s%s`, userCompanyIdCondition, publishedConditionCh)
 			unionParts = append(unionParts, visitorPart)
 		}
 
 		if hasSpeaker {
 			speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_speaker_ch
-			WHERE %s`, userCompanyIdCondition)
+			WHERE %s%s`, userCompanyIdCondition, publishedConditionCh)
 			unionParts = append(unionParts, speakerPart)
 		}
 
 		if hasExhibitor {
 			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_exhibitor_ch
-			WHERE %s`, companyIdCondition)
+			WHERE %s%s`, companyIdCondition, publishedConditionCh)
 			unionParts = append(unionParts, exhibitorPart)
 		}
 
 		if hasSponsor {
 			sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_sponsors_ch
-			WHERE %s`, companyIdCondition)
+			WHERE %s%s`, companyIdCondition, publishedConditionCh)
 			unionParts = append(unionParts, sponsorPart)
 		}
 
@@ -2201,7 +2203,9 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	if needsVisitorJoin && !visitorAddedToUnion {
 		visitorWhereClause := ""
 		if len(visitorWhereConditions) > 0 {
-			visitorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(visitorWhereConditions, " AND "))
+			visitorWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(visitorWhereConditions, " AND "))
+		} else {
+			visitorWhereClause = "WHERE published IN (1, 2)"
 		}
 
 		visitorCTE := fmt.Sprintf(`filtered_visitors AS (
@@ -2217,7 +2221,9 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	if needsSpeakerJoin && !speakerAddedToUnion {
 		speakerWhereClause := ""
 		if len(speakerWhereConditions) > 0 {
-			speakerWhereClause = fmt.Sprintf("WHERE %s", strings.Join(speakerWhereConditions, " AND "))
+			speakerWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(speakerWhereConditions, " AND "))
+		} else {
+			speakerWhereClause = "WHERE published IN (1, 2)"
 		}
 
 		speakerQuery := fmt.Sprintf(`filtered_speakers AS (
@@ -2246,6 +2252,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 				speakerQuery += fmt.Sprintf(`
 				AND %s`, strings.Join(speakerWhereConditions, " AND "))
 			}
+			speakerQuery += `
+				AND published IN (1, 2)`
 		}
 
 		speakerQuery += `
@@ -2284,13 +2292,13 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " AND ")
 			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_exhibitor_ch
-				WHERE %s%s`, joinCondition, exhibitorWhereClause)
+				WHERE %s%s AND published IN (1, 2)`, joinCondition, exhibitorWhereClause)
 			unionParts = append(unionParts, exhibitorPart)
 
 			sponsorWhereClause := strings.Join(sponsorWhereConditions, " AND ")
 			sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_sponsors_ch
-				WHERE %s%s`, joinCondition, sponsorWhereClause)
+				WHERE %s%s AND published IN (1, 2)`, joinCondition, sponsorWhereClause)
 			unionParts = append(unionParts, sponsorPart)
 
 			unionCTE := fmt.Sprintf(`filtered_company_events_by_name AS (
@@ -2306,7 +2314,9 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if needsExhibitorJoin {
 				exhibitorWhereClause := ""
 				if len(exhibitorWhereConditions) > 0 {
-					exhibitorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(exhibitorWhereConditions, " AND "))
+					exhibitorWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(exhibitorWhereConditions, " AND "))
+				} else {
+					exhibitorWhereClause = "WHERE published IN (1, 2)"
 				}
 
 				exhibitorQuery := fmt.Sprintf(`filtered_exhibitors AS (
@@ -2333,6 +2343,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 						exhibitorQuery += fmt.Sprintf(`
 						AND %s`, strings.Join(exhibitorWhereConditions, " AND "))
 					}
+					exhibitorQuery += `
+						AND published IN (1, 2)`
 				}
 
 				exhibitorQuery += `
@@ -2346,7 +2358,9 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if needsSponsorJoin {
 				sponsorWhereClause := ""
 				if len(sponsorWhereConditions) > 0 {
-					sponsorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(sponsorWhereConditions, " AND "))
+					sponsorWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(sponsorWhereConditions, " AND "))
+				} else {
+					sponsorWhereClause = "WHERE published IN (1, 2)"
 				}
 
 				sponsorQuery := fmt.Sprintf(`filtered_sponsors AS (
@@ -2373,6 +2387,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 						sponsorQuery += fmt.Sprintf(`
 						AND %s`, strings.Join(sponsorWhereConditions, " AND "))
 					}
+					sponsorQuery += `
+						AND published IN (1, 2)`
 				}
 
 				sponsorQuery += `
@@ -10340,6 +10356,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					FROM testing_db.event_exhibitor_ch
 					WHERE event_id IN (%s)
 					AND %s
+					AND published IN (1, 2)
 				`, eventIdsStrJoined, companyIdCondition)
 				log.Printf("Exhibitor companyId query: %s", exhibitorQuery)
 
@@ -10377,6 +10394,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					FROM testing_db.event_sponsors_ch
 					WHERE event_id IN (%s)
 					AND %s
+					AND published IN (1, 2)
 				`, eventIdsStrJoined, companyIdCondition)
 				log.Printf("Sponsor companyId query: %s", sponsorQuery)
 
@@ -10451,6 +10469,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					FROM testing_db.event_visitors_ch
 					WHERE event_id IN (%s)
 					AND %s
+					AND published IN (1, 2)
 				`, eventIdsStrJoined, userCompanyIdCondition)
 				log.Printf("Visitor companyId query: %s", visitorQuery)
 
@@ -10488,6 +10507,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					FROM testing_db.event_speaker_ch
 					WHERE event_id IN (%s)
 					AND %s
+					AND published IN (1, 2)
 				`, eventIdsStrJoined, userCompanyIdCondition)
 				log.Printf("Speaker companyId query: %s", speakerQuery)
 
