@@ -1984,12 +1984,11 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		}
 	}
 
-	const publishedConditionCh = " AND published IN (1, 2)"
 	if needsUserIdUnionCTE && len(userIdWhereConditions) > 0 && !visitorHasCompanyNameCondition {
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
 		visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_visitors_ch
-			WHERE %s%s`, userIdCondition, publishedConditionCh)
+			WHERE %s`, userIdCondition)
 		unifiedUnionParts = append(unifiedUnionParts, visitorPart)
 	}
 
@@ -1997,7 +1996,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		userIdCondition := strings.Join(userIdWhereConditions, " AND ")
 		speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_speaker_ch
-			WHERE %s%s`, userIdCondition, publishedConditionCh)
+			WHERE %s`, userIdCondition)
 		unifiedUnionParts = append(unifiedUnionParts, speakerPart)
 	}
 
@@ -2005,7 +2004,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " OR ")
 		exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_exhibitor_ch
-			WHERE %s%s`, exhibitorWhereClause, publishedConditionCh)
+			WHERE %s`, exhibitorWhereClause)
 		unifiedUnionParts = append(unifiedUnionParts, exhibitorPart)
 	}
 
@@ -2013,7 +2012,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		sponsorWhereClause := strings.Join(sponsorWhereConditions, " OR ")
 		sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_sponsors_ch
-			WHERE %s%s`, sponsorWhereClause, publishedConditionCh)
+			WHERE %s`, sponsorWhereClause)
 		unifiedUnionParts = append(unifiedUnionParts, sponsorPart)
 	}
 
@@ -2037,7 +2036,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			visitorWhereClause := strings.Join(visitorWhereConditions, " AND ")
 			visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_visitors_ch
-				WHERE %s%s`, visitorWhereClause, publishedConditionCh)
+				WHERE %s`, visitorWhereClause)
 			unifiedUnionParts = append(unifiedUnionParts, visitorPart)
 			visitorAddedToUnion = true
 		}
@@ -2055,7 +2054,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			speakerWhereClause := strings.Join(speakerWhereConditions, " AND ")
 			speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_speaker_ch
-				WHERE %s%s`, speakerWhereClause, publishedConditionCh)
+				WHERE %s`, speakerWhereClause)
 			unifiedUnionParts = append(unifiedUnionParts, speakerPart)
 			speakerAddedToUnion = true
 		}
@@ -2076,7 +2075,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if !visitorAddedToUnion {
 				visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 					FROM testing_db.event_visitors_ch
-					WHERE %s%s`, userIdCondition, publishedConditionCh)
+					WHERE %s`, userIdCondition)
 				unifiedUnionParts = append(unifiedUnionParts, visitorPart)
 				visitorAddedToUnion = true
 			}
@@ -2085,7 +2084,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if !speakerAddedToUnion {
 				speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 					FROM testing_db.event_speaker_ch
-					WHERE %s%s`, userIdCondition, publishedConditionCh)
+					WHERE %s`, userIdCondition)
 				unifiedUnionParts = append(unifiedUnionParts, speakerPart)
 				speakerAddedToUnion = true
 			}
@@ -2151,32 +2150,31 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 		var unionParts []string
 
-		const publishedConditionCh = " AND published IN (1, 2)"
 		if hasVisitor {
 			visitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_visitors_ch
-			WHERE %s%s`, userCompanyIdCondition, publishedConditionCh)
+			WHERE %s`, userCompanyIdCondition)
 			unionParts = append(unionParts, visitorPart)
 		}
 
 		if hasSpeaker {
 			speakerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_speaker_ch
-			WHERE %s%s`, userCompanyIdCondition, publishedConditionCh)
+			WHERE %s`, userCompanyIdCondition)
 			unionParts = append(unionParts, speakerPart)
 		}
 
 		if hasExhibitor {
 			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_exhibitor_ch
-			WHERE %s%s`, companyIdCondition, publishedConditionCh)
+			WHERE %s`, companyIdCondition)
 			unionParts = append(unionParts, exhibitorPart)
 		}
 
 		if hasSponsor {
 			sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_sponsors_ch
-			WHERE %s%s`, companyIdCondition, publishedConditionCh)
+			WHERE %s`, companyIdCondition)
 			unionParts = append(unionParts, sponsorPart)
 		}
 
@@ -2203,9 +2201,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	if needsVisitorJoin && !visitorAddedToUnion {
 		visitorWhereClause := ""
 		if len(visitorWhereConditions) > 0 {
-			visitorWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(visitorWhereConditions, " AND "))
-		} else {
-			visitorWhereClause = "WHERE published IN (1, 2)"
+			visitorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(visitorWhereConditions, " AND "))
 		}
 
 		visitorCTE := fmt.Sprintf(`filtered_visitors AS (
@@ -2221,9 +2217,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	if needsSpeakerJoin && !speakerAddedToUnion {
 		speakerWhereClause := ""
 		if len(speakerWhereConditions) > 0 {
-			speakerWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(speakerWhereConditions, " AND "))
-		} else {
-			speakerWhereClause = "WHERE published IN (1, 2)"
+			speakerWhereClause = fmt.Sprintf("WHERE %s", strings.Join(speakerWhereConditions, " AND "))
 		}
 
 		speakerQuery := fmt.Sprintf(`filtered_speakers AS (
@@ -2252,8 +2246,6 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 				speakerQuery += fmt.Sprintf(`
 				AND %s`, strings.Join(speakerWhereConditions, " AND "))
 			}
-			speakerQuery += `
-				AND published IN (1, 2)`
 		}
 
 		speakerQuery += `
@@ -2292,13 +2284,13 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " AND ")
 			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_exhibitor_ch
-				WHERE %s%s AND published IN (1, 2)`, joinCondition, exhibitorWhereClause)
+				WHERE %s%s`, joinCondition, exhibitorWhereClause)
 			unionParts = append(unionParts, exhibitorPart)
 
 			sponsorWhereClause := strings.Join(sponsorWhereConditions, " AND ")
 			sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_sponsors_ch
-				WHERE %s%s AND published IN (1, 2)`, joinCondition, sponsorWhereClause)
+				WHERE %s%s`, joinCondition, sponsorWhereClause)
 			unionParts = append(unionParts, sponsorPart)
 
 			unionCTE := fmt.Sprintf(`filtered_company_events_by_name AS (
@@ -2314,9 +2306,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if needsExhibitorJoin {
 				exhibitorWhereClause := ""
 				if len(exhibitorWhereConditions) > 0 {
-					exhibitorWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(exhibitorWhereConditions, " AND "))
-				} else {
-					exhibitorWhereClause = "WHERE published IN (1, 2)"
+					exhibitorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(exhibitorWhereConditions, " AND "))
 				}
 
 				exhibitorQuery := fmt.Sprintf(`filtered_exhibitors AS (
@@ -2343,8 +2333,6 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 						exhibitorQuery += fmt.Sprintf(`
 						AND %s`, strings.Join(exhibitorWhereConditions, " AND "))
 					}
-					exhibitorQuery += `
-						AND published IN (1, 2)`
 				}
 
 				exhibitorQuery += `
@@ -2358,9 +2346,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if needsSponsorJoin {
 				sponsorWhereClause := ""
 				if len(sponsorWhereConditions) > 0 {
-					sponsorWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(sponsorWhereConditions, " AND "))
-				} else {
-					sponsorWhereClause = "WHERE published IN (1, 2)"
+					sponsorWhereClause = fmt.Sprintf("WHERE %s", strings.Join(sponsorWhereConditions, " AND "))
 				}
 
 				sponsorQuery := fmt.Sprintf(`filtered_sponsors AS (
@@ -2387,8 +2373,6 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 						sponsorQuery += fmt.Sprintf(`
 						AND %s`, strings.Join(sponsorWhereConditions, " AND "))
 					}
-					sponsorQuery += `
-						AND published IN (1, 2)`
 				}
 
 				sponsorQuery += `
@@ -6672,17 +6656,17 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
 		switch column {
 		case "hotel":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation'))) AS hotel")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Accommodation'))) AS hotel")
 		case "food":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages'))) AS food")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Food & Beverages'))) AS food")
 		case "entertainment":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment'))) AS entertainment")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Entertainment'))) AS entertainment")
 		case "airline":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights'))) AS airline")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Flights'))) AS airline")
 		case "transport":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation'))) AS transport")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Transportation'))) AS transport")
 		case "utilitie":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities'))) AS utilitie")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Utilities'))) AS utilitie")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -6721,8 +6705,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		}
 	}
 	dateJoinCond := s.buildTrendsDateCondition(filterFields.Forecasted, "e", "dateJoin", "", "")
-	isDayWiseEconomicColumn := columnStr == "hotel" || columnStr == "food" || columnStr == "entertainment" || columnStr == "airline" || columnStr == "transport" || columnStr == "utilitie"
-	if dateJoinCond != "" && !isDayWiseEconomicColumn {
+	if dateJoinCond != "" {
 		whereConditions = append(whereConditions, dateJoinCond)
 	}
 	if needsEventTypeJoin && len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
@@ -6730,9 +6713,6 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	}
 
 	whereClause := strings.Join(whereConditions, " AND ")
-	if whereClause == "" {
-		whereClause = "1 = 1"
-	}
 
 	groupByStr := "ds.date"
 	if len(groupByClauses) > 0 {
@@ -6763,7 +6743,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "economicImpact":
 			preFilterSelect += ", e.event_economic_value"
 		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.event_economic_dayWiseEconomicImpact"
+			preFilterSelect += ", e.event_economic_breakdown"
 		}
 	}
 
@@ -6778,9 +6758,6 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	if dateJoinCondition == "" {
 		dateJoinCondition = "e.start_date <= ds.date AND e.end_date >= ds.date"
 	}
-	if columnStr == "hotel" || columnStr == "food" || columnStr == "entertainment" || columnStr == "airline" || columnStr == "transport" || columnStr == "utilitie" {
-		dateJoinCondition = "JSONHas(toJSONString(e.event_economic_dayWiseEconomicImpact), formatDateTime(ds.date, '%Y-%m-%d'))"
-	}
 
 	startDateParsed, err := time.Parse("2006-01-02", startDate)
 	if err != nil {
@@ -6794,60 +6771,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		preFilterWhereWithDate = fmt.Sprintf("%s AND %s", preFilterWhereClause, preFilterDateCondition)
 	}
 
-	var query string
-	if isDayWiseEconomicColumn {
-		joinStrE2 := strings.ReplaceAll(joinStr, "e.event_id", "e2.event_id")
-		selectStrWithDateAlias := strings.Replace(selectStr, "ds.date", "ds.date AS date", 1)
-		query = fmt.Sprintf(`
-		WITH %sdate_series AS (
-			SELECT toDate(addDays(toDate('%s'), number)) AS date
-			FROM numbers(%d)
-		),
-		preFilterEvent AS (
-			SELECT
-				%s
-			FROM testing_db.allevent_ch AS e
-			%s
-			WHERE %s
-		),
-		exploded AS (
-			SELECT e.event_id, toDate(kv.1) AS date, kv.2 AS value_json
-			FROM preFilterEvent e
-			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
-			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
-		)
-		SELECT
-			%s
-		FROM exploded e2
-		INNER JOIN date_series ds ON e2.date = ds.date
-		%s
-		WHERE %s
-		GROUP BY %s
-		ORDER BY ds.date
-		`,
-			cteClausesStr,
-			startDate,
-			daysDiff,
-			preFilterSelect,
-			func() string {
-				if joinClausesStr != "" {
-					return "\t\t" + joinClausesStr
-				}
-				return ""
-			}(),
-			preFilterWhereWithDate,
-			selectStrWithDateAlias,
-			func() string {
-				if joinStrE2 != "" {
-					return "\n            " + joinStrE2
-				}
-				return ""
-			}(),
-			whereClause,
-			groupByStr,
-		)
-	} else {
-		query = fmt.Sprintf(`
+	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
 			SELECT toDate(addDays(toDate('%s'), number)) AS date
 			FROM numbers(%d)
@@ -6868,24 +6792,23 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		GROUP BY %s
 		ORDER BY ds.date
 		`,
-			cteClausesStr,
-			startDate,
-			daysDiff,
-			preFilterSelect,
-			func() string {
-				if joinClausesStr != "" {
-					return "\t\t" + joinClausesStr
-				}
-				return ""
-			}(),
-			preFilterWhereWithDate,
-			selectStr,
-			dateJoinCondition,
-			joinStr,
-			whereClause,
-			groupByStr,
-		)
-	}
+		cteClausesStr,
+		startDate,
+		daysDiff,
+		preFilterSelect,
+		func() string {
+			if joinClausesStr != "" {
+				return "\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
+		preFilterWhereWithDate,
+		selectStr,
+		dateJoinCondition,
+		joinStr,
+		whereClause,
+		groupByStr,
+	)
 
 	log.Printf("Trends count by day query: %s", query)
 
@@ -7006,7 +6929,6 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	var groupByClauses []string
 	var joinClauses []string
 	needsEventTypeJoin := false
-	useDayWiseExplodedCTE := false
 
 	switch column {
 	case "eventCount":
@@ -7022,23 +6944,19 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "economicImpact":
 		selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-		useDayWiseExplodedCTE = true
-		dayWiseSumFromE2 := func(categoryKey string) string {
-			return "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', " + "'" + categoryKey + "'" + ")))"
-		}
 		switch column {
 		case "hotel":
-			selectors = append(selectors, dayWiseSumFromE2("Accommodation")+" AS hotel")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Accommodation'))) AS hotel")
 		case "food":
-			selectors = append(selectors, dayWiseSumFromE2("Food & Beverages")+" AS food")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Food & Beverages'))) AS food")
 		case "entertainment":
-			selectors = append(selectors, dayWiseSumFromE2("Entertainment")+" AS entertainment")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Entertainment'))) AS entertainment")
 		case "airline":
-			selectors = append(selectors, dayWiseSumFromE2("Flights")+" AS airline")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Flights'))) AS airline")
 		case "transport":
-			selectors = append(selectors, dayWiseSumFromE2("Transportation")+" AS transport")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Transportation'))) AS transport")
 		case "utilitie":
-			selectors = append(selectors, dayWiseSumFromE2("Utilities")+" AS utilitie")
+			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(toJSONString(e.event_economic_breakdown), 'Utilities'))) AS utilitie")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -7058,18 +6976,14 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 
 	if needsEventTypeJoin {
-		eventTableAlias := "e"
-		if useDayWiseExplodedCTE {
-			eventTableAlias = "e2"
-		}
-		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON "+eventTableAlias+".event_id = et.event_id and et.published = 1")
+		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1")
 		if len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 			joinClauses = append(joinClauses, "ARRAY JOIN et.groups AS group_name")
 		}
 	}
 
 	whereConditions := []string{}
-	if !useDayWiseExplodedCTE && filterWhereClause != "" {
+	if filterWhereClause != "" {
 		cleaned := strings.ReplaceAll(filterWhereClause, "ee.", "e.")
 		cleaned = strings.ReplaceAll(cleaned, "e.event_id = et.event_id", "")
 		cleaned = strings.TrimSpace(cleaned)
@@ -7082,7 +6996,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 	forecasted := filterFields.Forecasted
 	finalDatesJoinCond := s.buildTrendsDateCondition(forecasted, "e", "finalDatesJoin", "", "")
-	if finalDatesJoinCond != "" && !useDayWiseExplodedCTE {
+	if finalDatesJoinCond != "" {
 		whereConditions = append(whereConditions, finalDatesJoinCond)
 	}
 	if needsEventTypeJoin && len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
@@ -7090,9 +7004,6 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 
 	whereClause := strings.Join(whereConditions, " AND ")
-	if whereClause == "" {
-		whereClause = "1 = 1"
-	}
 
 	groupByStr := "fd.start_date, fd.end_date"
 	if len(groupByClauses) > 0 {
@@ -7123,7 +7034,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		case "economicImpact":
 			preFilterSelect += ", e.event_economic_value"
 		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.event_economic_dayWiseEconomicImpact"
+			preFilterSelect += ", e.event_economic_breakdown"
 		}
 	}
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
@@ -7132,76 +7043,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		preFilterSelect += ", e.keywords"
 	}
 
-	var query string
-	if useDayWiseExplodedCTE {
-		query = fmt.Sprintf(`
-		WITH %sdate_series AS (
-			SELECT toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL number %s AS duration_start
-			FROM numbers(toUInt32(dateDiff('%s', toStartOfInterval(toDate('%s'), INTERVAL 1 %s), toStartOfInterval(toDate('%s'), INTERVAL 1 %s)) + 1))
-		),
-		final_dates AS (
-			SELECT
-				toDate('%s') AS start_date,
-				least(
-					toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL 1 %s - INTERVAL 1 DAY,
-					toDate('%s')
-				) AS end_date
-			UNION ALL
-			SELECT
-				duration_start AS start_date,
-				least(
-					duration_start + INTERVAL 1 %s - INTERVAL 1 DAY,
-					toDate('%s')
-				) AS end_date
-			FROM date_series
-			WHERE duration_start > toDate('%s')
-		),
-		preFilterEvent AS (
-			SELECT
-				%s
-			FROM testing_db.allevent_ch AS e
-			%s
-			WHERE %s
-		),
-		exploded AS (
-			SELECT e.event_id, toDate(kv.1) AS date, kv.2 AS value_json
-			FROM preFilterEvent e
-			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
-			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
-		)
-		SELECT
-			%s
-		FROM exploded e2
-		INNER JOIN final_dates fd ON e2.date >= fd.start_date AND e2.date <= fd.end_date
-		%s
-		WHERE %s
-		GROUP BY %s
-		ORDER BY fd.start_date
-		`,
-			cteClausesStr,
-			startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
-			startDate, startDate, intervalUnit, intervalUnit, endDate,
-			intervalUnit, endDate, startDate,
-			preFilterSelect,
-			func() string {
-				if joinClausesStr != "" {
-					return "\t\t" + joinClausesStr
-				}
-				return ""
-			}(),
-			preFilterWhereClause,
-			selectStr,
-			func() string {
-				if joinStr != "" {
-					return "\n            " + joinStr
-				}
-				return ""
-			}(),
-			whereClause,
-			groupByStr,
-		)
-	} else {
-		query = fmt.Sprintf(`
+	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
 			SELECT toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL number %s AS duration_start
 			FROM numbers(toUInt32(dateDiff('%s', toStartOfInterval(toDate('%s'), INTERVAL 1 %s), toStartOfInterval(toDate('%s'), INTERVAL 1 %s)) + 1))
@@ -7238,30 +7080,29 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		WHERE %s
 		GROUP BY %s
 		ORDER BY fd.start_date
-		`,
-			cteClausesStr,
-			startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
-			startDate, startDate, intervalUnit, intervalUnit, endDate,
-			intervalUnit, endDate, startDate,
-			preFilterSelect,
-			func() string {
-				if joinClausesStr != "" {
-					return "\t\t" + joinClausesStr
-				}
-				return ""
-			}(),
-			preFilterWhereClause,
-			selectStr,
-			func() string {
-				if joinStr != "" {
-					return "\n            " + joinStr
-				}
-				return ""
-			}(),
-			whereClause,
-			groupByStr,
-		)
-	}
+	`,
+		cteClausesStr,
+		startDate, intervalUnit, intervalUnit, intervalUnit, startDate, intervalUnit, endDate, intervalUnit,
+		startDate, startDate, intervalUnit, intervalUnit, endDate,
+		intervalUnit, endDate, startDate,
+		preFilterSelect,
+		func() string {
+			if joinClausesStr != "" {
+				return "\t\t" + joinClausesStr
+			}
+			return ""
+		}(),
+		preFilterWhereClause,
+		selectStr,
+		func() string {
+			if joinStr != "" {
+				return "\n            " + joinStr
+			}
+			return ""
+		}(),
+		whereClause,
+		groupByStr,
+	)
 
 	log.Printf("Trends count by %s query: %s", duration, query)
 
@@ -10356,7 +10197,6 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					FROM testing_db.event_exhibitor_ch
 					WHERE event_id IN (%s)
 					AND %s
-					AND published IN (1, 2)
 				`, eventIdsStrJoined, companyIdCondition)
 				log.Printf("Exhibitor companyId query: %s", exhibitorQuery)
 
@@ -10394,7 +10234,6 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					FROM testing_db.event_sponsors_ch
 					WHERE event_id IN (%s)
 					AND %s
-					AND published IN (1, 2)
 				`, eventIdsStrJoined, companyIdCondition)
 				log.Printf("Sponsor companyId query: %s", sponsorQuery)
 
@@ -10469,7 +10308,6 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					FROM testing_db.event_visitors_ch
 					WHERE event_id IN (%s)
 					AND %s
-					AND published IN (1, 2)
 				`, eventIdsStrJoined, userCompanyIdCondition)
 				log.Printf("Visitor companyId query: %s", visitorQuery)
 
@@ -10507,7 +10345,6 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					FROM testing_db.event_speaker_ch
 					WHERE event_id IN (%s)
 					AND %s
-					AND published IN (1, 2)
 				`, eventIdsStrJoined, userCompanyIdCondition)
 				log.Printf("Speaker companyId query: %s", speakerQuery)
 
