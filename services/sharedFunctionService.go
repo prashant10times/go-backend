@@ -2019,9 +2019,10 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 	if len(organizerWhereConditions) > 0 {
 		organizerWhereClause := strings.Join(organizerWhereConditions, " OR ")
+		editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
 		organizerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.allevent_ch
-			WHERE %s`, organizerWhereClause)
+			WHERE %s AND %s`, organizerWhereClause, editionTypeCondition)
 		unifiedUnionParts = append(unifiedUnionParts, organizerPart)
 	}
 
@@ -2181,9 +2182,10 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		}
 
 		if hasOrganizer {
+			editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
 			organizerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.allevent_ch
-			WHERE %s`, companyIdCondition)
+			WHERE %s AND %s`, companyIdCondition, editionTypeCondition)
 			unionParts = append(unionParts, organizerPart)
 		}
 
@@ -10437,12 +10439,14 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 
 		if hasOrganizer {
 			go func() {
+				editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
 				organizerQuery := fmt.Sprintf(`
 					SELECT DISTINCT event_id
 					FROM testing_db.allevent_ch
 					WHERE event_id IN (%s)
 					AND %s
-				`, eventIdsStrJoined, companyIdCondition)
+					AND %s
+				`, eventIdsStrJoined, companyIdCondition, editionTypeCondition)
 				log.Printf("Organizer companyId query: %s", organizerQuery)
 
 				rows, err := s.clickhouseService.ExecuteQuery(ctx, organizerQuery)
