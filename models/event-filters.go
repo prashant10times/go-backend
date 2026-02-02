@@ -3,6 +3,7 @@ package models
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"regexp"
 	"strconv"
 	"strings"
@@ -39,6 +40,8 @@ const (
 	GroupBusiness   Groups = "business"
 	GroupUnattended Groups = "unattended"
 )
+
+const NilEventUUID = "00000000-0000-0000-0000-000000000000"
 
 var EventTypeById = map[string]string{
 	"e5283caa-f655-504b-8e44-49ae0edb3faa": "festival",
@@ -620,7 +623,6 @@ func (f *FilterDataDto) Validate() error {
 	wasEventAudienceExplicitlyProvided := f.EventAudience != ""
 
 	f.SetDefaultValues()
-
 
 	if f.ActiveGte != "" && f.ActiveLte != "" {
 		activeGteNorm := strings.TrimSpace(f.ActiveGte)
@@ -1315,10 +1317,10 @@ func (f *FilterDataDto) Validate() error {
 			statuses := strings.Split(statusStr, ",")
 			f.ParsedStatus = make([]string, 0, len(statuses))
 			validStatuses := map[string]string{
-				"active":    "A",
-				"cancelled": "C",
-				"postponed": "P",
-				"predicted": "R",
+				"active":     "A",
+				"cancelled":  "C",
+				"postponed":  "P",
+				"predicted":  "R",
 				"unverified": "U",
 			}
 			for _, status := range statuses {
@@ -2023,7 +2025,7 @@ func (f *FilterDataDto) Validate() error {
 		validation.Field(&f.EventTypeGroup, validation.When(f.EventTypeGroup != "", validation.By(func(value interface{}) error {
 			eventTypeGroupStr := value.(string)
 			eventTypeGroupLower := strings.ToLower(strings.TrimSpace(eventTypeGroupStr))
-
+			log.Println("eventTypeGroupLower", eventTypeGroupLower)
 			validGroups := map[string]Groups{
 				"social":     GroupSocial,
 				"business":   GroupBusiness,
@@ -2720,9 +2722,11 @@ func (f *FilterDataDto) Validate() error {
 		if len(f.ParsedEventTypes) > 0 {
 			filteredEventTypes := filterEventTypesByGroup(f.ParsedEventTypes, *f.ParsedEventTypeGroup)
 			if len(filteredEventTypes) == 0 {
-				return validation.NewError("no_matching_event_types", "No event types found matching the specified event type group")
+				f.ParsedEventTypes = nil
+				f.ParsedEventIds = []string{"'" + NilEventUUID + "'"}
+			} else {
+				f.ParsedEventTypes = filteredEventTypes
 			}
-			f.ParsedEventTypes = filteredEventTypes
 		} else {
 			allEventTypes := GetAllEventTypeIDsByGroup(*f.ParsedEventTypeGroup)
 			if len(allEventTypes) == 0 {
