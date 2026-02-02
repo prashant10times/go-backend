@@ -21,7 +21,7 @@ func NewRankingService(clickhouseService *ClickHouseService) *RankingService {
 	}
 }
 
-// const NilUUID = "00000000-0000-0000-0000-000000000000"
+const rankingNilUUID= "00000000-0000-0000-0000-000000000000"
 
 type RankRange struct {
 	Min int
@@ -570,7 +570,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 			}
 
 			var categoryUUIDVal interface{}
-			if categoryUUID != nil && *categoryUUID != NilUUID {
+			if categoryUUID != nil && *categoryUUID != rankingNilUUID{
 				categoryUUIDVal = *categoryUUID
 			} else {
 				categoryUUIDVal = nil
@@ -610,7 +610,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 			var categoryUUID interface{}
 			if curr["category_uuid"] != nil {
 				s := curr["category_uuid"].(string)
-				if s != NilUUID {
+				if s != rankingNilUUID{
 					categoryUUID = s
 				}
 			}
@@ -758,7 +758,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 						locationName := parts[1]
 						locationType := parts[2]
 						var idVal interface{} = locationUUID
-						if locationUUID == NilUUID {
+						if locationUUID == rankingNilUUID{
 							idVal = nil
 						}
 						eventLocation[locationType] = map[string]interface{}{
