@@ -31,19 +31,42 @@ type Keywords struct {
 func cleanKeywordForQuery(s string) string {
 	parts := strings.Fields(s)
 	var kept []string
+	var separators []string
+	lastDroppedWasAmpersand := false
 	for _, p := range parts {
-		if len(p) <= 1 {
-			if len(p) == 1 {
-				c := p[0]
-				if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
-					kept = append(kept, p)
+		keep := false
+		if len(p) > 1 {
+			keep = true
+		} else if len(p) == 1 {
+			c := p[0]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+				keep = true
+			}
+		}
+		if keep {
+			if len(kept) > 0 {
+				if lastDroppedWasAmpersand {
+					separators = append(separators, "_")
+				} else {
+					separators = append(separators, " ")
 				}
 			}
-			continue
+			kept = append(kept, p)
+			lastDroppedWasAmpersand = false
+		} else if p == "&" {
+			lastDroppedWasAmpersand = true
 		}
-		kept = append(kept, p)
 	}
-	return strings.TrimSpace(strings.Join(kept, " "))
+	if len(kept) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(kept[0])
+	for i := 1; i < len(kept); i++ {
+		b.WriteString(separators[i-1])
+		b.WriteString(kept[i])
+	}
+	return strings.TrimSpace(b.String())
 }
 
 type DateRange [2]*string
