@@ -3377,9 +3377,9 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 	if filterFields.ParsedKeywords != nil {
 		keywords := filterFields.ParsedKeywords
 
-		if len(keywords.Include) > 0 {
+		if len(keywords.IncludeForQuery) > 0 {
 			var includeConditions []string
-			for _, keyword := range keywords.Include {
+			for _, keyword := range keywords.IncludeForQuery {
 				cleanKeyword := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
 				includeConditions = append(includeConditions, fmt.Sprintf("has(ee.keywords, '%s')", cleanKeyword))
 			}
@@ -3390,9 +3390,9 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 			}
 		}
 
-		if len(keywords.Exclude) > 0 {
+		if len(keywords.ExcludeForQuery) > 0 {
 			var excludeConditions []string
-			for _, keyword := range keywords.Exclude {
+			for _, keyword := range keywords.ExcludeForQuery {
 				cleanKeyword := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
 				excludeConditions = append(excludeConditions, fmt.Sprintf("NOT has(ee.keywords, '%s')", cleanKeyword))
 			}

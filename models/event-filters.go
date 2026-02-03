@@ -22,8 +22,28 @@ type ResponseDataDto struct {
 }
 
 type Keywords struct {
-	Include []string `json:"include"`
-	Exclude []string `json:"exclude"`
+	Include         []string `json:"include"`
+	Exclude         []string `json:"exclude"`
+	IncludeForQuery []string `json:"-"`
+	ExcludeForQuery []string `json:"-"`
+}
+
+func cleanKeywordForQuery(s string) string {
+	parts := strings.Fields(s)
+	var kept []string
+	for _, p := range parts {
+		if len(p) <= 1 {
+			if len(p) == 1 {
+				c := p[0]
+				if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+					kept = append(kept, p)
+				}
+			}
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return strings.TrimSpace(strings.Join(kept, " "))
 }
 
 type DateRange [2]*string
@@ -1659,20 +1679,34 @@ func (f *FilterDataDto) Validate() error {
 		validation.Field(&f.Keywords, validation.When(f.Keywords != "", validation.By(func(value interface{}) error {
 			keywordsStr := value.(string)
 			keywords := strings.Split(keywordsStr, ",")
-			var include, exclude []string
+			var include, exclude, includeForQuery, excludeForQuery []string
 			for _, keyword := range keywords {
 				keyword = strings.TrimSpace(keyword)
 				if keyword == "" {
 					continue
 				}
 				if strings.HasPrefix(keyword, "-") {
-					exclude = append(exclude, strings.TrimSpace(keyword[1:]))
+					original := strings.TrimSpace(keyword[1:])
+					cleaned := cleanKeywordForQuery(original)
+					if cleaned != "" {
+						exclude = append(exclude, original)
+						excludeForQuery = append(excludeForQuery, cleaned)
+					}
 				} else {
-					include = append(include, keyword)
+					cleaned := cleanKeywordForQuery(keyword)
+					if cleaned != "" {
+						include = append(include, keyword)
+						includeForQuery = append(includeForQuery, cleaned)
+					}
 				}
 			}
 			if len(include) > 0 || len(exclude) > 0 {
-				f.ParsedKeywords = &Keywords{Include: include, Exclude: exclude}
+				f.ParsedKeywords = &Keywords{
+					Include:         include,
+					Exclude:         exclude,
+					IncludeForQuery: includeForQuery,
+					ExcludeForQuery: excludeForQuery,
+				}
 			}
 			return nil
 		}))),
