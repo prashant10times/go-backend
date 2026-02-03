@@ -3380,8 +3380,17 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 		if len(keywords.IncludeForQuery) > 0 {
 			var includeConditions []string
 			for _, keyword := range keywords.IncludeForQuery {
-				cleanKeyword := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
-				includeConditions = append(includeConditions, fmt.Sprintf("has(ee.keywords, '%s')", cleanKeyword))
+				keywordEscaped := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
+				if strings.Contains(keyword, "_") {
+					parts := strings.Split(keywordEscaped, "_")
+					if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+						includeConditions = append(includeConditions, fmt.Sprintf("(has(ee.keywords, '%s') AND has(ee.keywords, '%s'))", parts[0], parts[1]))
+					} else {
+						includeConditions = append(includeConditions, fmt.Sprintf("has(ee.keywords, '%s')", keywordEscaped))
+					}
+				} else {
+					includeConditions = append(includeConditions, fmt.Sprintf("has(ee.keywords, '%s')", keywordEscaped))
+				}
 			}
 			if searchClause.Len() > 0 {
 				searchClause.WriteString(fmt.Sprintf(" AND (%s)", strings.Join(includeConditions, " OR ")))
@@ -3393,8 +3402,17 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 		if len(keywords.ExcludeForQuery) > 0 {
 			var excludeConditions []string
 			for _, keyword := range keywords.ExcludeForQuery {
-				cleanKeyword := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
-				excludeConditions = append(excludeConditions, fmt.Sprintf("NOT has(ee.keywords, '%s')", cleanKeyword))
+				keywordEscaped := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
+				if strings.Contains(keyword, "_") {
+					parts := strings.Split(keywordEscaped, "_")
+					if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
+						excludeConditions = append(excludeConditions, fmt.Sprintf("NOT (has(ee.keywords, '%s') AND has(ee.keywords, '%s'))", parts[0], parts[1]))
+					} else {
+						excludeConditions = append(excludeConditions, fmt.Sprintf("NOT has(ee.keywords, '%s')", keywordEscaped))
+					}
+				} else {
+					excludeConditions = append(excludeConditions, fmt.Sprintf("NOT has(ee.keywords, '%s')", keywordEscaped))
+				}
 			}
 			if searchClause.Len() > 0 {
 				searchClause.WriteString(fmt.Sprintf(" AND (%s)", strings.Join(excludeConditions, " OR ")))
