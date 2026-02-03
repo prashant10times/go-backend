@@ -3381,13 +3381,13 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 			var includeConditions []string
 			for _, keyword := range keywords.IncludeForQuery {
 				keywordEscaped := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
-				if strings.Contains(keyword, "_") {
-					parts := strings.Split(keywordEscaped, "_")
-					if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-						includeConditions = append(includeConditions, fmt.Sprintf("(has(ee.keywords, '%s') AND has(ee.keywords, '%s'))", parts[0], parts[1]))
-					} else {
-						includeConditions = append(includeConditions, fmt.Sprintf("has(ee.keywords, '%s')", keywordEscaped))
+				parts := models.KeywordPartsForMatch(keywordEscaped)
+				if len(parts) >= 2 {
+					hasParts := make([]string, len(parts))
+					for i, p := range parts {
+						hasParts[i] = fmt.Sprintf("has(ee.keywords, '%s')", p)
 					}
+					includeConditions = append(includeConditions, fmt.Sprintf("(%s)", strings.Join(hasParts, " AND ")))
 				} else {
 					includeConditions = append(includeConditions, fmt.Sprintf("has(ee.keywords, '%s')", keywordEscaped))
 				}
@@ -3403,13 +3403,13 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 			var excludeConditions []string
 			for _, keyword := range keywords.ExcludeForQuery {
 				keywordEscaped := strings.ToLower(strings.ReplaceAll(keyword, "'", "''"))
-				if strings.Contains(keyword, "_") {
-					parts := strings.Split(keywordEscaped, "_")
-					if len(parts) == 2 && parts[0] != "" && parts[1] != "" {
-						excludeConditions = append(excludeConditions, fmt.Sprintf("NOT (has(ee.keywords, '%s') AND has(ee.keywords, '%s'))", parts[0], parts[1]))
-					} else {
-						excludeConditions = append(excludeConditions, fmt.Sprintf("NOT has(ee.keywords, '%s')", keywordEscaped))
+				parts := models.KeywordPartsForMatch(keywordEscaped)
+				if len(parts) >= 2 {
+					hasParts := make([]string, len(parts))
+					for i, p := range parts {
+						hasParts[i] = fmt.Sprintf("has(ee.keywords, '%s')", p)
 					}
+					excludeConditions = append(excludeConditions, fmt.Sprintf("NOT (%s)", strings.Join(hasParts, " AND ")))
 				} else {
 					excludeConditions = append(excludeConditions, fmt.Sprintf("NOT has(ee.keywords, '%s')", keywordEscaped))
 				}

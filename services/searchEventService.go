@@ -132,29 +132,18 @@ func getMatchedKeywords(keywordsString string, cleanedInclude []string, original
 		keywordLower := strings.ToLower(keyword)
 		matched := false
 
-		if strings.Contains(keyword, "_") {
-			parts := strings.Split(keywordLower, "_")
-			if len(parts) == 2 {
-				if keywordsSet[parts[0]] && keywordsSet[parts[1]] {
-					matched = true
-				}
-			}
-		} else if strings.Contains(keyword, " ") {
-			subSpaceKeywords := strings.Fields(keywordLower)
+		parts := models.KeywordPartsForMatch(keywordLower)
+		if len(parts) >= 2 {
 			allMatched := true
-			for _, subKeyword := range subSpaceKeywords {
-				if !keywordsSet[subKeyword] {
+			for _, p := range parts {
+				if !keywordsSet[p] {
 					allMatched = false
 					break
 				}
 			}
-			if allMatched {
-				matched = true
-			}
-		} else {
-			if keywordsSet[keywordLower] {
-				matched = true
-			}
+			matched = allMatched
+		} else if len(parts) == 1 {
+			matched = keywordsSet[parts[0]]
 		}
 
 		if matched {
