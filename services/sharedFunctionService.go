@@ -4677,7 +4677,10 @@ func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32, filter
 			log.Printf("Error scanning event location data row: %v", err)
 			continue
 		}
-
+		//added this check because to filter out empty data for past events when running the location query, if the query returns 2 set of rows, then only the first one will be picked.
+		if _, exists := locationDataMap[eventID]; exists {
+			continue
+		}
 		locationDataMap[eventID] = &EventLocationData{
 			VenueID:            venueID,
 			VenueCity:          venueCity,

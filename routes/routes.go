@@ -38,6 +38,10 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	rankingService := services.NewRankingService(clickhouseService)
 	rankingHandler := handlers.NewRankingHandler(rankingService, 10)
 
+	// past editions module
+	pastEditionsService := services.NewPastEditionsService(clickhouseService, sharedFunctionService)
+	pastEditionsHandler := handlers.NewPastEditionsHandler(pastEditionsService, transformDataService, 10)
+
 	// helper module
 	categoryService := category.NewCategoryService(clickhouseService)
 	categoryController := category.NewCategoryController(categoryService)
@@ -73,6 +77,7 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	api.Use(middleware.SearchRateLimit(limit, time.Duration(ttl)*time.Millisecond, time.Duration(blockDuration)*time.Millisecond))
 	api.Get("/search-events", searchEventsHandler.SearchEvents)
 	api.Post("/search-events", searchEventsHandler.SearchEventsPost)
+	api.Get("/past/:eventId", pastEditionsHandler.GetPastEditions)
 
 	app.Get("/metrics", adaptor.HTTPHandler(promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{})))
 }
