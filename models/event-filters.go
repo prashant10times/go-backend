@@ -22,8 +22,48 @@ type ResponseDataDto struct {
 }
 
 type Keywords struct {
-	Include []string `json:"include"`
-	Exclude []string `json:"exclude"`
+	Include         []string `json:"include"`
+	Exclude         []string `json:"exclude"`
+	IncludeForQuery []string `json:"-"`
+	ExcludeForQuery []string `json:"-"`
+}
+
+func cleanKeywordForQuery(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	segments := strings.Split(s, "_")
+	var kept []string
+	for _, seg := range segments {
+		if len(seg) > 1 {
+			kept = append(kept, seg)
+			continue
+		}
+		if len(seg) == 1 {
+			c := seg[0]
+			if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') {
+				kept = append(kept, seg)
+			}
+		}
+	}
+	return strings.Join(kept, "_")
+}
+
+func KeywordPartsForMatch(cleaned string) []string {
+	if cleaned == "" {
+		return nil
+	}
+	var parts []string
+	for _, p := range strings.Split(cleaned, "_") {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) >= 2 {
+		return parts
+	}
+	return []string{cleaned}
 }
 
 type DateRange [2]*string
@@ -1657,22 +1697,38 @@ func (f *FilterDataDto) Validate() error {
 		}))),
 
 		validation.Field(&f.Keywords, validation.When(f.Keywords != "", validation.By(func(value interface{}) error {
-			keywordsStr := value.(string)
-			keywords := strings.Split(keywordsStr, ",")
-			var include, exclude []string
-			for _, keyword := range keywords {
-				keyword = strings.TrimSpace(keyword)
-				if keyword == "" {
+			keywords := strings.Split(value.(string), ",")
+			var include, exclude, includeForQuery, excludeForQuery []string
+			for _, kw := range keywords {
+				kw = strings.TrimSpace(kw)
+				if kw == "" {
 					continue
 				}
-				if strings.HasPrefix(keyword, "-") {
-					exclude = append(exclude, strings.TrimSpace(keyword[1:]))
+				isExclude := strings.HasPrefix(kw, "-")
+				raw := strings.TrimSpace(strings.TrimPrefix(kw, "-"))
+				if raw == "" {
+					continue
+				}
+				cleaned := cleanKeywordForQuery(raw)
+				if cleaned == "" {
+					continue
+				}
+				display := strings.ReplaceAll(raw, "_", " ")
+				if isExclude {
+					exclude = append(exclude, display)
+					excludeForQuery = append(excludeForQuery, cleaned)
 				} else {
-					include = append(include, keyword)
+					include = append(include, display)
+					includeForQuery = append(includeForQuery, cleaned)
 				}
 			}
 			if len(include) > 0 || len(exclude) > 0 {
-				f.ParsedKeywords = &Keywords{Include: include, Exclude: exclude}
+				f.ParsedKeywords = &Keywords{
+					Include:         include,
+					Exclude:         exclude,
+					IncludeForQuery: includeForQuery,
+					ExcludeForQuery: excludeForQuery,
+				}
 			}
 			return nil
 		}))),
