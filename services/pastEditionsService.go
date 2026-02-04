@@ -41,7 +41,8 @@ func buildPastEditionsCTE(editionTypes []string) string {
 	return fmt.Sprintf(`past_editions_cte AS (
 		SELECT
 			ee.edition_uuid,
-			ee.event_id,
+			ee.edition_id,
+			ee.start_date,
 			ee.end_date,
 			ee.status,
 			ee.event_format
@@ -177,7 +178,9 @@ func (s *PastEditionsService) runListQuery(ctx context.Context, query string, ar
 
 type pastEditionRow struct {
 	EditionUUID string
-	EventID     uint32
+	EditionID   uint32
+	StartDate   time.Time
+	EndDate     time.Time
 	Status      string
 	EventFormat *string
 }
@@ -187,17 +190,20 @@ func scanPastEditionsRows(rows driver.Rows) ([]pastEditionRow, error) {
 	for rows.Next() {
 		var (
 			editionUUID string
-			eventID     uint32
+			editionID   uint32
+			startDate   time.Time
 			endDate     time.Time
 			status      string
 			eventFormat *string
 		)
-		if err := rows.Scan(&editionUUID, &eventID, &endDate, &status, &eventFormat); err != nil {
+		if err := rows.Scan(&editionUUID, &editionID, &startDate, &endDate, &status, &eventFormat); err != nil {
 			return nil, err
 		}
 		result = append(result, pastEditionRow{
 			EditionUUID: editionUUID,
-			EventID:     eventID,
+			EditionID:   editionID,
+			StartDate:   startDate,
+			EndDate:     endDate,
 			Status:      status,
 			EventFormat: eventFormat,
 		})
@@ -211,23 +217,28 @@ func (s *PastEditionsService) attachEventLocations(rows []pastEditionRow, editio
 		return list, nil
 	}
 
-	eventID := rows[0].EventID
+	editionIDs := make([]uint32, 0, len(rows))
+	for _, r := range rows {
+		editionIDs = append(editionIDs, r.EditionID)
+	}
 	if len(editionTypes) == 0 {
 		editionTypes = []string{"past_edition"}
 	}
 	filterFields := models.FilterDataDto{ParsedEditionType: editionTypes}
-	locations, err := s.sharedFunctionService.GetEventLocations([]uint32{eventID}, filterFields)
+	locations, err := s.sharedFunctionService.GetEventLocations(editionIDs, filterFields, true)
 	if err != nil {
 		return nil, err
 	}
-	eventLocation := locations[fmt.Sprintf("%d", eventID)]
 
 	for _, r := range rows {
+		eventLocation := locations[fmt.Sprintf("%d", r.EditionID)]
 		item := models.PastEditionsBasic{
 			Id:            r.EditionUUID,
 			EventLocation: eventLocation,
 			Status:        r.Status,
 			Format:        formatForResponse(r.EventFormat),
+			Start:         r.StartDate.Format("2006-01-02"),
+			End:           r.EndDate.Format("2006-01-02"),
 		}
 		list = append(list, item)
 	}

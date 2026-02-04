@@ -4630,20 +4630,34 @@ type EventLocationData struct {
 	EditionCountry     *string
 }
 
-func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32, filterFields models.FilterDataDto) (map[uint32]*EventLocationData, error) {
-	if len(eventIds) == 0 {
+func (s *SharedFunctionService) FetchEventLocationData(ids []uint32, filterFields models.FilterDataDto, byEdition bool) (map[uint32]*EventLocationData, error) {
+	if len(ids) == 0 {
 		return make(map[uint32]*EventLocationData), nil
 	}
 
-	var eventIdsStr []string
-	for _, id := range eventIds {
-		eventIdsStr = append(eventIdsStr, fmt.Sprintf("%d", id))
+	var idsStr []string
+	for _, id := range ids {
+		idsStr = append(idsStr, fmt.Sprintf("%d", id))
 	}
-	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
+	idsStrJoined := strings.Join(idsStr, ",")
 
-	editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
-
-	query := fmt.Sprintf(`
+	var query string
+	if byEdition {
+		query = fmt.Sprintf(`
+		SELECT 
+			edition_id,
+			venue_id,
+			venue_city,
+			edition_city,
+			edition_city_state_id,
+			edition_country
+		FROM testing_db.allevent_ch
+		WHERE edition_id IN (%s)
+		GROUP BY edition_id, venue_id, venue_city, edition_city, edition_city_state_id, edition_country
+	`, idsStrJoined)
+	} else {
+		editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
+		query = fmt.Sprintf(`
 		SELECT 
 			event_id,
 			venue_id,
@@ -4655,7 +4669,8 @@ func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32, filter
 		WHERE event_id IN (%s)
 		AND %s
 		GROUP BY event_id, venue_id, venue_city, edition_city, edition_city_state_id, edition_country
-	`, eventIdsStrJoined, editionTypeCondition)
+	`, idsStrJoined, editionTypeCondition)
+	}
 
 	log.Printf("Event location data query: %s", query)
 
@@ -4669,19 +4684,19 @@ func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32, filter
 	locationDataMap := make(map[uint32]*EventLocationData)
 
 	for rows.Next() {
-		var eventID uint32
+		var rowID uint32
 		var venueID, venueCity, editionCity, editionCityStateID *uint32
 		var editionCountry *string
 
-		if err := rows.Scan(&eventID, &venueID, &venueCity, &editionCity, &editionCityStateID, &editionCountry); err != nil {
+		if err := rows.Scan(&rowID, &venueID, &venueCity, &editionCity, &editionCityStateID, &editionCountry); err != nil {
 			log.Printf("Error scanning event location data row: %v", err)
 			continue
 		}
-		//added this check because to filter out empty data for past events when running the location query, if the query returns 2 set of rows, then only the first one will be picked.
-		if _, exists := locationDataMap[eventID]; exists {
+		// Keep first row per id; skip later rows so we don't override
+		if _, exists := locationDataMap[rowID]; exists {
 			continue
 		}
-		locationDataMap[eventID] = &EventLocationData{
+		locationDataMap[rowID] = &EventLocationData{
 			VenueID:            venueID,
 			VenueCity:          venueCity,
 			EditionCity:        editionCity,
@@ -5185,8 +5200,8 @@ func (s *SharedFunctionService) transformLocationData(locations map[string]map[s
 	return nil
 }
 
-func (s *SharedFunctionService) GetEventLocations(eventIds []uint32, filterFields models.FilterDataDto) (map[string]map[string]interface{}, error) {
-	locationDataMap, err := s.FetchEventLocationData(eventIds, filterFields)
+func (s *SharedFunctionService) GetEventLocations(ids []uint32, filterFields models.FilterDataDto, byEdition bool) (map[string]map[string]interface{}, error) {
+	locationDataMap, err := s.FetchEventLocationData(ids, filterFields, byEdition)
 	if err != nil {
 		return nil, err
 	}

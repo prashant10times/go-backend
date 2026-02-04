@@ -8,10 +8,12 @@ const PastEditionsLimitMax = 100
 const PastEditionsLimitDefault = 20
 
 type PastEditionsBasic struct {
-	Id string `json:"id"`
+	Id            string                 `json:"id"`
 	EventLocation map[string]interface{} `json:"eventLocation,omitempty"`
-	Status string `json:"status"`
-	Format *string `json:"format,omitempty"`
+	Status        string                 `json:"status"`
+	Format        *string                `json:"format,omitempty"`
+	Start         string                 `json:"start"`
+	End           string                 `json:"end"`
 }
 
 var PastEditionsSelectSpec = map[string]string{

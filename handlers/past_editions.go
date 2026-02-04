@@ -75,6 +75,8 @@ func (h *PastEditionsHandler) GetPastEditions(c *fiber.Ctx) error {
 			"eventLocation": item.EventLocation,
 			"status":        item.Status,
 			"format":        item.Format,
+			"start":         item.Start,
+			"end":           item.End,
 		})
 	}
 	pagination := models.PaginationDto{Limit: query.Limit, Offset: query.Offset}

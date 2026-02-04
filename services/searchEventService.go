@@ -1758,7 +1758,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		var err error
 
 		if len(eventIds) > 0 {
-			locations, err = s.sharedFunctionService.GetEventLocations(eventIds, filterFields)
+			locations, err = s.sharedFunctionService.GetEventLocations(eventIds, filterFields, false)
 		} else {
 			locations = make(map[string]map[string]interface{})
 		}
