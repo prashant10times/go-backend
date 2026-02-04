@@ -77,7 +77,7 @@ func SetupRoutes(app *fiber.App, dbService *services.DatabaseService, clickhouse
 	api.Use(middleware.SearchRateLimit(limit, time.Duration(ttl)*time.Millisecond, time.Duration(blockDuration)*time.Millisecond))
 	api.Get("/search-events", searchEventsHandler.SearchEvents)
 	api.Post("/search-events", searchEventsHandler.SearchEventsPost)
-	api.Get("/past/:eventId", pastEditionsHandler.GetPastEditions)
+	api.Get("/editions/:eventId", pastEditionsHandler.GetPastEditions)
 
 	app.Get("/metrics", adaptor.HTTPHandler(promhttp.HandlerFor(prometheus.DefaultGatherer, promhttp.HandlerOpts{})))
 }
