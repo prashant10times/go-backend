@@ -187,10 +187,13 @@ func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[s
 	return response, nil
 }
 
-func (s *TransformDataService) BuildClickhouseMapViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx) (interface{}, error) {
+func (s *TransformDataService) BuildClickhouseMapViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx, uniqueEventCount *int) (interface{}, error) {
 	response := fiber.Map{
 		"count": totalCount,
 		"data":  eventData,
+	}
+	if uniqueEventCount != nil {
+		response["uniqueEventCount"] = *uniqueEventCount
 	}
 	return response, nil
 }

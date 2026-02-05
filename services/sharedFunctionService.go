@@ -3270,6 +3270,26 @@ func (s *SharedFunctionService) buildListDataUniqueEventCountQuery(
 		eventFilterGroupByStr)
 }
 
+func (s *SharedFunctionService) buildMinimalEventFilterForUniqueCount(queryResult *ClickHouseQueryResult) (eventFilterSelectStr, eventFilterGroupByStr string) {
+	eventFilterSelectFields := []string{"ee.event_id as event_id", "ee.edition_id as edition_id"}
+	eventFilterGroupByFields := []string{"ee.event_id", "ee.edition_id"}
+	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
+		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_lat as lat")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "lat")
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_long as lon")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "lon")
+		}
+		if strings.Contains(queryResult.DistanceOrderClause, "venueLat") && strings.Contains(queryResult.DistanceOrderClause, "venueLon") {
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_lat as venueLat")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLat")
+			eventFilterSelectFields = append(eventFilterSelectFields, "ee.venue_long as venueLon")
+			eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLon")
+		}
+	}
+	return strings.Join(eventFilterSelectFields, ", "), strings.Join(eventFilterGroupByFields, ", ")
+}
+
 func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) (int, error) {
 	queryResult, err := s.buildClickHouseQuery(filterFields)
 	if err != nil {
@@ -8163,6 +8183,10 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 	}
 
 	calendarType := *filterFields.ParsedCalendarType
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+	hasEndDateFilters := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
+		filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != "" ||
+		filterFields.CreatedAt != "" || len(filterFields.ParsedEventIds) > 0 || len(filterFields.ParsedNotEventIds) > 0 || len(filterFields.ParsedSourceEventIds) > 0 || len(filterFields.ParsedDates) > 0 || filterFields.ParsedPastBetween != nil || filterFields.ParsedActiveBetween != nil
 
 	switch calendarType {
 	case "day":
@@ -8227,6 +8251,38 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		dayCountChan := make(chan dayCountResult, 1)
 		totalCountChan := make(chan totalCountResult, 1)
+		var uniqueCountChan chan int
+		if hasPast {
+			uniqueCountChan = make(chan int, 1)
+			eventFilterSelectStr, eventFilterGroupByStr := s.buildMinimalEventFilterForUniqueCount(queryResult)
+			go func() {
+				uniqueQuery := s.buildListDataUniqueEventCountQuery(
+					queryResult,
+					&cteAndJoinResult,
+					eventFilterSelectStr,
+					eventFilterGroupByStr,
+					hasEndDateFilters,
+					filterFields,
+				)
+				log.Printf("Calendar day unique event count query: %s", uniqueQuery)
+				rows, err := s.clickhouseService.ExecuteQuery(context.Background(), uniqueQuery)
+				if err != nil {
+					log.Printf("Calendar day unique event count query error: %v", err)
+					uniqueCountChan <- 0
+					return
+				}
+				defer rows.Close()
+				var uniqueCount uint64
+				if rows.Next() {
+					if err := rows.Scan(&uniqueCount); err != nil {
+						log.Printf("Calendar day unique event count scan error: %v", err)
+						uniqueCountChan <- 0
+						return
+					}
+				}
+				uniqueCountChan <- int(uniqueCount)
+			}()
+		}
 
 		go func() {
 			dayCountData, err := s.GetEventCountByDay(
@@ -8248,6 +8304,12 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		dayResult := <-dayCountChan
 		countRes := <-totalCountChan
+
+		var uniqueEventCount *int
+		if hasPast && uniqueCountChan != nil {
+			uniqueEventCount = new(int)
+			*uniqueEventCount = <-uniqueCountChan
+		}
 
 		if dayResult.err != nil {
 			return &ListResult{
@@ -8271,12 +8333,16 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		transformedDayCount := s.transformDataService.TransformEventCountByDay(dayCountMap)
 
+		data := fiber.Map{
+			"count": countRes.count,
+			"data":  transformedDayCount,
+		}
+		if uniqueEventCount != nil {
+			data["uniqueEventCount"] = *uniqueEventCount
+		}
 		return &ListResult{
 			StatusCode: 200,
-			Data: fiber.Map{
-				"count": countRes.count,
-				"data":  transformedDayCount,
-			},
+			Data:      data,
 		}, nil
 
 	case "week":
@@ -8306,6 +8372,61 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		weekEventsChan := make(chan weekEventsResult, 1)
 		totalCountChan := make(chan totalCountResult, 1)
+		var uniqueCountChan chan int
+		if hasPast {
+			queryResult, err := s.buildClickHouseQuery(filterFields)
+			if err == nil {
+				cteAndJoinResult := s.buildFilterCTEsAndJoins(
+					queryResult.NeedsVisitorJoin, queryResult.NeedsSpeakerJoin, queryResult.NeedsExhibitorJoin,
+					queryResult.NeedsSponsorJoin, queryResult.NeedsCategoryJoin, queryResult.NeedsTypeJoin,
+					queryResult.NeedsEventRankingJoin, queryResult.needsDesignationJoin, queryResult.needsAudienceSpreadJoin,
+					queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
+					queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
+					queryResult.NeedsUserIdUnionCTE,
+					queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
+					queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
+					queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
+					queryResult.RegionsWhereConditions, queryResult.LocationIdsWhereConditions, queryResult.CountryIdsWhereConditions,
+					queryResult.StateIdsWhereConditions, queryResult.CityIdsWhereConditions, queryResult.VenueIdsWhereConditions,
+					queryResult.UserIdWhereConditions,
+					queryResult.NeedsCompanyIdUnionCTE,
+					queryResult.CompanyIdWhereConditions,
+					queryResult.WhereClause,
+					queryResult.SearchClause,
+					nil,
+					nil,
+					filterFields,
+				)
+				uniqueCountChan = make(chan int, 1)
+				eventFilterSelectStr, eventFilterGroupByStr := s.buildMinimalEventFilterForUniqueCount(queryResult)
+				go func() {
+					uniqueQuery := s.buildListDataUniqueEventCountQuery(
+						queryResult,
+						&cteAndJoinResult,
+						eventFilterSelectStr,
+						eventFilterGroupByStr,
+						hasEndDateFilters,
+						filterFields,
+					)
+					log.Printf("Calendar week unique event count query: %s", uniqueQuery)
+					rows, err := s.clickhouseService.ExecuteQuery(context.Background(), uniqueQuery)
+					if err != nil {
+						log.Printf("Calendar week unique event count query error: %v", err)
+						uniqueCountChan <- 0
+						return
+					}
+					defer rows.Close()
+					var uniqueCount uint64
+					if rows.Next() {
+						if err := rows.Scan(&uniqueCount); err != nil {
+							uniqueCountChan <- 0
+							return
+						}
+					}
+					uniqueCountChan <- int(uniqueCount)
+				}()
+			}
+		}
 
 		go func() {
 			result, err := s.getEventsByWeek(filterFields, startDate, endDate)
@@ -8319,6 +8440,12 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		weekResult := <-weekEventsChan
 		countRes := <-totalCountChan
+
+		var uniqueEventCount *int
+		if hasPast && uniqueCountChan != nil {
+			uniqueEventCount = new(int)
+			*uniqueEventCount = <-uniqueCountChan
+		}
 
 		if weekResult.err != nil {
 			return &ListResult{
@@ -8339,6 +8466,9 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			result = fiber.Map{}
 		}
 		result["count"] = countRes.count
+		if uniqueEventCount != nil {
+			result["uniqueEventCount"] = *uniqueEventCount
+		}
 
 		return &ListResult{
 			StatusCode: 200,
@@ -8411,6 +8541,37 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		dayCountChan := make(chan dayCountResult, 1)
 		monthCountChan := make(chan monthCountResult, 1)
 		totalCountChan := make(chan totalCountResult, 1)
+		var uniqueCountChan chan int
+		if hasPast {
+			uniqueCountChan = make(chan int, 1)
+			eventFilterSelectStr, eventFilterGroupByStr := s.buildMinimalEventFilterForUniqueCount(queryResult)
+			go func() {
+				uniqueQuery := s.buildListDataUniqueEventCountQuery(
+					queryResult,
+					&cteAndJoinResult,
+					eventFilterSelectStr,
+					eventFilterGroupByStr,
+					hasEndDateFilters,
+					filterFields,
+				)
+				log.Printf("Calendar month unique event count query: %s", uniqueQuery)
+				rows, err := s.clickhouseService.ExecuteQuery(context.Background(), uniqueQuery)
+				if err != nil {
+					log.Printf("Calendar month unique event count query error: %v", err)
+					uniqueCountChan <- 0
+					return
+				}
+				defer rows.Close()
+				var uniqueCount uint64
+				if rows.Next() {
+					if err := rows.Scan(&uniqueCount); err != nil {
+						uniqueCountChan <- 0
+						return
+					}
+				}
+				uniqueCountChan <- int(uniqueCount)
+			}()
+		}
 
 		go func() {
 			dayCountData, err := s.GetEventCountByDay(
@@ -8445,6 +8606,12 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		dayResult := <-dayCountChan
 		monthResult := <-monthCountChan
 		countRes := <-totalCountChan
+
+		var uniqueEventCount *int
+		if hasPast && uniqueCountChan != nil {
+			uniqueEventCount = new(int)
+			*uniqueEventCount = <-uniqueCountChan
+		}
 
 		if dayResult.err != nil {
 			return &ListResult{
@@ -8484,13 +8651,17 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		transformedMonthCount := s.transformDataService.TransformEventCountByLongDurations(monthCountRows, "month")
 
+		data := fiber.Map{
+			"count":        countRes.count,
+			"data":         transformedDayCount,
+			"countByMonth": transformedMonthCount,
+		}
+		if uniqueEventCount != nil {
+			data["uniqueEventCount"] = *uniqueEventCount
+		}
 		return &ListResult{
 			StatusCode: 200,
-			Data: fiber.Map{
-				"count":        countRes.count,
-				"data":         transformedDayCount,
-				"countByMonth": transformedMonthCount,
-			},
+			Data:      data,
 		}, nil
 
 	case "year":
@@ -8564,6 +8735,37 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		monthCountChan := make(chan monthCountResult, 1)
 		yearCountChan := make(chan yearCountResult, 1)
 		totalCountChan := make(chan totalCountResult, 1)
+		var uniqueCountChan chan int
+		if hasPast {
+			uniqueCountChan = make(chan int, 1)
+			eventFilterSelectStr, eventFilterGroupByStr := s.buildMinimalEventFilterForUniqueCount(queryResult)
+			go func() {
+				uniqueQuery := s.buildListDataUniqueEventCountQuery(
+					queryResult,
+					&cteAndJoinResult,
+					eventFilterSelectStr,
+					eventFilterGroupByStr,
+					hasEndDateFilters,
+					filterFields,
+				)
+				log.Printf("Calendar year unique event count query: %s", uniqueQuery)
+				rows, err := s.clickhouseService.ExecuteQuery(context.Background(), uniqueQuery)
+				if err != nil {
+					log.Printf("Calendar year unique event count query error: %v", err)
+					uniqueCountChan <- 0
+					return
+				}
+				defer rows.Close()
+				var uniqueCount uint64
+				if rows.Next() {
+					if err := rows.Scan(&uniqueCount); err != nil {
+						uniqueCountChan <- 0
+						return
+					}
+				}
+				uniqueCountChan <- int(uniqueCount)
+			}()
+		}
 
 		go func() {
 			dayCountData, err := s.GetEventCountByDay(
@@ -8611,6 +8813,12 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		monthResult := <-monthCountChan
 		yearResult := <-yearCountChan
 		countRes := <-totalCountChan
+
+		var uniqueEventCount *int
+		if hasPast && uniqueCountChan != nil {
+			uniqueEventCount = new(int)
+			*uniqueEventCount = <-uniqueCountChan
+		}
 
 		if dayResult.err != nil {
 			return &ListResult{
@@ -8665,14 +8873,18 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		transformedYearCount := s.transformDataService.TransformEventCountByLongDurations(yearCountRows, "year")
 
+		data := fiber.Map{
+			"count":        countRes.count,
+			"data":         transformedDayCount,
+			"countByMonth": transformedMonthCount,
+			"countByYear":  transformedYearCount,
+		}
+		if uniqueEventCount != nil {
+			data["uniqueEventCount"] = *uniqueEventCount
+		}
 		return &ListResult{
 			StatusCode: 200,
-			Data: fiber.Map{
-				"count":        countRes.count,
-				"data":         transformedDayCount,
-				"countByMonth": transformedMonthCount,
-				"countByYear":  transformedYearCount,
-			},
+			Data:      data,
 		}, nil
 	default:
 		return &ListResult{

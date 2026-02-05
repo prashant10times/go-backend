@@ -669,7 +669,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			return nil, fmt.Errorf("unexpected data type: %T", eventData)
 		}
 
-		response, err = s.transformDataService.BuildClickhouseMapViewResponse(eventDataSlice, pagination, result.Count, c)
+		response, err = s.transformDataService.BuildClickhouseMapViewResponse(eventDataSlice, pagination, result.Count, c, result.UniqueEventCount)
 
 		if err != nil {
 			log.Printf("Error building map response: %v", err)
@@ -2892,6 +2892,8 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != "" ||
 		filterFields.CreatedAt != "" || len(filterFields.ParsedEventIds) > 0 || len(filterFields.ParsedNotEventIds) > 0 || len(filterFields.ParsedSourceEventIds) > 0 || len(filterFields.ParsedDates) > 0 || filterFields.ParsedPastBetween != nil || filterFields.ParsedActiveBetween != nil
 
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+
 	mapFields := []string{
 		"ee.event_uuid as id",
 		"ee.impactScore as impactScore",
@@ -2988,6 +2990,37 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 
 	dataChan := make(chan dataResult, 1)
 	countChan := make(chan countResult, 1)
+	var uniqueCountChan chan int
+	if hasPast {
+		uniqueCountChan = make(chan int, 1)
+		go func() {
+			uniqueQuery := s.sharedFunctionService.buildListDataUniqueEventCountQuery(
+				queryResult,
+				&cteAndJoinResult,
+				eventFilterSelectStr,
+				eventFilterGroupByStr,
+				hasEndDateFilters,
+				filterFields,
+			)
+			log.Printf("Map unique event count query: %s", uniqueQuery)
+			rows, err := s.clickhouseService.ExecuteQuery(context.Background(), uniqueQuery)
+			if err != nil {
+				log.Printf("Map unique event count query error: %v", err)
+				uniqueCountChan <- 0
+				return
+			}
+			defer rows.Close()
+			var uniqueCount uint64
+			if rows.Next() {
+				if err := rows.Scan(&uniqueCount); err != nil {
+					log.Printf("Map unique event count scan error: %v", err)
+					uniqueCountChan <- 0
+					return
+				}
+			}
+			uniqueCountChan <- int(uniqueCount)
+		}()
+	}
 
 	go func() {
 		eventDataQueryTime := time.Now()
@@ -3022,6 +3055,12 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		log.Printf("Warning: Count query failed, continuing without count")
 	}
 	totalCount := countRes.Count
+
+	var uniqueEventCount *int
+	if hasPast && uniqueCountChan != nil {
+		uniqueEventCount = new(int)
+		*uniqueEventCount = <-uniqueCountChan
+	}
 
 	var mapData []map[string]interface{}
 
@@ -3127,16 +3166,18 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 
 	if len(mapData) == 0 {
 		return &ListResult{
-			StatusCode: 200,
-			Data:       []interface{}{},
-			Count:      totalCount,
+			StatusCode:       200,
+			Data:             []interface{}{},
+			Count:            totalCount,
+			UniqueEventCount: uniqueEventCount,
 		}, nil
 	}
 
 	return &ListResult{
-		StatusCode: 200,
-		Data:       mapData,
-		Count:      totalCount,
+		StatusCode:       200,
+		Data:             mapData,
+		Count:            totalCount,
+		UniqueEventCount: uniqueEventCount,
 	}, nil
 }
 
