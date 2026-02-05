@@ -1554,10 +1554,9 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	if len(filterFields.ParsedPrice) > 0 {
 		escapedPrices := make([]string, 0, len(filterFields.ParsedPrice))
 		for _, price := range filterFields.ParsedPrice {
-			escapedPrices = append(escapedPrices, fmt.Sprintf("lower('%s')", strings.ReplaceAll(price, "'", "''")))
+			escapedPrices = append(escapedPrices, fmt.Sprintf("'%s'", strings.ReplaceAll(price, "'", "''")))
 		}
 
-		// Check if both "free" and "paid" are present
 		hasFree := false
 		hasPaid := false
 		for _, price := range filterFields.ParsedPrice {
@@ -1568,20 +1567,17 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				hasPaid = true
 			}
 		}
+		if hasFree && hasPaid {
+			escapedPrices = append(escapedPrices, "'free_and_paid'")
+		}
 
 		var priceCondition string
 		if len(escapedPrices) == 1 {
-			priceCondition = fmt.Sprintf("lower(ee.event_pricing) = %s", escapedPrices[0])
+			priceCondition = fmt.Sprintf("ee.event_pricing = %s", escapedPrices[0])
 		} else {
-			priceCondition = fmt.Sprintf("lower(ee.event_pricing) IN (%s)", strings.Join(escapedPrices, ","))
+			priceCondition = fmt.Sprintf("ee.event_pricing IN (%s)", strings.Join(escapedPrices, ","))
 		}
-
-		// If both "free" and "paid" are selected, also include NULL values
-		if hasFree && hasPaid {
-			whereConditions = append(whereConditions, fmt.Sprintf("(%s OR ee.event_pricing IS NULL)", priceCondition))
-		} else {
-			whereConditions = append(whereConditions, priceCondition)
-		}
+		whereConditions = append(whereConditions, priceCondition)
 	}
 
 	if len(filterFields.ParsedFrequency) > 0 {
