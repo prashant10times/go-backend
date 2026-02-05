@@ -1284,6 +1284,33 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 	} else {
 		requiredFieldsStatic = s.ensureOrderByFieldsInPastEditionSelect(requiredFieldsStatic, sortClause)
+		if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
+			hasLat := false
+			hasLon := false
+			for _, f := range requiredFieldsStatic {
+				if strings.Contains(f, " as lat") {
+					hasLat = true
+				}
+				if strings.Contains(f, " as lon") {
+					hasLon = true
+				}
+			}
+			if strings.Contains(queryResult.DistanceOrderClause, "COALESCE") {
+				if !hasLat {
+					requiredFieldsStatic = append(requiredFieldsStatic, "COALESCE(ee.venue_lat, ee.edition_city_lat) as lat")
+				}
+				if !hasLon {
+					requiredFieldsStatic = append(requiredFieldsStatic, "COALESCE(ee.venue_long, ee.edition_city_long) as lon")
+				}
+			} else {
+				if !hasLat {
+					requiredFieldsStatic = append(requiredFieldsStatic, "ee.edition_city_lat as lat")
+				}
+				if !hasLon {
+					requiredFieldsStatic = append(requiredFieldsStatic, "ee.edition_city_long as lon")
+				}
+			}
+		}
 	}
 
 	eventFilterOrderBy = eventFilterFields.OrderBy
@@ -1414,11 +1441,15 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 	innerOrderBy := func() string {
 		if finalOrderClause != "" {
-			fixedOrderBy := fieldCtx.FieldsSelector.FixOrderByForFields(finalOrderClause, requiredFieldsStatic)
+			orderClauseForData := finalOrderClause
+			if strings.Contains(finalOrderClause, "greatCircleDistance") {
+				orderClauseForData = convertDistanceOrderForEventFilter(finalOrderClause)
+			}
+			fixedOrderBy := fieldCtx.FieldsSelector.FixOrderByForFields(orderClauseForData, requiredFieldsStatic)
 			if fixedOrderBy != "" {
 				return fixedOrderBy
 			}
-			return s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true)
+			return s.sharedFunctionService.fixOrderByForCTE(orderClauseForData, true)
 		}
 		return "ORDER BY score ASC"
 	}()
