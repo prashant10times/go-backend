@@ -164,7 +164,7 @@ func (s *TransformDataService) getPaginationURL(limit, offset int, paginationTyp
 	return &url
 }
 
-func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx) (interface{}, error) {
+func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx, uniqueEventCount *int) (interface{}, error) {
 	var nextURL *string
 	if pagination.Offset+pagination.Limit < totalCount {
 		nextURL = s.getPaginationURL(pagination.Limit, pagination.Offset, "next", c)
@@ -180,6 +180,9 @@ func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[s
 		"next":     nextURL,
 		"previous": previousURL,
 		"data":     eventData,
+	}
+	if uniqueEventCount != nil {
+		response["uniqueEventCount"] = *uniqueEventCount
 	}
 	return response, nil
 }

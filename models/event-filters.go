@@ -516,6 +516,19 @@ func ParseEditionType(editionTypeStr string, defaultIfEmpty string) ([]string, e
 	return parsed, nil
 }
 
+func HasPastInEditionType(parsed []string) bool {
+	for _, et := range parsed {
+		if et == "past_edition" {
+			return true
+		}
+	}
+	return false
+}
+
+func IsPastOnly(parsed []string) bool {
+	return len(parsed) == 1 && parsed[0] == "past_edition"
+}
+
 func validateAndNormalizeDate(dateStr *string, fieldName string) validation.Rule {
 	return validation.When(*dateStr != "", validation.By(func(value interface{}) error {
 		dateValue := value.(string)

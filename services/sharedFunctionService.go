@@ -2682,24 +2682,26 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 	}
 
 	fieldMappings := map[string]string{
-		"event_uuid":        "id",
-		"start_date":        "start",
-		"end_date":          "end",
-		"event_followers":   "followers",
-		"event_avgRating":   "avgRating",
-		"event_exhibitor":   "exhibitors",
-		"event_speaker":     "speakers",
-		"event_sponsor":     "sponsors",
-		"event_created":     "created",
-		"exhibitors_mean":   "estimatedExhibitors",
-		"edition_city_lat":  "lat",
-		"edition_city_long": "lon",
-		"venue_lat":         "venueLat",
-		"venue_long":        "venueLon",
-		"impact_score":      "impactScore",
+		"event_uuid":         "id",
+		"start_date":         "start",
+		"end_date":           "end",
+		"event_followers":    "followers",
+		"event_avgRating":    "avgRating",
+		"event_exhibitor":    "exhibitors",
+		"event_speaker":      "speakers",
+		"event_sponsor":      "sponsors",
+		"event_created":      "created",
+		"exhibitors_mean":    "estimatedExhibitors",
+		"edition_city_lat":   "lat",
+		"edition_city_long":  "lon",
+		"venue_lat":          "venueLat",
+		"venue_long":         "venueLon",
+		"impact_score":       "impactScore",
 		"event_score":       "score",
-		"event_name":        "name",
-		"event_updated":     "updated",
+		"event_name":         "name",
+		"event_updated":      "updated",
+		"internationalScore": "internationalScore",
+		"inboundScore":       "inboundScore",
 	}
 
 	if !useAliases {
@@ -3198,6 +3200,74 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 		eventFilterGroupByStr)
 
 	return countQuery
+}
+
+func (s *SharedFunctionService) buildListDataUniqueEventCountQuery(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	eventFilterSelectStr string,
+	eventFilterGroupByStr string,
+	hasEndDateFilters bool,
+	filterFields models.FilterDataDto,
+) string {
+	today := time.Now().Format("2006-01-02")
+
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinClauses := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClauses = cteAndJoinResult.JoinClausesStr
+	}
+
+	whereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		s.buildEditionTypeCondition(filterFields, "ee"),
+	}
+
+	if !hasEndDateFilters {
+		dateCondition := s.buildDefaultDateCondition(filterFields.Forecasted, "ee", today)
+		whereConditions = append(whereConditions, dateCondition)
+	}
+
+	if queryResult.WhereClause != "" {
+		whereConditions = append(whereConditions, queryResult.WhereClause)
+	}
+
+	if queryResult.SearchClause != "" {
+		whereConditions = append(whereConditions, queryResult.SearchClause)
+	}
+
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		whereConditions = append(whereConditions, cteAndJoinResult.JoinConditions...)
+	}
+
+	whereClause := strings.Join(whereConditions, "\n\t\t\tAND ")
+
+	return fmt.Sprintf(`
+		WITH %sevent_filter AS (
+			SELECT %s
+			FROM testing_db.allevent_ch AS ee
+			%s
+			WHERE %s
+			GROUP BY %s
+		)
+		SELECT count(DISTINCT event_id) as unique_event_count
+		FROM event_filter
+	`,
+		cteClausesStr,
+		eventFilterSelectStr,
+		func() string {
+			if joinClauses != "" {
+				return "\t\t" + joinClauses
+			}
+			return ""
+		}(),
+		whereClause,
+		eventFilterGroupByStr)
 }
 
 func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) (int, error) {
