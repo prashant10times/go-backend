@@ -1553,21 +1553,14 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	if len(filterFields.ParsedPrice) > 0 {
 		escapedPrices := make([]string, 0, len(filterFields.ParsedPrice))
+		hasFreeAndPaid := false
 		for _, price := range filterFields.ParsedPrice {
 			escapedPrices = append(escapedPrices, fmt.Sprintf("'%s'", strings.ReplaceAll(price, "'", "''")))
-		}
-
-		hasFree := false
-		hasPaid := false
-		for _, price := range filterFields.ParsedPrice {
-			if price == "free" {
-				hasFree = true
-			}
-			if price == "paid" {
-				hasPaid = true
+			if price == "free_and_paid" {
+				hasFreeAndPaid = true
 			}
 		}
-		if hasFree && hasPaid {
+		if !hasFreeAndPaid {
 			escapedPrices = append(escapedPrices, "'free_and_paid'")
 		}
 
