@@ -6931,7 +6931,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			WHERE %s
 		),
 		exploded AS (
-			SELECT e.event_id, toDate(kv.1) AS date, kv.2 AS value_json
+			SELECT e.event_id AS event_id, toDate(kv.1) AS date, kv.2 AS value_json
 			FROM preFilterEvent e
 			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
 			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
@@ -7284,7 +7284,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 			WHERE %s
 		),
 		exploded AS (
-			SELECT e.event_id, toDate(kv.1) AS date, kv.2 AS value_json
+			SELECT e.event_id AS event_id, toDate(kv.1) AS date, kv.2 AS value_json
 			FROM preFilterEvent e
 			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
 			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
