@@ -6327,6 +6327,13 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		return nil, fmt.Errorf("unsupported location groupBy: %s", groupBy)
 	}
 
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+
+	countSelect := "COUNT(DISTINCT e.event_id) AS count"
+	if hasPast {
+		countSelect = "COUNT(e.event_id) AS count, COUNT(DISTINCT e.event_id) AS uniqueEventCount"
+	}
+
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
@@ -6339,7 +6346,7 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 				e.edition_id
 		)
 		SELECT
-			COUNT(DISTINCT e.event_id) AS count,
+			%s,
 			toUUIDOrNull(toString(loc.id_uuid)) AS id,
 			loc.name AS name,
 			loc.latitude AS latitude,
@@ -6360,6 +6367,7 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 			return ""
 		}(),
 		whereClause,
+		countSelect,
 		locationJoinCondition,
 		locationWhereCondition,
 	)
@@ -6375,48 +6383,95 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 
 	var result []map[string]interface{}
 	for rows.Next() {
-		var count uint64
-		var idUUID uuid.UUID
-		var name, code *string
-		var latitude, longitude *float64
+		item := map[string]interface{}{}
 
-		if err := rows.Scan(&count, &idUUID, &name, &latitude, &longitude, &code); err != nil {
-			log.Printf("Error scanning result: %v", err)
-			continue
-		}
+		if hasPast {
+			var totalCount uint64
+			var uniqueCount uint64
+			var idUUID uuid.UUID
+			var name, code *string
+			var latitude, longitude *float64
 
-		item := map[string]interface{}{
-			"count": int(count),
-		}
+			if err := rows.Scan(&totalCount, &uniqueCount, &idUUID, &name, &latitude, &longitude, &code); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				continue
+			}
 
-		if idUUID != uuid.Nil {
-			item["id"] = idUUID.String()
+			item["count"] = int(totalCount)
+			item["uniqueEventCount"] = int(uniqueCount)
+
+			if idUUID != uuid.Nil {
+				item["id"] = idUUID.String()
+			} else {
+				item["id"] = nil
+			}
+
+			if name != nil {
+				item["name"] = *name
+			} else {
+				item["name"] = nil
+			}
+
+			if latitude != nil {
+				item["latitude"] = *latitude
+			} else {
+				item["latitude"] = nil
+			}
+
+			if longitude != nil {
+				item["longitude"] = *longitude
+			} else {
+				item["longitude"] = nil
+			}
+
+			if code != nil {
+				item["code"] = *code
+			} else {
+				item["code"] = nil
+			}
+
 		} else {
-			item["id"] = nil
-		}
+			var count uint64
+			var idUUID uuid.UUID
+			var name, code *string
+			var latitude, longitude *float64
 
-		if name != nil {
-			item["name"] = *name
-		} else {
-			item["name"] = nil
-		}
+			if err := rows.Scan(&count, &idUUID, &name, &latitude, &longitude, &code); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				continue
+			}
 
-		if latitude != nil {
-			item["latitude"] = *latitude
-		} else {
-			item["latitude"] = nil
-		}
+			item["count"] = int(count)
 
-		if longitude != nil {
-			item["longitude"] = *longitude
-		} else {
-			item["longitude"] = nil
-		}
+			if idUUID != uuid.Nil {
+				item["id"] = idUUID.String()
+			} else {
+				item["id"] = nil
+			}
 
-		if code != nil {
-			item["code"] = *code
-		} else {
-			item["code"] = nil
+			if name != nil {
+				item["name"] = *name
+			} else {
+				item["name"] = nil
+			}
+
+			if latitude != nil {
+				item["latitude"] = *latitude
+			} else {
+				item["latitude"] = nil
+			}
+
+			if longitude != nil {
+				item["longitude"] = *longitude
+			} else {
+				item["longitude"] = nil
+			}
+
+			if code != nil {
+				item["code"] = *code
+			} else {
+				item["code"] = nil
+			}
 		}
 
 		result = append(result, item)
