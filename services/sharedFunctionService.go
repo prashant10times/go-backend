@@ -6563,6 +6563,14 @@ func (s *SharedFunctionService) GetEventCountByDate(
 
 	preFilterSelect := "e.event_id"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+
+	var selectExpr string
+	if hasPast {
+		selectExpr = fmt.Sprintf("%s AS date_key, COUNT(e.event_id) AS count, COUNT(DISTINCT e.event_id) AS uniqueEventCount", dateGroupByExpr)
+	} else {
+		selectExpr = fmt.Sprintf("%s AS date_key, uniq(e.event_id) AS count", dateGroupByExpr)
+	}
 
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
@@ -6573,8 +6581,7 @@ func (s *SharedFunctionService) GetEventCountByDate(
 			WHERE %s
 		)
 		SELECT
-			%s AS date_key,
-			uniq(e.event_id) AS count
+			%s
 		FROM preFilterEvent e
 		GROUP BY date_key
 		ORDER BY date_key ASC
@@ -6588,7 +6595,7 @@ func (s *SharedFunctionService) GetEventCountByDate(
 			return ""
 		}(),
 		whereClause,
-		dateGroupByExpr,
+		selectExpr,
 	)
 
 	log.Printf("Event count by %s query: %s", groupBy, query)
@@ -6607,26 +6614,46 @@ func (s *SharedFunctionService) GetEventCountByDate(
 
 	for rows.Next() {
 		var dateKey string
-		var count uint64
 
-		if err := rows.Scan(&dateKey, &count); err != nil {
-			log.Printf("Error scanning row: %v", err)
-			continue
-		}
-
-		item := map[string]interface{}{
-			"date":  dateKey,
-			"count": int(count),
-		}
-
-		dayCount = append(dayCount, item)
-
-		if groupBy == "month" || groupBy == "year" {
-			switch groupBy {
-			case "month":
-				monthCount = append(monthCount, item)
-			case "year":
-				yearCount = append(yearCount, item)
+		if hasPast {
+			var totalCount uint64
+			var uniqueCount uint64
+			if err := rows.Scan(&dateKey, &totalCount, &uniqueCount); err != nil {
+				log.Printf("Error scanning row: %v", err)
+				continue
+			}
+			item := map[string]interface{}{
+				"date":             dateKey,
+				"count":            int(totalCount),
+				"uniqueEventCount": int(uniqueCount),
+			}
+			dayCount = append(dayCount, item)
+			if groupBy == "month" || groupBy == "year" {
+				switch groupBy {
+				case "month":
+					monthCount = append(monthCount, item)
+				case "year":
+					yearCount = append(yearCount, item)
+				}
+			}
+		} else {
+			var count uint64
+			if err := rows.Scan(&dateKey, &count); err != nil {
+				log.Printf("Error scanning row: %v", err)
+				continue
+			}
+			item := map[string]interface{}{
+				"date":  dateKey,
+				"count": int(count),
+			}
+			dayCount = append(dayCount, item)
+			if groupBy == "month" || groupBy == "year" {
+				switch groupBy {
+				case "month":
+					monthCount = append(monthCount, item)
+				case "year":
+					yearCount = append(yearCount, item)
+				}
 			}
 		}
 	}
