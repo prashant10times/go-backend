@@ -1501,14 +1501,14 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 		switch forecasted {
 		case "only":
-			whereConditions = append(whereConditions, fmt.Sprintf("%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedEndDate < '%s'",
+			whereConditions = append(whereConditions, fmt.Sprintf("%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedStartDate <= '%s'",
 				tableAlias, escapedStart, tableAlias, escapedEnd))
 		case "included":
-			whereConditions = append(whereConditions, fmt.Sprintf("((%s.end_date >= '%s' AND %s.end_date < '%s') OR (%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedEndDate < '%s'))",
+			whereConditions = append(whereConditions, fmt.Sprintf("((%s.end_date >= '%s' AND %s.start_date <= '%s') OR (%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedStartDate <= '%s'))",
 				tableAlias, escapedStart, tableAlias, escapedEnd,
 				tableAlias, escapedStart, tableAlias, escapedEnd))
 		default:
-			whereConditions = append(whereConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s.end_date < '%s'",
+			whereConditions = append(whereConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s.start_date <= '%s'",
 				tableAlias, escapedStart, tableAlias, escapedEnd))
 		}
 	}
@@ -2926,9 +2926,30 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 	tableAlias := "ee"
 
 	activeGteValue := s.getFilterValue(filterFields, "ActiveGte")
-	hasActiveGte := activeGteValue != ""
+	activeGtValue := s.getFilterValue(filterFields, "ActiveGt")
+	activeLteValue := s.getFilterValue(filterFields, "ActiveLte")
+	activeLtValue := s.getFilterValue(filterFields, "ActiveLt")
 
-	if activeGteValue != "" {
+	hasActiveGte := activeGteValue != ""
+	hasActiveLte := activeLteValue != ""
+
+	if hasActiveGte && hasActiveLte {
+		switch forecasted {
+		case "only":
+			*whereConditions = append(*whereConditions, fmt.Sprintf("%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedStartDate <= '%s'",
+				tableAlias, activeGteValue, tableAlias, activeLteValue))
+		case "included":
+			*whereConditions = append(*whereConditions, fmt.Sprintf("((%s.end_date >= '%s' AND %s.start_date <= '%s') OR (%s.futureExpexctedEndDate >= '%s' AND %s.futureExpexctedStartDate <= '%s'))",
+				tableAlias, activeGteValue, tableAlias, activeLteValue,
+				tableAlias, activeGteValue, tableAlias, activeLteValue))
+		default:
+			*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s.start_date <= '%s'",
+				tableAlias, activeGteValue, tableAlias, activeLteValue))
+		}
+		return
+	}
+
+	if hasActiveGte {
 		if forecasted == "included" {
 			originalField := s.getDateFieldName("", "end", tableAlias)
 			futureField := s.getDateFieldName("only", "end", tableAlias)
@@ -2946,7 +2967,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 		}
 	}
 
-	if activeGtValue := s.getFilterValue(filterFields, "ActiveGt"); activeGtValue != "" {
+	if activeGtValue != "" {
 		if forecasted == "included" {
 			originalField := s.getDateFieldName("", "end", tableAlias)
 			futureField := s.getDateFieldName("only", "end", tableAlias)
@@ -2964,7 +2985,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 		}
 	}
 
-	if activeLteValue := s.getFilterValue(filterFields, "ActiveLte"); activeLteValue != "" {
+	if activeLteValue != "" {
 		if hasActiveGte {
 			if forecasted == "included" {
 				originalField := s.getDateFieldName("", "start", tableAlias)
@@ -3000,7 +3021,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 		}
 	}
 
-	if activeLtValue := s.getFilterValue(filterFields, "ActiveLt"); activeLtValue != "" {
+	if activeLtValue != "" {
 		if hasActiveGte {
 			if forecasted == "included" {
 				originalField := s.getDateFieldName("", "start", tableAlias)
