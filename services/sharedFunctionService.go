@@ -6916,31 +6916,112 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 
 	switch column {
 	case "eventCount":
-		selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors, "COUNT(e.event_id) AS eventCount", "COUNT(DISTINCT e.event_id) AS uniqueEventCount")
+		} else {
+			selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+		}
 	case "predictedAttendance":
-		selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS predictedAttendance",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS uniquePredictedAttendance",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
+		}
 	case "inboundEstimate":
-		selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.inboundAttendance ELSE 0 END) AS inboundEstimate",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.inboundAttendance ELSE 0 END) AS uniqueInboundEstimate",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+		}
 	case "internationalEstimate":
-		selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.internationalAttendance ELSE 0 END) AS internationalEstimate",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.internationalAttendance ELSE 0 END) AS uniqueInternationalEstimate",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+		}
 	case "impactScore":
-		selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.impactScore ELSE 0 END) AS impactScore",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.impactScore ELSE 0 END) AS uniqueImpactScore",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+		}
 	case "economicImpact":
-		selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.event_economic_value ELSE 0 END) AS economicImpact",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.event_economic_value ELSE 0 END) AS uniqueEconomicImpact",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
+		}
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
 		switch column {
 		case "hotel":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation'))) AS hotel")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation')) ELSE 0 END) AS hotel",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation')) ELSE 0 END) AS uniqueHotel",
+				)
+			} else {
+				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation'))) AS hotel")
+			}
 		case "food":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages'))) AS food")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages')) ELSE 0 END) AS food",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages')) ELSE 0 END) AS uniqueFood",
+				)
+			} else {
+				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages'))) AS food")
+			}
 		case "entertainment":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment'))) AS entertainment")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment')) ELSE 0 END) AS entertainment",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment')) ELSE 0 END) AS uniqueEntertainment",
+				)
+			} else {
+				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment'))) AS entertainment")
+			}
 		case "airline":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights'))) AS airline")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights')) ELSE 0 END) AS airline",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights')) ELSE 0 END) AS uniqueAirline",
+				)
+			} else {
+				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights'))) AS airline")
+			}
 		case "transport":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation'))) AS transport")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation')) ELSE 0 END) AS transport",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation')) ELSE 0 END) AS uniqueTransport",
+				)
+			} else {
+				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation'))) AS transport")
+			}
 		case "utilitie":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities'))) AS utilitie")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities')) ELSE 0 END) AS utilitie",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities')) ELSE 0 END) AS uniqueUtilitie",
+				)
+			} else {
+				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities'))) AS utilitie")
+			}
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -7069,7 +7150,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			WHERE %s
 		),
 		exploded AS (
-			SELECT e.event_id AS event_id, toDate(kv.1) AS date, kv.2 AS value_json
+			SELECT e.event_id AS event_id, e.edition_type AS edition_type, toDate(kv.1) AS date, kv.2 AS value_json
 			FROM preFilterEvent e
 			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
 			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
@@ -7268,35 +7349,116 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 
 	switch column {
 	case "eventCount":
-		selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors, "COUNT(e.event_id) AS eventCount", "COUNT(DISTINCT e.event_id) AS uniqueEventCount")
+		} else {
+			selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+		}
 	case "predictedAttendance":
-		selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS predictedAttendance",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS uniquePredictedAttendance",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
+		}
 	case "inboundEstimate":
-		selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.inboundAttendance ELSE 0 END) AS inboundEstimate",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.inboundAttendance ELSE 0 END) AS uniqueInboundEstimate",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+		}
 	case "internationalEstimate":
-		selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.internationalAttendance ELSE 0 END) AS internationalEstimate",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.internationalAttendance ELSE 0 END) AS uniqueInternationalEstimate",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+		}
 	case "impactScore":
-		selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.impactScore ELSE 0 END) AS impactScore",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.impactScore ELSE 0 END) AS uniqueImpactScore",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+		}
 	case "economicImpact":
-		selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.event_economic_value ELSE 0 END) AS economicImpact",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.event_economic_value ELSE 0 END) AS uniqueEconomicImpact",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
+		}
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
 		useDayWiseExplodedCTE = true
 		dayWiseSumFromE2 := func(categoryKey string) string {
-			return "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', " + "'" + categoryKey + "'" + ")))"
+			return "toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', " + "'" + categoryKey + "'" + "))"
 		}
 		switch column {
 		case "hotel":
-			selectors = append(selectors, dayWiseSumFromE2("Accommodation")+" AS hotel")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN "+dayWiseSumFromE2("Accommodation")+" ELSE 0 END) AS hotel",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN "+dayWiseSumFromE2("Accommodation")+" ELSE 0 END) AS uniqueHotel",
+				)
+			} else {
+				selectors = append(selectors, "sum("+dayWiseSumFromE2("Accommodation")+") AS hotel")
+			}
 		case "food":
-			selectors = append(selectors, dayWiseSumFromE2("Food & Beverages")+" AS food")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN "+dayWiseSumFromE2("Food & Beverages")+" ELSE 0 END) AS food",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN "+dayWiseSumFromE2("Food & Beverages")+" ELSE 0 END) AS uniqueFood",
+				)
+			} else {
+				selectors = append(selectors, "sum("+dayWiseSumFromE2("Food & Beverages")+") AS food")
+			}
 		case "entertainment":
-			selectors = append(selectors, dayWiseSumFromE2("Entertainment")+" AS entertainment")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN "+dayWiseSumFromE2("Entertainment")+" ELSE 0 END) AS entertainment",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN "+dayWiseSumFromE2("Entertainment")+" ELSE 0 END) AS uniqueEntertainment",
+				)
+			} else {
+				selectors = append(selectors, "sum("+dayWiseSumFromE2("Entertainment")+") AS entertainment")
+			}
 		case "airline":
-			selectors = append(selectors, dayWiseSumFromE2("Flights")+" AS airline")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN "+dayWiseSumFromE2("Flights")+" ELSE 0 END) AS airline",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN "+dayWiseSumFromE2("Flights")+" ELSE 0 END) AS uniqueAirline",
+				)
+			} else {
+				selectors = append(selectors, "sum("+dayWiseSumFromE2("Flights")+") AS airline")
+			}
 		case "transport":
-			selectors = append(selectors, dayWiseSumFromE2("Transportation")+" AS transport")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN "+dayWiseSumFromE2("Transportation")+" ELSE 0 END) AS transport",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN "+dayWiseSumFromE2("Transportation")+" ELSE 0 END) AS uniqueTransport",
+				)
+			} else {
+				selectors = append(selectors, "sum("+dayWiseSumFromE2("Transportation")+") AS transport")
+			}
 		case "utilitie":
-			selectors = append(selectors, dayWiseSumFromE2("Utilities")+" AS utilitie")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN "+dayWiseSumFromE2("Utilities")+" ELSE 0 END) AS utilitie",
+					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN "+dayWiseSumFromE2("Utilities")+" ELSE 0 END) AS uniqueUtilitie",
+				)
+			} else {
+				selectors = append(selectors, "sum("+dayWiseSumFromE2("Utilities")+") AS utilitie")
+			}
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -7422,7 +7584,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 			WHERE %s
 		),
 		exploded AS (
-			SELECT e.event_id AS event_id, toDate(kv.1) AS date, kv.2 AS value_json
+			SELECT e.event_id AS event_id, e.edition_type AS edition_type, toDate(kv.1) AS date, kv.2 AS value_json
 			FROM preFilterEvent e
 			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
 			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
@@ -9525,6 +9687,12 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 				if totalVal, ok := dateData.(map[string]interface{})["total"]; ok {
 					columnData["total"] = totalVal
 				}
+				uniqueKeySpecific := "unique" + strings.Title(result.column)
+				if uniqueVal, ok := dateData.(map[string]interface{})[uniqueKeySpecific]; ok {
+					columnData["uniqueTotal"] = uniqueVal
+				} else if uniqueVal, ok := dateData.(map[string]interface{})["uniqueEventCount"]; ok {
+					columnData["uniqueTotal"] = uniqueVal
+				}
 			case "byEventType":
 				columnData["byEventType"] = dateData
 			case "byEventTypeGroup":
@@ -9538,6 +9706,7 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 	for _, col := range filterFields.ParsedColumns {
 		defaultGroupedValues[col] = map[string]interface{}{
 			"total":            0,
+			"uniqueTotal":      0,
 			"byEventType":      make(map[string]interface{}),
 			"byEventTypeGroup": make(map[string]interface{}),
 		}
@@ -9562,6 +9731,13 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 	}, nil
 }
 
+func makeUniqueKey(eventType string) string {
+	if eventType == "" {
+		return "unique"
+	}
+	return "unique" + eventType
+}
+
 func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, groupBy []models.CountGroup) (map[string]interface{}, error) {
 	if len(groupBy) < 2 {
 		return nil, fmt.Errorf("groupBy must have at least 2 elements")
@@ -9573,7 +9749,7 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 	result := make(map[string]interface{})
 
 	var columns []string
-	var dateIdx, columnIdx, groupByIdx int = -1, -1, -1
+	var dateIdx, columnIdx, groupByIdx, uniqueIdx int = -1, -1, -1, -1
 	columnStr := string(column)
 	firstRow := true
 
@@ -9591,6 +9767,8 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 					dateIdx = i
 				} else if col == columnStr {
 					columnIdx = i
+				} else if col == "unique"+strings.Title(columnStr) || col == "uniqueEventCount" {
+					uniqueIdx = i
 				} else if len(secondaryGroupBy) > 0 {
 					if secondaryGroupBy[0] == models.CountGroupEventType && col == "eventType" {
 						groupByIdx = i
@@ -9622,6 +9800,13 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 			if col == "date" {
 				scanArgs[i] = new(time.Time)
 			} else if col == columnStr {
+				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
+					scanArgs[i] = new(uint64)
+				} else {
+					scanArgs[i] = new(float64)
+				}
+			} else if i == uniqueIdx {
+				// unique counts should use same type as main column
 				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
 					scanArgs[i] = new(uint64)
 				} else {
@@ -9661,14 +9846,33 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 				columnValue = 0
 			}
 		}
+		// extract unique value if present (support uint64 or float64)
+		var uniqueValue float64 = 0
+		if uniqueIdx != -1 {
+			switch v := scanArgs[uniqueIdx].(type) {
+			case *uint64:
+				if v != nil {
+					uniqueValue = float64(*v)
+				}
+			case *float64:
+				if v != nil {
+					uniqueValue = *v
+				}
+			}
+		}
 
 		if result[dateStr] == nil {
 			if len(secondaryGroupBy) > 0 {
 				result[dateStr] = make(map[string]interface{})
 			} else {
-				result[dateStr] = map[string]interface{}{
+				obj := map[string]interface{}{
 					"total": columnValue,
 				}
+				// add unique total if available
+				if uniqueIdx != -1 {
+					obj["uniqueEventCount"] = uniqueValue
+				}
+				result[dateStr] = obj
 			}
 		}
 
@@ -9681,12 +9885,24 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 				continue
 			}
 
+			// total per group
 			if dateData[groupKey] == nil {
 				dateData[groupKey] = columnValue
 			} else {
 				if existingVal, ok := dateData[groupKey].(float64); ok {
 					if newVal, ok := columnValue.(float64); ok {
 						dateData[groupKey] = existingVal + newVal
+					}
+				}
+			}
+			// unique per group (flat key like uniqueConference)
+			if uniqueIdx != -1 {
+				uniqueKey := makeUniqueKey(groupKey)
+				if dateData[uniqueKey] == nil {
+					dateData[uniqueKey] = uniqueValue
+				} else {
+					if existingUv, ok := dateData[uniqueKey].(float64); ok {
+						dateData[uniqueKey] = existingUv + uniqueValue
 					}
 				}
 			}
@@ -9707,7 +9923,7 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 	result := make(map[string]interface{})
 
 	var columns []string
-	var dateIdx, columnIdx, groupByIdx int = -1, -1, -1
+	var dateIdx, columnIdx, groupByIdx, uniqueIdx int = -1, -1, -1, -1
 	columnStr := string(column)
 	firstRow := true
 
@@ -9725,6 +9941,8 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 					dateIdx = i
 				} else if col == columnStr {
 					columnIdx = i
+				} else if col == "unique"+strings.Title(columnStr) || col == "uniqueEventCount" {
+					uniqueIdx = i
 				} else if len(secondaryGroupBy) > 0 {
 					if secondaryGroupBy[0] == models.CountGroupEventType && col == "eventType" {
 						groupByIdx = i
@@ -9756,6 +9974,13 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 			if col == "start_date" {
 				scanArgs[i] = new(string)
 			} else if col == columnStr {
+				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
+					scanArgs[i] = new(uint64)
+				} else {
+					scanArgs[i] = new(float64)
+				}
+			} else if i == uniqueIdx {
+				// unique counts should use same type as main column
 				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
 					scanArgs[i] = new(uint64)
 				} else {
@@ -9807,14 +10032,32 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 				columnValue = 0
 			}
 		}
+		// extract unique value if present (support uint64 or float64)
+		var uniqueValue float64 = 0
+		if uniqueIdx != -1 {
+			switch v := scanArgs[uniqueIdx].(type) {
+			case *uint64:
+				if v != nil {
+					uniqueValue = float64(*v)
+				}
+			case *float64:
+				if v != nil {
+					uniqueValue = *v
+				}
+			}
+		}
 
 		if result[dateStr] == nil {
 			if len(secondaryGroupBy) > 0 {
 				result[dateStr] = make(map[string]interface{})
 			} else {
-				result[dateStr] = map[string]interface{}{
+				obj := map[string]interface{}{
 					"total": columnValue,
 				}
+				if uniqueIdx != -1 {
+					obj["uniqueEventCount"] = uniqueValue
+				}
+				result[dateStr] = obj
 			}
 		}
 
@@ -9828,17 +10071,24 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 			}
 
 			if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
-				// Initialize with business, social, unattended if not exists
+				// Initialize with business, social, unattended and their unique keys if not exists
 				if dateData[columnStr] == nil {
 					dateData[columnStr] = map[string]interface{}{
-						"business":   0,
-						"social":     0,
-						"unattended": 0,
+						"business":      0,
+						"social":        0,
+						"unattended":    0,
+						makeUniqueKey("business"):   0,
+						makeUniqueKey("social"):     0,
+						makeUniqueKey("unattended"): 0,
 					}
 				}
 				columnData := dateData[columnStr].(map[string]interface{})
 				if groupKey == "business" || groupKey == "social" || groupKey == "unattended" {
 					columnData[groupKey] = columnValue
+					// assign unique per group
+					if uniqueIdx != -1 {
+						columnData[makeUniqueKey(groupKey)] = uniqueValue
+					}
 				}
 			} else {
 				if dateData[columnStr] == nil {
@@ -9846,6 +10096,9 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 				}
 				columnData := dateData[columnStr].(map[string]interface{})
 				columnData[groupKey] = columnValue
+				if uniqueIdx != -1 {
+					columnData[makeUniqueKey(groupKey)] = uniqueValue
+				}
 			}
 		}
 	}
