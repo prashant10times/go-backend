@@ -164,7 +164,7 @@ func (s *TransformDataService) getPaginationURL(limit, offset int, paginationTyp
 	return &url
 }
 
-func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx, uniqueEventCount *int) (interface{}, error) {
+func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx, uniqueEventCount *int, pastEditionCount *int, currentEditionCount *int) (interface{}, error) {
 	var nextURL *string
 	if pagination.Offset+pagination.Limit < totalCount {
 		nextURL = s.getPaginationURL(pagination.Limit, pagination.Offset, "next", c)
@@ -184,16 +184,28 @@ func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[s
 	if uniqueEventCount != nil {
 		response["uniqueEventCount"] = *uniqueEventCount
 	}
+	if pastEditionCount != nil {
+		response["pastEditionCount"] = *pastEditionCount
+	}
+	if currentEditionCount != nil {
+		response["currentEditionCount"] = *currentEditionCount
+	}
 	return response, nil
 }
 
-func (s *TransformDataService) BuildClickhouseMapViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx, uniqueEventCount *int) (interface{}, error) {
+func (s *TransformDataService) BuildClickhouseMapViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx, uniqueEventCount *int, pastEditionCount *int, currentEditionCount *int) (interface{}, error) {
 	response := fiber.Map{
 		"count": totalCount,
 		"data":  eventData,
 	}
 	if uniqueEventCount != nil {
 		response["uniqueEventCount"] = *uniqueEventCount
+	}
+	if pastEditionCount != nil {
+		response["pastEditionCount"] = *pastEditionCount
+	}
+	if currentEditionCount != nil {
+		response["currentEditionCount"] = *currentEditionCount
 	}
 	return response, nil
 }

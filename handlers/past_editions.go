@@ -80,7 +80,7 @@ func (h *PastEditionsHandler) GetPastEditions(c *fiber.Ctx) error {
 		})
 	}
 	pagination := models.PaginationDto{Limit: query.Limit, Offset: query.Offset}
-	listResponse, err := h.transformDataService.BuildClickhouseListViewResponse(dataAsMaps, pagination, result.Count, c, nil)
+	listResponse, err := h.transformDataService.BuildClickhouseListViewResponse(dataAsMaps, pagination, result.Count, c, nil, nil, nil)
 	if err != nil {
 		return middleware.NewInternalServerError("Error building past editions response", err.Error())
 	}

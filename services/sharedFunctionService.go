@@ -3280,6 +3280,122 @@ func (s *SharedFunctionService) buildListDataUniqueEventCountQuery(
 		eventFilterGroupByStr)
 }
 
+func (s *SharedFunctionService) buildListDataCombinedCountQuery(
+	queryResult *ClickHouseQueryResult,
+	cteAndJoinResult *CTEAndJoinResult,
+	eventFilterSelectStr string,
+	eventFilterGroupByStr string,
+	hasEndDateFilters bool,
+	hasPast bool,
+	filterFields models.FilterDataDto,
+) string {
+	today := time.Now().Format("2006-01-02")
+
+	cteClausesStr := ""
+	if len(cteAndJoinResult.CTEClauses) > 0 {
+		cteClausesStr = strings.Join(cteAndJoinResult.CTEClauses, ",\n                ") + ",\n                "
+	}
+
+	joinClauses := ""
+	if cteAndJoinResult.JoinClausesStr != "" {
+		joinClauses = cteAndJoinResult.JoinClausesStr
+	}
+
+	whereConditions := []string{
+		s.buildPublishedCondition(filterFields),
+		s.buildStatusCondition(filterFields),
+		s.buildEditionTypeCondition(filterFields, "ee"),
+	}
+
+	if !hasEndDateFilters {
+		dateCondition := s.buildDefaultDateCondition(filterFields.Forecasted, "ee", today)
+		whereConditions = append(whereConditions, dateCondition)
+	}
+
+	if queryResult.WhereClause != "" {
+		whereConditions = append(whereConditions, queryResult.WhereClause)
+	}
+
+	if queryResult.SearchClause != "" {
+		whereConditions = append(whereConditions, queryResult.SearchClause)
+	}
+
+	if len(cteAndJoinResult.JoinConditions) > 0 {
+		whereConditions = append(whereConditions, cteAndJoinResult.JoinConditions...)
+	}
+
+	whereClause := strings.Join(whereConditions, "\n\t\t\tAND ")
+
+	localSelect := eventFilterSelectStr
+	localGroupBy := eventFilterGroupByStr
+	if hasPast {
+		if !strings.Contains(localSelect, "edition_type") {
+			if strings.TrimSpace(localSelect) != "" {
+				localSelect = localSelect + ", ee.edition_type as edition_type"
+			} else {
+				localSelect = "ee.edition_type as edition_type"
+			}
+		}
+		if !strings.Contains(localGroupBy, "edition_type") {
+			if strings.TrimSpace(localGroupBy) != "" {
+				localGroupBy = localGroupBy + ", ee.edition_type"
+			} else {
+				localGroupBy = "ee.edition_type"
+			}
+		}
+	}
+
+	if hasPast {
+		return fmt.Sprintf(`
+		WITH %sevent_filter AS (
+			SELECT %s
+			FROM testing_db.allevent_ch AS ee
+			%s
+			WHERE %s
+			GROUP BY %s
+		)
+		SELECT
+			COUNT(DISTINCT IF(edition_type = 'past_edition', edition_id, NULL)) AS pastEditionCount,
+			COUNT(DISTINCT IF(edition_type = 'current_edition', edition_id, NULL)) AS currentEditionCount
+		FROM event_filter
+	`,
+			cteClausesStr,
+			localSelect,
+			func() string {
+				if joinClauses != "" {
+					return "\t\t" + joinClauses
+				}
+				return ""
+			}(),
+			whereClause,
+			localGroupBy)
+	}
+
+
+	return fmt.Sprintf(`
+		WITH %sevent_filter AS (
+			SELECT %s
+			FROM testing_db.allevent_ch AS ee
+			%s
+			WHERE %s
+			GROUP BY %s
+		)
+		SELECT
+			count(*) as total_count
+		FROM event_filter
+	`,
+		cteClausesStr,
+		localSelect,
+		func() string {
+			if joinClauses != "" {
+				return "\t\t" + joinClauses
+			}
+			return ""
+		}(),
+		whereClause,
+		localGroupBy)
+}
+
 func (s *SharedFunctionService) buildMinimalEventFilterForUniqueCount(queryResult *ClickHouseQueryResult) (eventFilterSelectStr, eventFilterGroupByStr string) {
 	eventFilterSelectFields := []string{"ee.event_id as event_id", "ee.edition_id as edition_id"}
 	eventFilterGroupByFields := []string{"ee.event_id", "ee.edition_id"}
@@ -8631,7 +8747,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		}
 		return &ListResult{
 			StatusCode: 200,
-			Data:      data,
+			Data:       data,
 		}, nil
 
 	case "week":
@@ -8950,7 +9066,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		}
 		return &ListResult{
 			StatusCode: 200,
-			Data:      data,
+			Data:       data,
 		}, nil
 
 	case "year":
@@ -9173,7 +9289,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		}
 		return &ListResult{
 			StatusCode: 200,
-			Data:      data,
+			Data:       data,
 		}, nil
 	default:
 		return &ListResult{
@@ -10074,9 +10190,9 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 				// Initialize with business, social, unattended and their unique keys if not exists
 				if dateData[columnStr] == nil {
 					dateData[columnStr] = map[string]interface{}{
-						"business":      0,
-						"social":        0,
-						"unattended":    0,
+						"business":                  0,
+						"social":                    0,
+						"unattended":                0,
 						makeUniqueKey("business"):   0,
 						makeUniqueKey("social"):     0,
 						makeUniqueKey("unattended"): 0,
