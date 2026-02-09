@@ -36,8 +36,6 @@ type ListResult struct {
 	Data             interface{}
 	Count            int
 	UniqueEventCount *int
-	PastEditionCount int
-	CurrentEditionCount int
 	StatusCode       int
 	ErrorMessage     string
 }
@@ -613,15 +611,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			return nil, fmt.Errorf("unexpected data type: %T", eventData)
 		}
 
-		var pastPtr *int
-		var currentPtr *int
-		if result.PastEditionCount != 0 {
-			pastPtr = &result.PastEditionCount
-		}
-		if result.CurrentEditionCount != 0 {
-			currentPtr = &result.CurrentEditionCount
-		}
-		response, err = s.transformDataService.BuildClickhouseListViewResponse(eventDataSlice, pagination, result.Count, c, result.UniqueEventCount, pastPtr, currentPtr)
+		response, err = s.transformDataService.BuildClickhouseListViewResponse(eventDataSlice, pagination, result.Count, c, result.UniqueEventCount)
 
 		if err != nil {
 			log.Printf("Error building response: %v", err)
@@ -679,15 +669,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			return nil, fmt.Errorf("unexpected data type: %T", eventData)
 		}
 
-		var pastPtr *int
-		var currentPtr *int
-		if result.PastEditionCount != 0 {
-			pastPtr = &result.PastEditionCount
-		}
-		if result.CurrentEditionCount != 0 {
-			currentPtr = &result.CurrentEditionCount
-		}
-		response, err = s.transformDataService.BuildClickhouseMapViewResponse(eventDataSlice, pagination, result.Count, c, result.UniqueEventCount, pastPtr, currentPtr)
+		response, err = s.transformDataService.BuildClickhouseMapViewResponse(eventDataSlice, pagination, result.Count, c, result.UniqueEventCount)
 
 		if err != nil {
 			log.Printf("Error building map response: %v", err)
@@ -1552,15 +1534,43 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	type countResult struct {
-	Count            int
-	Unique           int
-	PastEditionCount int
-	CurrentEditionCount int
-	Err              error
+		Count int
+		Err   error
 	}
 
 	dataChan := make(chan dataResult, 1)
 	countChan := make(chan countResult, 1)
+	var uniqueCountChan chan int
+	if hasPast {
+		uniqueCountChan = make(chan int, 1)
+		go func() {
+			uniqueQuery := s.sharedFunctionService.buildListDataUniqueEventCountQuery(
+				queryResult,
+				&cteAndJoinResult,
+				eventFilterSelectStr,
+				eventFilterGroupByStr,
+				hasEndDateFilters,
+				filterFields,
+			)
+			log.Printf("Unique event count query: %s", uniqueQuery)
+			rows, err := s.clickhouseService.ExecuteQuery(context.Background(), uniqueQuery)
+			if err != nil {
+				log.Printf("Unique event count query error: %v", err)
+				uniqueCountChan <- 0
+				return
+			}
+			defer rows.Close()
+			var uniqueCount uint64
+			if rows.Next() {
+				if err := rows.Scan(&uniqueCount); err != nil {
+					log.Printf("Unique event count scan error: %v", err)
+					uniqueCountChan <- 0
+					return
+				}
+			}
+			uniqueCountChan <- int(uniqueCount)
+		}()
+	}
 
 	go func() {
 		eventDataQueryTime := time.Now()
@@ -1571,46 +1581,15 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}()
 
 	go func() {
-		if hasPast {
-			combinedQuery := s.sharedFunctionService.buildListDataCombinedCountQuery(
-				queryResult,
-				&cteAndJoinResult,
-				eventFilterSelectStr,
-				eventFilterGroupByStr,
-				hasEndDateFilters,
-				hasPast,
-				filterFields,
-			)
-			log.Printf("Combined count query: %s", combinedQuery)
-			rows, err := s.clickhouseService.ExecuteQuery(context.Background(), combinedQuery)
-			if err != nil {
-				log.Printf("Combined count query error: %v", err)
-				countChan <- countResult{Count: 0, Unique: 0, Err: err}
-				return
-			}
-			defer rows.Close()
-			var past uint64
-			var current uint64
-			if rows.Next() {
-				if err := rows.Scan(&past, &current); err != nil {
-					log.Printf("Combined count scan error: %v", err)
-					countChan <- countResult{Count: 0, Unique: 0, PastEditionCount: 0, CurrentEditionCount: 0, Err: err}
-					return
-				}
-			}
-			unique := past + current
-			countChan <- countResult{Count: int(current), Unique: int(unique), PastEditionCount: int(past), CurrentEditionCount: int(current), Err: nil}
-		} else {
-			count, err := s.getListDataCount(
-				queryResult,
-				&cteAndJoinResult,
-				eventFilterSelectStr,
-				eventFilterGroupByStr,
-				hasEndDateFilters,
-				filterFields,
-			)
-			countChan <- countResult{Count: count, Unique: 0, Err: err}
-		}
+		count, err := s.getListDataCount(
+			queryResult,
+			&cteAndJoinResult,
+			eventFilterSelectStr,
+			eventFilterGroupByStr,
+			hasEndDateFilters,
+			filterFields,
+		)
+		countChan <- countResult{Count: count, Err: err}
 	}()
 
 	dataRes := <-dataChan
@@ -1625,21 +1604,12 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		log.Printf("ClickHouse count query error: %v", countRes.Err)
 		log.Printf("Warning: Count query failed, continuing without count")
 	}
-
 	totalCount := countRes.Count
 
 	var uniqueEventCount *int
-	var pastEditionCount *int
-	var currentEditionCount *int
-	if hasPast {
-		totalCount = countRes.CurrentEditionCount
+	if hasPast && uniqueCountChan != nil {
 		uniqueEventCount = new(int)
-		*uniqueEventCount = countRes.PastEditionCount + countRes.CurrentEditionCount
-
-		pastEditionCount = new(int)
-		*pastEditionCount = countRes.PastEditionCount
-		currentEditionCount = new(int)
-		*currentEditionCount = countRes.CurrentEditionCount
+		*uniqueEventCount = <-uniqueCountChan
 	}
 
 	var eventIds []uint32
@@ -3086,11 +3056,11 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	}
 	totalCount := countRes.Count
 
-    var uniqueEventCount *int
-    if hasPast && uniqueCountChan != nil {
-        uniqueEventCount = new(int)
-        *uniqueEventCount = <-uniqueCountChan
-    }
+	var uniqueEventCount *int
+	if hasPast && uniqueCountChan != nil {
+		uniqueEventCount = new(int)
+		*uniqueEventCount = <-uniqueCountChan
+	}
 
 	var mapData []map[string]interface{}
 
@@ -3195,28 +3165,19 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	}
 
 	if len(mapData) == 0 {
-		pastCount := 0
-		currentCount := 0
 		return &ListResult{
-			StatusCode:          200,
-			Data:                []interface{}{},
-			Count:               totalCount,
-			UniqueEventCount:    uniqueEventCount,
-			PastEditionCount:    pastCount,
-			CurrentEditionCount: currentCount,
+			StatusCode:       200,
+			Data:             []interface{}{},
+			Count:            totalCount,
+			UniqueEventCount: uniqueEventCount,
 		}, nil
 	}
 
-	pastCount := 0
-	currentCount := 0
-
 	return &ListResult{
-		StatusCode:         200,
-		Data:               mapData,
-		Count:              totalCount,
-		UniqueEventCount:   uniqueEventCount,
-		PastEditionCount:   pastCount,
-		CurrentEditionCount: currentCount,
+		StatusCode:       200,
+		Data:             mapData,
+		Count:            totalCount,
+		UniqueEventCount: uniqueEventCount,
 	}, nil
 }
 
