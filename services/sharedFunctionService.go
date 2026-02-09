@@ -2686,7 +2686,7 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 		"venue_lat":          "venueLat",
 		"venue_long":         "venueLon",
 		"impact_score":       "impactScore",
-		"event_score":       "score",
+		"event_score":        "score",
 		"event_name":         "name",
 		"event_updated":      "updated",
 		"internationalScore": "internationalScore",
@@ -6561,7 +6561,7 @@ func (s *SharedFunctionService) GetEventCountByDate(
 		return nil, fmt.Errorf("unsupported date groupBy: %s", groupBy)
 	}
 
-	preFilterSelect := "e.event_id"
+	preFilterSelect := "e.event_id, e.edition_type"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
 	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
 
@@ -6752,12 +6752,23 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		)
 	}
 
-	preFilterSelect := "e.event_id, e.impactScore"
+	preFilterSelect := "e.event_id, e.edition_id, e.impactScore, e.edition_type"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
 
 	if (filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords")) ||
 		(preFilterWhereClause != "" && strings.Contains(preFilterWhereClause, "keywords")) {
 		preFilterSelect += ", e.keywords"
+	}
+
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+	eventsCountSelect := "uniq(e.event_id) AS eventsCount"
+	if hasPast {
+		eventsCountSelect = `COUNT(e.event_id) AS eventsCount,
+            COUNT(DISTINCT e.event_id) AS uniqueEventCount,
+            sum(CASE WHEN e.edition_type = 'past_edition' THEN e.impactScore ELSE 0 END) AS pastEditionSum,
+            sum(CASE WHEN e.edition_type = 'current_edition' THEN e.impactScore ELSE 0 END) AS currentEditionSum,
+            COUNT(DISTINCT CASE WHEN e.edition_type = 'past_edition' THEN e.edition_id ELSE NULL END) AS uniquePastEventCount,
+            COUNT(DISTINCT CASE WHEN e.edition_type = 'current_edition' THEN e.edition_id ELSE NULL END) AS uniqueCurrentEventCount`
 	}
 
 	query := fmt.Sprintf(`
@@ -6776,7 +6787,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 			SELECT
 				ds.date,
 				group_name,
-				uniq(e.event_id) AS eventsCount,
+				%s,
 				sum(e.impactScore) AS eventImpactScore
 			FROM preFilterEvent e
 			INNER JOIN date_series ds ON true
@@ -6802,6 +6813,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 			return ""
 		}(),
 		preFilterWhereClause,
+		eventsCountSelect,
 		func() string {
 			conditions := []string{}
 			if filterWhereClause != "" {
@@ -6837,20 +6849,43 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	for rows.Next() {
 		var date time.Time
 		var groupName string
-		var eventsCount uint64
 		var eventImpactScore uint64
 
-		if err := rows.Scan(&date, &groupName, &eventsCount, &eventImpactScore); err != nil {
-			log.Printf("Error scanning row: %v", err)
-			continue
+		if hasPast {
+			var totalCount uint64
+			var uniqueCount uint64
+			var pastSum uint64
+			var currentSum uint64
+			var uniquePast uint64
+			var uniqueCurrent uint64
+			if err := rows.Scan(&date, &groupName, &totalCount, &uniqueCount, &pastSum, &currentSum, &uniquePast, &uniqueCurrent, &eventImpactScore); err != nil {
+				log.Printf("Error scanning row: %v", err)
+				continue
+			}
+			rowsData = append(rowsData, map[string]interface{}{
+				"date":                    date.Format("2006-01-02"),
+				"group_name":              groupName,
+				"eventsCount":             int(totalCount),
+				"uniqueEventCount":        int(uniqueCount),
+				"pastEditionSum":          int(pastSum),
+				"currentEditionSum":       int(currentSum),
+				"uniquePastEventCount":    int(uniquePast),
+				"uniqueCurrentEventCount": int(uniqueCurrent),
+				"eventImpactScore":        float64(eventImpactScore),
+			})
+		} else {
+			var eventsCount uint64
+			if err := rows.Scan(&date, &groupName, &eventsCount, &eventImpactScore); err != nil {
+				log.Printf("Error scanning row: %v", err)
+				continue
+			}
+			rowsData = append(rowsData, map[string]interface{}{
+				"date":             date.Format("2006-01-02"),
+				"group_name":       groupName,
+				"eventsCount":      int(eventsCount),
+				"eventImpactScore": float64(eventImpactScore),
+			})
 		}
-
-		rowsData = append(rowsData, map[string]interface{}{
-			"date":             date.Format("2006-01-02"),
-			"group_name":       groupName,
-			"eventsCount":      int(eventsCount),
-			"eventImpactScore": float64(eventImpactScore),
-		})
 	}
 
 	return rowsData, nil
@@ -6972,7 +7007,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		joinStr = strings.Join(joinClauses, "\n            ")
 	}
 
-	preFilterSelect := "e.event_id"
+	preFilterSelect := "e.event_id, e.edition_type"
 	if columnStr != "eventCount" {
 		switch columnStr {
 		case "predictedAttendance":
@@ -7332,7 +7367,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		joinStr = strings.Join(joinClauses, "\n            ")
 	}
 
-	preFilterSelect := "e.event_id"
+	preFilterSelect := "e.event_id, e.edition_type"
 	if columnStr != "eventCount" {
 		switch columnStr {
 		case "predictedAttendance":
@@ -7573,7 +7608,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		return nil, fmt.Errorf("unsupported duration: %s. Valid options are: month, year, week", duration)
 	}
 
-	preFilterSelect := "e.event_id"
+	preFilterSelect := "e.event_id, e.edition_type"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
 
 	if (filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords")) ||
