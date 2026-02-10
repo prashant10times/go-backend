@@ -7087,56 +7087,56 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "hotel":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation')) ELSE 0 END) AS hotel",
-					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation')) ELSE 0 END) AS uniqueHotel",
+					"sum(CASE WHEN e.edition_type = 'past_edition' THEN IF(ed.metric = 'Accommodation', ed.value, 0) ELSE 0 END) AS hotel",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN IF(ed.metric = 'Accommodation', ed.value, 0) ELSE 0 END) AS uniqueHotel",
 				)
 			} else {
-				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation'))) AS hotel")
+				selectors = append(selectors, "sum(IF(ed.metric = 'Accommodation', ed.value, 0)) AS hotel")
 			}
 		case "food":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages')) ELSE 0 END) AS food",
-					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages')) ELSE 0 END) AS uniqueFood",
+					"sum(CASE WHEN e.edition_type = 'past_edition' THEN IF(ed.metric = 'Food & Beverages', ed.value, 0) ELSE 0 END) AS food",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN IF(ed.metric = 'Food & Beverages', ed.value, 0) ELSE 0 END) AS uniqueFood",
 				)
 			} else {
-				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages'))) AS food")
+				selectors = append(selectors, "sum(IF(ed.metric = 'Food & Beverages', ed.value, 0)) AS food")
 			}
 		case "entertainment":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment')) ELSE 0 END) AS entertainment",
-					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment')) ELSE 0 END) AS uniqueEntertainment",
+					"sum(CASE WHEN e.edition_type = 'past_edition' THEN IF(ed.metric = 'Entertainment', ed.value, 0) ELSE 0 END) AS entertainment",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN IF(ed.metric = 'Entertainment', ed.value, 0) ELSE 0 END) AS uniqueEntertainment",
 				)
 			} else {
-				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment'))) AS entertainment")
+				selectors = append(selectors, "sum(IF(ed.metric = 'Entertainment', ed.value, 0)) AS entertainment")
 			}
 		case "airline":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights')) ELSE 0 END) AS airline",
-					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights')) ELSE 0 END) AS uniqueAirline",
+					"sum(CASE WHEN e.edition_type = 'past_edition' THEN IF(ed.metric = 'Flights', ed.value, 0) ELSE 0 END) AS airline",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN IF(ed.metric = 'Flights', ed.value, 0) ELSE 0 END) AS uniqueAirline",
 				)
 			} else {
-				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights'))) AS airline")
+				selectors = append(selectors, "sum(IF(ed.metric = 'Flights', ed.value, 0)) AS airline")
 			}
 		case "transport":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation')) ELSE 0 END) AS transport",
-					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation')) ELSE 0 END) AS uniqueTransport",
+					"sum(CASE WHEN e.edition_type = 'past_edition' THEN IF(ed.metric = 'Transportation', ed.value, 0) ELSE 0 END) AS transport",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN IF(ed.metric = 'Transportation', ed.value, 0) ELSE 0 END) AS uniqueTransport",
 				)
 			} else {
-				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation'))) AS transport")
+				selectors = append(selectors, "sum(IF(ed.metric = 'Transportation', ed.value, 0)) AS transport")
 			}
 		case "utilitie":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e2.edition_type = 'past_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities')) ELSE 0 END) AS utilitie",
-					"sum(CASE WHEN e2.edition_type = 'current_edition' THEN toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities')) ELSE 0 END) AS uniqueUtilitie",
+					"sum(CASE WHEN e.edition_type = 'past_edition' THEN IF(ed.metric = 'Utilities', ed.value, 0) ELSE 0 END) AS utilitie",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN IF(ed.metric = 'Utilities', ed.value, 0) ELSE 0 END) AS uniqueUtilitie",
 				)
 			} else {
-				selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities'))) AS utilitie")
+				selectors = append(selectors, "sum(IF(ed.metric = 'Utilities', ed.value, 0)) AS utilitie")
 			}
 		}
 	default:
@@ -7251,7 +7251,6 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 
 	var query string
 	if isDayWiseEconomicColumn {
-		joinStrE2 := strings.ReplaceAll(joinStr, "e.event_id", "e2.event_id")
 		selectStrWithDateAlias := strings.Replace(selectStr, "ds.date", "ds.date AS date", 1)
 		query = fmt.Sprintf(`
 		WITH %sdate_series AS (
@@ -7264,19 +7263,15 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			FROM testing_db.allevent_ch AS e
 			%s
 			WHERE %s
-		),
-		exploded AS (
-			SELECT e.event_id AS event_id, e.edition_type AS edition_type, toDate(kv.1) AS date, kv.2 AS value_json
-			FROM preFilterEvent e
-			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
-			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
 		)
 		SELECT
 			%s
-		FROM exploded e2
-		INNER JOIN date_series ds ON e2.date = ds.date
+		FROM preFilterEvent e
+		INNER JOIN testing_db.event_daywiseEconomicImpact_ch ed ON e.event_id = ed.event_id
+		INNER JOIN date_series ds ON ed.date = ds.date
 		%s
 		WHERE %s
+		AND ed.metric IN ('Accommodation','Food & Beverages','Entertainment','Flights','Transportation','Utilities')
 		GROUP BY %s
 		ORDER BY ds.date
 		`,
@@ -7293,8 +7288,8 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			preFilterWhereWithDate,
 			selectStrWithDateAlias,
 			func() string {
-				if joinStrE2 != "" {
-					return "\n            " + joinStrE2
+				if joinStr != "" {
+					return "\n            " + joinStr
 				}
 				return ""
 			}(),
