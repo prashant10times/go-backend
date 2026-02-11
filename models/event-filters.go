@@ -93,6 +93,7 @@ var EventTypeById = map[string]string{
 	"4de48054-46fb-5452-a23f-8aac6c00592e": "conferences",
 	"ad7c83a5-b8fc-5109-a159-9306848de22c": "workshops",
 	"5b37e581-53f7-5dcf-8177-c6a43774b168": "holiday",
+	"9caca041-25c6-5340-9522-78d354b58ca2": "specialty-shows",
 }
 
 type View string
@@ -476,6 +477,59 @@ func (f *FilterDataDto) SetDefaultValues() {
 	}
 }
 
+var ValidEditionTypes = map[string][]string{
+	"all":     {"current_edition", "past_edition", "future_edition"},
+	"current": {"current_edition"},
+	"past":    {"past_edition"},
+	"future":  {"future_edition"},
+}
+
+func ParseEditionType(editionTypeStr string, defaultIfEmpty string) ([]string, error) {
+	if editionTypeStr == "" {
+		editionTypeStr = defaultIfEmpty
+	}
+	editionTypes := strings.Split(editionTypeStr, ",")
+	parsed := make([]string, 0, len(editionTypes))
+	seenDbValues := make(map[string]bool)
+	for _, et := range editionTypes {
+		et = strings.TrimSpace(strings.ToLower(et))
+		if et == "" {
+			continue
+		}
+		if dbValues, exists := ValidEditionTypes[et]; exists {
+			for _, dbValue := range dbValues {
+				if !seenDbValues[dbValue] {
+					parsed = append(parsed, dbValue)
+					seenDbValues[dbValue] = true
+				}
+			}
+		} else {
+			return nil, validation.NewError("invalid_edition_type", "Invalid editionType value: "+et+". Valid values are: all, current, past, future")
+		}
+	}
+	if len(parsed) == 0 {
+		if db, ok := ValidEditionTypes[defaultIfEmpty]; ok && len(db) > 0 {
+			parsed = []string{db[0]}
+		} else {
+			parsed = []string{"current_edition"}
+		}
+	}
+	return parsed, nil
+}
+
+func HasPastInEditionType(parsed []string) bool {
+	for _, et := range parsed {
+		if et == "past_edition" {
+			return true
+		}
+	}
+	return false
+}
+
+func IsPastOnly(parsed []string) bool {
+	return len(parsed) == 1 && parsed[0] == "past_edition"
+}
+
 func validateAndNormalizeDate(dateStr *string, fieldName string) validation.Rule {
 	return validation.When(*dateStr != "", validation.By(func(value interface{}) error {
 		dateValue := value.(string)
@@ -514,6 +568,7 @@ func GetEventTypeGroupsFromIDs(eventTypeIDs []string) map[string]bool {
 		"conferences":       "business",
 		"workshops":         "business",
 		"holiday":           "unattended",
+		"specialty-shows":   "social",
 	}
 
 	groups := make(map[string]bool)
@@ -538,6 +593,7 @@ func GetAllEventTypeIDsByGroup(eventTypeGroup Groups) []string {
 		"conferences":       "business",
 		"workshops":         "business",
 		"holiday":           "unattended",
+		"specialty-shows":   "social",
 	}
 
 	targetGroup := string(eventTypeGroup)
@@ -2044,37 +2100,11 @@ func (f *FilterDataDto) Validate() error {
 		}))),
 
 		validation.Field(&f.EditionType, validation.By(func(value interface{}) error {
-			editionTypeStr := value.(string)
-			if editionTypeStr == "" {
-				editionTypeStr = "current"
+			parsed, err := ParseEditionType(f.EditionType, "current")
+			if err != nil {
+				return err
 			}
-			editionTypes := strings.Split(editionTypeStr, ",")
-			f.ParsedEditionType = make([]string, 0, len(editionTypes))
-			validEditionTypes := map[string][]string{
-				"all":     {"current_edition", "past_edition", "future_edition"},
-				"current": {"current_edition"},
-				"past":    {"past_edition"},
-				"future":  {"future_edition"},
-			}
-			seenDbValues := make(map[string]bool)
-			for _, editionType := range editionTypes {
-				editionType = strings.TrimSpace(strings.ToLower(editionType))
-				if editionType != "" {
-					if dbValues, exists := validEditionTypes[editionType]; exists {
-						for _, dbValue := range dbValues {
-							if !seenDbValues[dbValue] {
-								f.ParsedEditionType = append(f.ParsedEditionType, dbValue)
-								seenDbValues[dbValue] = true
-							}
-						}
-					} else {
-						return validation.NewError("invalid_edition_type", "Invalid editionType value: "+editionType+". Valid values are: all, current, past, future")
-					}
-				}
-			}
-			if len(f.ParsedEditionType) == 0 {
-				f.ParsedEditionType = []string{"current_edition"}
-			}
+			f.ParsedEditionType = parsed
 			return nil
 		})),
 
