@@ -93,6 +93,7 @@ var EventTypeById = map[string]string{
 	"4de48054-46fb-5452-a23f-8aac6c00592e": "conferences",
 	"ad7c83a5-b8fc-5109-a159-9306848de22c": "workshops",
 	"5b37e581-53f7-5dcf-8177-c6a43774b168": "holiday",
+	"9caca041-25c6-5340-9522-78d354b58ca2": "specialty-shows",
 }
 
 type View string
@@ -514,6 +515,7 @@ func GetEventTypeGroupsFromIDs(eventTypeIDs []string) map[string]bool {
 		"conferences":       "business",
 		"workshops":         "business",
 		"holiday":           "unattended",
+		"specialty-shows":   "social",
 	}
 
 	groups := make(map[string]bool)
@@ -538,6 +540,7 @@ func GetAllEventTypeIDsByGroup(eventTypeGroup Groups) []string {
 		"conferences":       "business",
 		"workshops":         "business",
 		"holiday":           "unattended",
+		"specialty-shows":   "social",
 	}
 
 	targetGroup := string(eventTypeGroup)
