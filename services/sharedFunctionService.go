@@ -1462,7 +1462,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				} else {
 					switch forecasted {
 					case "only":
-						rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s", tableAlias, escapedStart, s.buildForecastedNotNullCondition(tableAlias)))
+						rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s AND %s", tableAlias, escapedStart, s.buildForecastedNotNullCondition(tableAlias), fmt.Sprintf("%s.futureExpexctedEndDate > '%s'", tableAlias, time.Now().Format("2006-01-02"))))
 					case "included":
 						rangeConditions = append(rangeConditions, fmt.Sprintf("((%s.end_date >= '%s') OR (%s.futureExpexctedEndDate >= '%s'))", tableAlias, escapedStart, tableAlias, escapedStart))
 					default:
@@ -1473,7 +1473,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				escapedEnd := strings.ReplaceAll(*end, "'", "''")
 				switch forecasted {
 				case "only":
-					rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date <= '%s' AND %s", tableAlias, escapedEnd, s.buildForecastedNotNullCondition(tableAlias)))
+					rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date <= '%s' AND %s AND %s", tableAlias, escapedEnd, s.buildForecastedNotNullCondition(tableAlias), fmt.Sprintf("%s.futureExpexctedEndDate > '%s'", tableAlias, time.Now().Format("2006-01-02"))))
 				case "included":
 					rangeConditions = append(rangeConditions, fmt.Sprintf("((%s.end_date <= '%s') OR (%s.futureExpexctedEndDate <= '%s'))", tableAlias, escapedEnd, tableAlias, escapedEnd))
 				default:
@@ -2968,7 +2968,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 		} else {
 			switch forecasted {
 			case "only":
-				*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s", tableAlias, activeGteValue, s.buildForecastedNotNullCondition(tableAlias)))
+				*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s AND %s", tableAlias, activeGteValue, s.buildForecastedNotNullCondition(tableAlias), fmt.Sprintf("%s.futureExpexctedEndDate > '%s'", tableAlias, time.Now().Format("2006-01-02"))))
 			default:
 				*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date >= '%s'", activeGteValue))
 			}
@@ -2985,7 +2985,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 		} else {
 			switch forecasted {
 			case "only":
-				*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date > '%s' AND %s", tableAlias, activeGtValue, s.buildForecastedNotNullCondition(tableAlias)))
+				*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date > '%s' AND %s AND %s", tableAlias, activeGtValue, s.buildForecastedNotNullCondition(tableAlias), fmt.Sprintf("%s.futureExpexctedEndDate > '%s'", tableAlias, time.Now().Format("2006-01-02"))))
 			default:
 				*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date > '%s'", activeGtValue))
 			}
@@ -3019,7 +3019,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 			} else {
 				switch forecasted {
 				case "only":
-					*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date < '%s' AND %s", tableAlias, activeLteValue, s.buildForecastedNotNullCondition(tableAlias)))
+					*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date < '%s' AND %s AND %s", tableAlias, activeLteValue, s.buildForecastedNotNullCondition(tableAlias), fmt.Sprintf("%s.futureExpexctedEndDate > '%s'", tableAlias, time.Now().Format("2006-01-02"))))
 				default:
 					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date < '%s'", activeLteValue))
 				}
@@ -3054,7 +3054,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 			} else {
 				switch forecasted {
 				case "only":
-					*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date < '%s' AND %s", tableAlias, activeLtValue, s.buildForecastedNotNullCondition(tableAlias)))
+					*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date < '%s' AND %s AND %s", tableAlias, activeLtValue, s.buildForecastedNotNullCondition(tableAlias), fmt.Sprintf("%s.futureExpexctedEndDate > '%s'", tableAlias, time.Now().Format("2006-01-02"))))
 				default:
 					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date < '%s'", activeLtValue))
 				}
