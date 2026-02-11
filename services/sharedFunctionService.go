@@ -1462,8 +1462,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				} else {
 					switch forecasted {
 					case "only":
-						// forecasted only + dates start only: end_date >= start
-						rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date >= '%s' AND (%s.futureExpexctedStartDate IS NOT NULL AND %s.futureExpexctedEndDate IS NOT NULL)", tableAlias, escapedStart, tableAlias, tableAlias))
+						rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s", tableAlias, escapedStart, s.buildForecastedNotNullCondition(tableAlias)))
 					case "included":
 						rangeConditions = append(rangeConditions, fmt.Sprintf("((%s.end_date >= '%s') OR (%s.futureExpexctedEndDate >= '%s'))", tableAlias, escapedStart, tableAlias, escapedStart))
 					default:
@@ -1474,8 +1473,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				escapedEnd := strings.ReplaceAll(*end, "'", "''")
 				switch forecasted {
 				case "only":
-					// forecasted only + dates end only: end_date <= end
-					rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date <= '%s' AND (%s.futureExpexctedStartDate IS NOT NULL AND %s.futureExpexctedEndDate IS NOT NULL)", tableAlias, escapedEnd, tableAlias, tableAlias))
+					rangeConditions = append(rangeConditions, fmt.Sprintf("%s.end_date <= '%s' AND %s", tableAlias, escapedEnd, s.buildForecastedNotNullCondition(tableAlias)))
 				case "included":
 					rangeConditions = append(rangeConditions, fmt.Sprintf("((%s.end_date <= '%s') OR (%s.futureExpexctedEndDate <= '%s'))", tableAlias, escapedEnd, tableAlias, escapedEnd))
 				default:
@@ -2874,6 +2872,17 @@ func (s *SharedFunctionService) getDateFieldName(forecasted string, fieldType st
 	return fmt.Sprintf("%s.end_date", tableAlias)
 }
 
+func (s *SharedFunctionService) buildForecastedNotNullCondition(tableAlias string) string {
+	return fmt.Sprintf("(%s.futureExpexctedStartDate IS NOT NULL AND %s.futureExpexctedEndDate IS NOT NULL)", tableAlias, tableAlias)
+}
+
+func (s *SharedFunctionService) getEndDateFieldForPastActive(forecasted string, filterFields models.FilterDataDto, tableAlias string) string {
+	if forecasted == "only" && s.isStandaloneActiveDateFilter(filterFields) {
+		return fmt.Sprintf("%s.end_date", tableAlias)
+	}
+	return s.getDateFieldName(forecasted, "end", tableAlias)
+}
+
 func (s *SharedFunctionService) buildTrendsDateCondition(forecasted string, tableAlias string, conditionType string, startDate string, endDate string) string {
 	switch conditionType {
 	case "preFilterRange":
@@ -2959,8 +2968,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 		} else {
 			switch forecasted {
 			case "only":
-				// forecasted only + just active.gte: end_date >= gte
-				*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date >= '%s' AND (%s.futureExpexctedStartDate IS NOT NULL AND %s.futureExpexctedEndDate IS NOT NULL)", tableAlias, activeGteValue, tableAlias, tableAlias))
+				*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date >= '%s' AND %s", tableAlias, activeGteValue, s.buildForecastedNotNullCondition(tableAlias)))
 			default:
 				*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date >= '%s'", activeGteValue))
 			}
@@ -2977,8 +2985,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 		} else {
 			switch forecasted {
 			case "only":
-				// forecasted only + just active.gt: end_date > gt
-				*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date > '%s' AND (%s.futureExpexctedStartDate IS NOT NULL AND %s.futureExpexctedEndDate IS NOT NULL)", tableAlias, activeGtValue, tableAlias, tableAlias))
+				*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date > '%s' AND %s", tableAlias, activeGtValue, s.buildForecastedNotNullCondition(tableAlias)))
 			default:
 				*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date > '%s'", activeGtValue))
 			}
@@ -3012,8 +3019,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 			} else {
 				switch forecasted {
 				case "only":
-					// forecasted only + just active.lte: end_date < lte
-					*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date < '%s' AND (%s.futureExpexctedStartDate IS NOT NULL AND %s.futureExpexctedEndDate IS NOT NULL)", tableAlias, activeLteValue, tableAlias, tableAlias))
+					*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date < '%s' AND %s", tableAlias, activeLteValue, s.buildForecastedNotNullCondition(tableAlias)))
 				default:
 					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date < '%s'", activeLteValue))
 				}
@@ -3048,8 +3054,7 @@ func (s *SharedFunctionService) addActiveDateFilters(whereConditions *[]string, 
 			} else {
 				switch forecasted {
 				case "only":
-					// forecasted only + just active.lt: end_date < lt
-					*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date < '%s' AND (%s.futureExpexctedStartDate IS NOT NULL AND %s.futureExpexctedEndDate IS NOT NULL)", tableAlias, activeLtValue, tableAlias, tableAlias))
+					*whereConditions = append(*whereConditions, fmt.Sprintf("%s.end_date < '%s' AND %s", tableAlias, activeLtValue, s.buildForecastedNotNullCondition(tableAlias)))
 				default:
 					*whereConditions = append(*whereConditions, fmt.Sprintf("ee.end_date < '%s'", activeLtValue))
 				}
@@ -3435,6 +3440,20 @@ func (s *SharedFunctionService) buildSearchClause(filterFields models.FilterData
 	}
 
 	return searchClause.String()
+}
+
+func (s *SharedFunctionService) isStandaloneActiveDateFilter(filterFields models.FilterDataDto) bool {
+	if filterFields.Forecasted != "only" {
+		return false
+	}
+	activeFilterKeys := []string{"ActiveGte", "ActiveLte", "ActiveGt", "ActiveLt"}
+	setCount := 0
+	for _, key := range activeFilterKeys {
+		if s.getFilterValue(filterFields, key) != "" {
+			setCount++
+		}
+	}
+	return setCount == 1
 }
 
 func (s *SharedFunctionService) getFilterValue(filterFields models.FilterDataDto, fieldName string) string {
@@ -5226,7 +5245,7 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	}
 
 	forecasted := filterFields.Forecasted
-	endDateField := s.getDateFieldName(forecasted, "end", "ee")
+	endDateField := s.getEndDateFieldForPastActive(forecasted, filterFields, "ee")
 
 	getNew := filterFields.ParsedGetNew
 	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
@@ -5325,11 +5344,10 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 
 	selectStr := strings.Join(selectClauses, ", ")
 
-	// Determine which columns to select in preFilterEvent CTE
 	preFilterSelectFields := []string{"ee.event_id"}
 	switch forecasted {
 	case "only":
-		preFilterSelectFields = append(preFilterSelectFields, "ee.futureExpexctedEndDate")
+		preFilterSelectFields = append(preFilterSelectFields, endDateField)
 	case "included":
 		preFilterSelectFields = append(preFilterSelectFields, "ee.end_date", "ee.futureExpexctedEndDate")
 	default:
