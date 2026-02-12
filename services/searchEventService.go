@@ -2959,7 +2959,7 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		event_data AS (
 			SELECT %s
 			FROM testing_db.allevent_ch AS ee
-			WHERE ee.edition_id IN (SELECT edition_id FROM event_filter)
+			WHERE (ee.edition_id, ee.event_id) in (SELECT edition_id, event_id from event_filter)
 			GROUP BY %s
 		)
 		SELECT *
