@@ -176,6 +176,151 @@ func (s *SharedFunctionService) matchPhraseConverter(fieldName string, searchTer
 	return fmt.Sprintf("(%s)", strings.Join(conditions, " AND "))
 }
 
+func escapeILikePattern(s string) string {
+	return strings.ReplaceAll(s, "'", "''")
+}
+
+func (s *SharedFunctionService) speakerUserNameILikeCondition(searchTerm string) string {
+	phrase := " " + strings.TrimSpace(searchTerm) + " "
+	if phrase == "  " {
+		return ""
+	}
+	escaped := escapeILikePattern(phrase)
+	pattern := "%" + escaped + "%"
+	columns := []string{"user_name", "speaker_title", "speaker_profile", "sourceUserName"}
+	var conditions []string
+	for _, col := range columns {
+		conditions = append(conditions, fmt.Sprintf("%s ILIKE '%s'", col, pattern))
+	}
+	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR "))
+}
+
+// speakerUserCompanyILikeCondition builds ILIKE condition for userCompanyName search in speaker entity.
+// Searches across: user_company, sourceCompanyName, speaker_title, speaker_profile.
+// Input is normalized with leading/trailing spaces to match DB format.
+func (s *SharedFunctionService) speakerUserCompanyILikeCondition(searchTerm string) string {
+	phrase := " " + strings.TrimSpace(searchTerm) + " "
+	if phrase == "  " {
+		return ""
+	}
+	escaped := escapeILikePattern(phrase)
+	pattern := "%" + escaped + "%"
+	columns := []string{"user_company", "sourceCompanyName", "speaker_title", "speaker_profile"}
+	var conditions []string
+	for _, col := range columns {
+		conditions = append(conditions, fmt.Sprintf("%s ILIKE '%s'", col, pattern))
+	}
+	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR "))
+}
+
+// commonUserNameILikeCondition builds ILIKE condition for userName using only user_name column.
+// Used when both speaker and visitor are searched (UserIdUnionCTE) - common columns only.
+func (s *SharedFunctionService) commonUserNameILikeCondition(searchTerm string) string {
+	phrase := " " + strings.TrimSpace(searchTerm) + " "
+	if phrase == "  " {
+		return ""
+	}
+	escaped := escapeILikePattern(phrase)
+	return fmt.Sprintf("(user_name ILIKE '%%%s%%')", escaped)
+}
+
+// commonUserCompanyILikeCondition builds ILIKE condition for userCompanyName using only user_company column.
+// Used when both speaker and visitor are searched (UserIdUnionCTE) - common columns only.
+func (s *SharedFunctionService) commonUserCompanyILikeCondition(searchTerm string) string {
+	phrase := " " + strings.TrimSpace(searchTerm) + " "
+	if phrase == "  " {
+		return ""
+	}
+	escaped := escapeILikePattern(phrase)
+	return fmt.Sprintf("(user_company ILIKE '%%%s%%')", escaped)
+}
+
+// buildUserNameUserCompanyCondition builds the full WHERE condition for userName and userCompanyName filters.
+// Used by buildClickHouseQuery and entity qualifications. Returns empty string if no conditions.
+func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields models.FilterDataDto, useILikeLogic bool, useCommonColumnsOnly bool) string {
+	hasUserNameFilter := len(filterFields.ParsedUserName) > 0
+	hasUserCompanyNameFilter := len(filterFields.ParsedUserCompanyName) > 0
+	if !hasUserNameFilter && !hasUserCompanyNameFilter {
+		return ""
+	}
+
+	nameConditionFunc := func(term string) string {
+		if useILikeLogic {
+			if useCommonColumnsOnly {
+				return s.commonUserNameILikeCondition(term)
+			}
+			return s.speakerUserNameILikeCondition(term)
+		}
+		return s.matchPhraseConverter("user_name", term)
+	}
+	companyConditionFunc := func(term string) string {
+		if useILikeLogic {
+			if useCommonColumnsOnly {
+				return s.commonUserCompanyILikeCondition(term)
+			}
+			return s.speakerUserCompanyILikeCondition(term)
+		}
+		return s.matchPhraseConverter("user_company", term)
+	}
+
+	var finalCondition string
+	if hasUserNameFilter && hasUserCompanyNameFilter {
+		var allConditions []string
+		minCount := len(filterFields.ParsedUserName)
+		if len(filterFields.ParsedUserCompanyName) < minCount {
+			minCount = len(filterFields.ParsedUserCompanyName)
+		}
+		for i := 0; i < minCount; i++ {
+			nameCondition := nameConditionFunc(filterFields.ParsedUserName[i])
+			companyCondition := companyConditionFunc(filterFields.ParsedUserCompanyName[i])
+			if nameCondition != "" && companyCondition != "" {
+				allConditions = append(allConditions, fmt.Sprintf("(%s AND %s)", nameCondition, companyCondition))
+			}
+		}
+		for i := minCount; i < len(filterFields.ParsedUserName); i++ {
+			if c := nameConditionFunc(filterFields.ParsedUserName[i]); c != "" {
+				allConditions = append(allConditions, c)
+			}
+		}
+		for i := minCount; i < len(filterFields.ParsedUserCompanyName); i++ {
+			if c := companyConditionFunc(filterFields.ParsedUserCompanyName[i]); c != "" {
+				allConditions = append(allConditions, c)
+			}
+		}
+		if len(allConditions) > 0 {
+			finalCondition = fmt.Sprintf("(%s)", strings.Join(allConditions, " OR "))
+		}
+	} else {
+		var parts []string
+		if hasUserNameFilter {
+			var nameConditions []string
+			for _, userName := range filterFields.ParsedUserName {
+				if c := nameConditionFunc(userName); c != "" {
+					nameConditions = append(nameConditions, c)
+				}
+			}
+			if len(nameConditions) > 0 {
+				parts = append(parts, fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR ")))
+			}
+		}
+		if hasUserCompanyNameFilter {
+			var companyConditions []string
+			for _, companyName := range filterFields.ParsedUserCompanyName {
+				if c := companyConditionFunc(companyName); c != "" {
+					companyConditions = append(companyConditions, c)
+				}
+			}
+			if len(companyConditions) > 0 {
+				parts = append(parts, fmt.Sprintf("(%s)", strings.Join(companyConditions, " OR ")))
+			}
+		}
+		if len(parts) > 0 {
+			finalCondition = strings.Join(parts, " AND ")
+		}
+	}
+	return finalCondition
+}
+
 func (s *SharedFunctionService) matchWebsiteConverter(fieldName string, searchTerm string) string {
 	escapedTerm := strings.TrimSpace(searchTerm)
 	if escapedTerm == "" {
@@ -712,89 +857,25 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	if hasUserNameFilter || hasUserCompanyNameFilter {
 		hasVisitor, hasSpeaker, _, _, _ = getEntityTypes()
 
-		var finalCondition string
-
-		if hasUserNameFilter && hasUserCompanyNameFilter {
-			var allConditions []string
-			minCount := len(filterFields.ParsedUserName)
-			if len(filterFields.ParsedUserCompanyName) < minCount {
-				minCount = len(filterFields.ParsedUserCompanyName)
-			}
-
-			if minCount == 1 && len(filterFields.ParsedUserName) == 1 && len(filterFields.ParsedUserCompanyName) == 1 {
-				nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[0])
-				companyCondition := s.matchPhraseConverter("user_company", filterFields.ParsedUserCompanyName[0])
-				allConditions = append(allConditions, fmt.Sprintf("(%s AND %s)", nameCondition, companyCondition))
-			} else {
-				for i := 0; i < minCount; i++ {
-					nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[i])
-					companyCondition := s.matchPhraseConverter("user_company", filterFields.ParsedUserCompanyName[i])
-					pairedCondition := fmt.Sprintf("(%s AND %s)", nameCondition, companyCondition)
-					allConditions = append(allConditions, pairedCondition)
-				}
-			}
-
-			if len(filterFields.ParsedUserName) > minCount {
-				for i := minCount; i < len(filterFields.ParsedUserName); i++ {
-					nameCondition := s.matchPhraseConverter("user_name", filterFields.ParsedUserName[i])
-					allConditions = append(allConditions, nameCondition)
-				}
-			}
-
-			if len(filterFields.ParsedUserCompanyName) > minCount {
-				for i := minCount; i < len(filterFields.ParsedUserCompanyName); i++ {
-					companyCondition := s.matchPhraseConverter("user_company", filterFields.ParsedUserCompanyName[i])
-					allConditions = append(allConditions, companyCondition)
-				}
-			}
-
-			if len(allConditions) > 0 {
-				finalCondition = fmt.Sprintf("(%s)", strings.Join(allConditions, " OR "))
-			}
-		} else {
-			var independentConditions []string
-
-			if hasUserNameFilter {
-				var nameConditions []string
-				for _, userName := range filterFields.ParsedUserName {
-					nameCondition := s.matchPhraseConverter("user_name", userName)
-					if nameCondition != "" {
-						nameConditions = append(nameConditions, nameCondition)
-					}
-				}
-				if len(nameConditions) > 0 {
-					independentConditions = append(independentConditions, fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR ")))
-				}
-			}
-
-			if hasUserCompanyNameFilter {
-				var companyConditions []string
-				for _, companyName := range filterFields.ParsedUserCompanyName {
-					companyCondition := s.matchPhraseConverter("user_company", companyName)
-					if companyCondition != "" {
-						companyConditions = append(companyConditions, companyCondition)
-					}
-				}
-				if len(companyConditions) > 0 {
-					independentConditions = append(independentConditions, fmt.Sprintf("(%s)", strings.Join(companyConditions, " OR ")))
-				}
-			}
-
-			if len(independentConditions) > 0 {
-				finalCondition = strings.Join(independentConditions, " AND ")
-			}
-		}
-
-		if finalCondition != "" {
+		if finalCondition := s.buildUserNameUserCompanyCondition(filterFields, hasSpeaker, hasVisitor); finalCondition != "" {
 			if hasVisitor && hasSpeaker {
-				result.NeedsUserIdUnionCTE = true
+				result.NeedsVisitorJoin = true
+				result.NeedsSpeakerJoin = true
+				visitorCondition := s.buildUserNameUserCompanyCondition(filterFields, false, true)
+				speakerCondition := s.buildUserNameUserCompanyCondition(filterFields, true, false)
 				if len(result.UserIdWhereConditions) > 0 {
-					combinedCondition := fmt.Sprintf("(%s) AND %s", strings.Join(result.UserIdWhereConditions, " AND "), finalCondition)
-					result.UserIdWhereConditions = []string{combinedCondition}
+					userIdPart := strings.Join(result.UserIdWhereConditions, " AND ")
+					result.VisitorWhereConditions = append(result.VisitorWhereConditions, userIdPart, visitorCondition)
+					result.SpeakerWhereConditions = append(result.SpeakerWhereConditions, userIdPart, speakerCondition)
+					result.UserIdWhereConditions = []string{}
 				} else {
-					result.UserIdWhereConditions = append(result.UserIdWhereConditions, finalCondition)
+					result.VisitorWhereConditions = append(result.VisitorWhereConditions, visitorCondition)
+					result.SpeakerWhereConditions = append(result.SpeakerWhereConditions, speakerCondition)
 				}
 			} else {
+				useILikeLogic := hasSpeaker
+				useCommonColumnsOnly := hasVisitor
+				finalCondition := s.buildUserNameUserCompanyCondition(filterFields, useILikeLogic, useCommonColumnsOnly)
 				if hasVisitor {
 					result.NeedsVisitorJoin = true
 					if len(result.VisitorWhereConditions) > 0 {
@@ -10552,38 +10633,50 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		}
 	}
 
-	if hasSpeaker && (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserName) > 0 {
-		for _, userName := range filterFields.ParsedUserName {
-			speakerCondition := s.matchPhraseConverter("user_name", userName)
-			if speakerCondition != "" {
-				speakerConditions = append(speakerConditions, speakerCondition)
+	useILikeForSpeaker := hasSpeaker && (len(filterFields.ParsedUserName) > 0 || len(filterFields.ParsedUserCompanyName) > 0)
+	if useILikeForSpeaker {
+		speakerUserNameCompanyCond := s.buildUserNameUserCompanyCondition(filterFields, true, false)
+		if speakerUserNameCompanyCond != "" && hasSpeaker {
+			speakerConditions = append(speakerConditions, speakerUserNameCompanyCond)
+		}
+		visitorUserNameCompanyCond := s.buildUserNameUserCompanyCondition(filterFields, false, true)
+		if visitorUserNameCompanyCond != "" && hasVisitor {
+			visitorConditions = append(visitorConditions, visitorUserNameCompanyCond)
+		}
+	} else {
+		if hasSpeaker && (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserName) > 0 {
+			for _, userName := range filterFields.ParsedUserName {
+				speakerCondition := s.matchPhraseConverter("user_name", userName)
+				if speakerCondition != "" {
+					speakerConditions = append(speakerConditions, speakerCondition)
+				}
 			}
 		}
-	}
 
-	if hasSpeaker && (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserCompanyName) > 0 {
-		for _, companyName := range filterFields.ParsedUserCompanyName {
-			speakerCondition := s.matchPhraseConverter("user_company", companyName)
-			if speakerCondition != "" {
-				speakerConditions = append(speakerConditions, speakerCondition)
+		if hasSpeaker && (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserCompanyName) > 0 {
+			for _, companyName := range filterFields.ParsedUserCompanyName {
+				speakerCondition := s.matchPhraseConverter("user_company", companyName)
+				if speakerCondition != "" {
+					speakerConditions = append(speakerConditions, speakerCondition)
+				}
 			}
 		}
-	}
 
-	if hasVisitor && (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserName) > 0 {
-		for _, userName := range filterFields.ParsedUserName {
-			visitorCondition := s.matchPhraseConverter("user_name", userName)
-			if visitorCondition != "" {
-				visitorConditions = append(visitorConditions, visitorCondition)
+		if hasVisitor && (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserName) > 0 {
+			for _, userName := range filterFields.ParsedUserName {
+				visitorCondition := s.matchPhraseConverter("user_name", userName)
+				if visitorCondition != "" {
+					visitorConditions = append(visitorConditions, visitorCondition)
+				}
 			}
 		}
-	}
 
-	if hasVisitor && (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserCompanyName) > 0 {
-		for _, companyName := range filterFields.ParsedUserCompanyName {
-			visitorCondition := s.matchPhraseConverter("user_company", companyName)
-			if visitorCondition != "" {
-				visitorConditions = append(visitorConditions, visitorCondition)
+		if hasVisitor && (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserCompanyName) > 0 {
+			for _, companyName := range filterFields.ParsedUserCompanyName {
+				visitorCondition := s.matchPhraseConverter("user_company", companyName)
+				if visitorCondition != "" {
+					visitorConditions = append(visitorConditions, visitorCondition)
+				}
 			}
 		}
 	}
@@ -11033,6 +11126,8 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						log.Printf("Error scanning speaker row: %v", err)
 						continue
 					}
+					personName = strings.TrimSpace(personName)
+					companyName = strings.TrimSpace(companyName)
 					if personName != "" && companyName != "" {
 						entityQualification := fmt.Sprintf("speaker_%s_%s", personName, companyName)
 						data[eventID] = append(data[eventID], entityQualification)
@@ -11048,6 +11143,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 						log.Printf("Error scanning speaker row: %v", err)
 						continue
 					}
+					value = strings.TrimSpace(value)
 					entityQualification := fmt.Sprintf("%s%s", entityQualificationPrefix, value)
 					data[eventID] = append(data[eventID], entityQualification)
 				}
