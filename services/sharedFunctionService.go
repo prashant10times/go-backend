@@ -7858,8 +7858,9 @@ func (s *SharedFunctionService) BuildEventIdsAlertQuery(params models.AlertSearc
 	defaultFilterFields.SetDefaultValues()
 	editionTypeCondition := s.buildEditionTypeCondition(defaultFilterFields, "ee")
 	cteParts = append(cteParts, fmt.Sprintf(`filtered_event_ids AS (
-			SELECT DISTINCT ee.event_id
+			SELECT DISTINCT ee.event_id, etc.alert_id
 			FROM testing_db.allevent_ch AS ee
+			INNER JOIN testing_db.event_type_ch AS etc ON ee.event_id = etc.event_id AND etc.alert_id IS NOT NULL
 			WHERE ee.event_uuid IN (%s)
 				AND %s
 		)`, eventUuidsClause, editionTypeCondition))
@@ -7884,11 +7885,9 @@ func (s *SharedFunctionService) BuildEventIdsAlertQuery(params models.AlertSearc
 		query := fmt.Sprintf(`
 		%s
 		SELECT %s
-		FROM testing_db.event_type_ch AS et
-		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		FROM testing_db.alerts_ch AS a
 		%s
-		WHERE et.alert_id IS NOT NULL
-			AND et.event_id IN (SELECT event_id FROM filtered_event_ids)
+		WHERE a.id IN (SELECT alert_id FROM filtered_event_ids)
 			%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, groupByClause)
 		return strings.TrimSpace(query), nil
@@ -7916,11 +7915,9 @@ func (s *SharedFunctionService) BuildEventIdsAlertQuery(params models.AlertSearc
 		query := fmt.Sprintf(`
 		%s
 		SELECT %s
-		FROM testing_db.event_type_ch AS et
-		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		FROM testing_db.alerts_ch AS a
 		%s
-		WHERE et.alert_id IS NOT NULL
-			AND et.event_id IN (SELECT event_id FROM filtered_event_ids)
+		WHERE a.id IN (SELECT alert_id FROM filtered_event_ids)
 			%s
 		%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
@@ -7982,8 +7979,9 @@ func (s *SharedFunctionService) BuildLocationIdsAlertQuery(params models.AlertSe
 	defaultFilterFields.SetDefaultValues()
 	editionTypeCondition := s.buildEditionTypeCondition(defaultFilterFields, "ee")
 	cteParts = append(cteParts, fmt.Sprintf(`filtered_events AS (
-			SELECT DISTINCT ee.event_id
+			SELECT DISTINCT ee.event_id, etc.alert_id
 			FROM testing_db.allevent_ch AS ee
+			INNER JOIN testing_db.event_type_ch AS etc ON ee.event_id = etc.event_id AND etc.alert_id IS NOT NULL
 			INNER JOIN filtered_locations AS loc ON (
 				ee.venue_id = loc.id OR
 				ee.venue_city = loc.id OR
@@ -8003,11 +8001,9 @@ func (s *SharedFunctionService) BuildLocationIdsAlertQuery(params models.AlertSe
 		query := fmt.Sprintf(`
 		%s
 		SELECT %s
-		FROM testing_db.event_type_ch AS et
-		INNER JOIN filtered_events AS fe ON et.event_id = fe.event_id
-		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		FROM testing_db.alerts_ch AS a
 		%s
-		WHERE et.alert_id IS NOT NULL
+		WHERE a.id IN (SELECT alert_id FROM filtered_events)
 			%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, groupByClause)
 		return strings.TrimSpace(query), nil
@@ -8035,11 +8031,9 @@ func (s *SharedFunctionService) BuildLocationIdsAlertQuery(params models.AlertSe
 		query := fmt.Sprintf(`
 		%s
 		SELECT %s
-		FROM testing_db.event_type_ch AS et
-		INNER JOIN filtered_events AS fe ON et.event_id = fe.event_id
-		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		FROM testing_db.alerts_ch AS a
 		%s
-		WHERE et.alert_id IS NOT NULL
+		WHERE a.id IN (SELECT alert_id FROM filtered_events)
 			%s
 		%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
@@ -8103,8 +8097,9 @@ func (s *SharedFunctionService) BuildCoordinatesAlertQuery(params models.AlertSe
 	defaultFilterFields.SetDefaultValues()
 	editionTypeCondition := s.buildEditionTypeCondition(defaultFilterFields, "ee")
 	cteParts = append(cteParts, fmt.Sprintf(`filtered_events AS (
-			SELECT DISTINCT ee.event_id
+			SELECT DISTINCT ee.event_id, etc.alert_id
 			FROM testing_db.allevent_ch AS ee
+			INNER JOIN testing_db.event_type_ch AS etc ON ee.event_id = etc.event_id AND etc.alert_id IS NOT NULL
 			WHERE ee.venue_city IN (SELECT id FROM nearby_cities)
 				AND %s
 		)`, editionTypeCondition))
@@ -8119,11 +8114,9 @@ func (s *SharedFunctionService) BuildCoordinatesAlertQuery(params models.AlertSe
 		query := fmt.Sprintf(`
 		%s
 		SELECT %s
-		FROM testing_db.event_type_ch AS et
-		INNER JOIN filtered_events AS fe ON et.event_id = fe.event_id
-		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		FROM testing_db.alerts_ch AS a
 		%s
-		WHERE et.alert_id IS NOT NULL
+		WHERE a.id IN (SELECT alert_id FROM filtered_events)
 			%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, groupByClause)
 		return strings.TrimSpace(query), nil
@@ -8153,11 +8146,9 @@ func (s *SharedFunctionService) BuildCoordinatesAlertQuery(params models.AlertSe
 		query := fmt.Sprintf(`
 		%s
 		SELECT %s
-		FROM testing_db.event_type_ch AS et
-		INNER JOIN filtered_events AS fe ON et.event_id = fe.event_id
-		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
+		FROM testing_db.alerts_ch AS a
 		%s
-		WHERE et.alert_id IS NOT NULL
+		WHERE a.id IN (SELECT alert_id FROM filtered_events)
 			%s
 		%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
