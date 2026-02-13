@@ -8004,10 +8004,10 @@ func (s *SharedFunctionService) BuildLocationIdsAlertQuery(params models.AlertSe
 		%s
 		SELECT %s
 		FROM testing_db.event_type_ch AS et
+		INNER JOIN filtered_events AS fe ON et.event_id = fe.event_id
 		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
 		%s
 		WHERE et.alert_id IS NOT NULL
-			AND et.event_id IN (SELECT event_id FROM filtered_events)
 			%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, groupByClause)
 		return strings.TrimSpace(query), nil
@@ -8036,10 +8036,10 @@ func (s *SharedFunctionService) BuildLocationIdsAlertQuery(params models.AlertSe
 		%s
 		SELECT %s
 		FROM testing_db.event_type_ch AS et
+		INNER JOIN filtered_events AS fe ON et.event_id = fe.event_id
 		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
 		%s
 		WHERE et.alert_id IS NOT NULL
-			AND et.event_id IN (SELECT event_id FROM filtered_events)
 			%s
 		%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
@@ -8120,10 +8120,10 @@ func (s *SharedFunctionService) BuildCoordinatesAlertQuery(params models.AlertSe
 		%s
 		SELECT %s
 		FROM testing_db.event_type_ch AS et
+		INNER JOIN filtered_events AS fe ON et.event_id = fe.event_id
 		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
 		%s
 		WHERE et.alert_id IS NOT NULL
-			AND et.event_id IN (SELECT event_id FROM filtered_events)
 			%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, groupByClause)
 		return strings.TrimSpace(query), nil
@@ -8154,10 +8154,10 @@ func (s *SharedFunctionService) BuildCoordinatesAlertQuery(params models.AlertSe
 		%s
 		SELECT %s
 		FROM testing_db.event_type_ch AS et
+		INNER JOIN filtered_events AS fe ON et.event_id = fe.event_id
 		INNER JOIN testing_db.alerts_ch AS a ON et.alert_id = a.id
 		%s
 		WHERE et.alert_id IS NOT NULL
-			AND et.event_id IN (SELECT event_id FROM filtered_events)
 			%s
 		%s
 		%s`, withClause, selectClause, dateSeriesJoin, dateRangeStr, orderClause, limitClause)
