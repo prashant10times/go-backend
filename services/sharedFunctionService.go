@@ -68,9 +68,6 @@ func NewSharedFunctionService(db *gorm.DB, clickhouseService *ClickHouseService,
 	}
 }
 
-// OLD IMPLEMENTATION - Commented out due to ClickHouse hasToken() separator issue
-// hasToken() doesn't accept separators (periods, hyphens, etc.) in the needle parameter
-// This caused errors with company names like "raonark.inc", "co.", "electro-jet", etc.
 // func (s *SharedFunctionService) matchPhraseConverter(fieldName string, searchTerm string) string {
 // 	escapedTerm := strings.TrimSpace(searchTerm)
 // 	if escapedTerm == "" {
@@ -195,9 +192,6 @@ func (s *SharedFunctionService) speakerUserNameILikeCondition(searchTerm string)
 	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR "))
 }
 
-// speakerUserCompanyILikeCondition builds ILIKE condition for userCompanyName search in speaker entity.
-// Searches across: user_company, sourceCompanyName, speaker_title, speaker_profile.
-// Input is normalized with leading/trailing spaces to match DB format.
 func (s *SharedFunctionService) speakerUserCompanyILikeCondition(searchTerm string) string {
 	phrase := " " + strings.TrimSpace(searchTerm) + " "
 	if phrase == "  " {
@@ -213,8 +207,6 @@ func (s *SharedFunctionService) speakerUserCompanyILikeCondition(searchTerm stri
 	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR "))
 }
 
-// commonUserNameILikeCondition builds ILIKE condition for userName using only user_name column.
-// Used when both speaker and visitor are searched (UserIdUnionCTE) - common columns only.
 func (s *SharedFunctionService) commonUserNameILikeCondition(searchTerm string) string {
 	phrase := " " + strings.TrimSpace(searchTerm) + " "
 	if phrase == "  " {
@@ -224,8 +216,6 @@ func (s *SharedFunctionService) commonUserNameILikeCondition(searchTerm string) 
 	return fmt.Sprintf("(user_name ILIKE '%%%s%%')", escaped)
 }
 
-// commonUserCompanyILikeCondition builds ILIKE condition for userCompanyName using only user_company column.
-// Used when both speaker and visitor are searched (UserIdUnionCTE) - common columns only.
 func (s *SharedFunctionService) commonUserCompanyILikeCondition(searchTerm string) string {
 	phrase := " " + strings.TrimSpace(searchTerm) + " "
 	if phrase == "  " {
@@ -235,8 +225,6 @@ func (s *SharedFunctionService) commonUserCompanyILikeCondition(searchTerm strin
 	return fmt.Sprintf("(user_company ILIKE '%%%s%%')", escaped)
 }
 
-// buildUserNameUserCompanyCondition builds the full WHERE condition for userName and userCompanyName filters.
-// Used by buildClickHouseQuery and entity qualifications. Returns empty string if no conditions.
 func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields models.FilterDataDto, useILikeLogic bool, useCommonColumnsOnly bool) string {
 	hasUserNameFilter := len(filterFields.ParsedUserName) > 0
 	hasUserCompanyNameFilter := len(filterFields.ParsedUserCompanyName) > 0
