@@ -7217,8 +7217,6 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			preFilterSelect += ", e.impactScore"
 		case "economicImpact":
 			preFilterSelect += ", e.event_economic_value"
-		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.event_economic_dayWiseEconomicImpact"
 		}
 	}
 
@@ -7665,8 +7663,6 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 			preFilterSelect += ", e.impactScore"
 		case "economicImpact":
 			preFilterSelect += ", e.event_economic_value"
-		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.event_economic_dayWiseEconomicImpact"
 		}
 	}
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
