@@ -19,6 +19,7 @@ type ConvertSchemaDto struct {
 	DesignationIds string `json:"designationIds,omitempty" form:"designationIds"`
 	RoleIds        string `json:"roleIds,omitempty" form:"roleIds"`
 	DepartmentIds  string `json:"departmentIds,omitempty" form:"departmentIds"`
+	PageUrls       string `json:"pageUrls,omitempty" form:"pageUrls"`
 
 	ParsedCityIds        []string `json:"-"`
 	ParsedCountryIds     []string `json:"-"`
@@ -30,6 +31,7 @@ type ConvertSchemaDto struct {
 	ParsedDesignationIds []string `json:"-"`
 	ParsedRoleIds        []string `json:"-"`
 	ParsedDepartmentIds  []string `json:"-"`
+	ParsedPageUrls       []string `json:"-"`
 }
 
 func (c *ConvertSchemaDto) Validate() error {
@@ -59,5 +61,6 @@ func (c *ConvertSchemaDto) Validate() error {
 		validation.Field(&c.DesignationIds, validation.When(c.DesignationIds != "", validation.By(parseCSV(&c.ParsedDesignationIds)))),
 		validation.Field(&c.RoleIds, validation.When(c.RoleIds != "", validation.By(parseCSV(&c.ParsedRoleIds)))),
 		validation.Field(&c.DepartmentIds, validation.When(c.DepartmentIds != "", validation.By(parseCSV(&c.ParsedDepartmentIds)))),
+		validation.Field(&c.PageUrls, validation.When(c.PageUrls != "", validation.By(parseCSV(&c.ParsedPageUrls)))),
 	)
 }
