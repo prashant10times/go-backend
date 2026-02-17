@@ -6794,17 +6794,17 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
 		switch column {
 		case "hotel":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Accommodation'))) AS hotel")
+			selectors = append(selectors, "sum(ed.value) AS hotel")
 		case "food":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Food & Beverages'))) AS food")
+			selectors = append(selectors, "sum(ed.value) AS food")
 		case "entertainment":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Entertainment'))) AS entertainment")
+			selectors = append(selectors, "sum(ed.value) AS entertainment")
 		case "airline":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Flights'))) AS airline")
+			selectors = append(selectors, "sum(ed.value) AS airline")
 		case "transport":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Transportation'))) AS transport")
+			selectors = append(selectors, "sum(ed.value) AS transport")
 		case "utilitie":
-			selectors = append(selectors, "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', 'Utilities'))) AS utilitie")
+			selectors = append(selectors, "sum(ed.value) AS utilitie")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -6884,8 +6884,6 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			preFilterSelect += ", e.impactScore"
 		case "economicImpact":
 			preFilterSelect += ", e.event_economic_value"
-		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.event_economic_dayWiseEconomicImpact"
 		}
 	}
 
@@ -6896,12 +6894,27 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		preFilterSelect += ", e.keywords"
 	}
 
+	edMetricFilter := ""
+	if isDayWiseEconomicColumn {
+		switch columnStr {
+		case "hotel":
+			edMetricFilter = "Accommodation"
+		case "food":
+			edMetricFilter = "Food & Beverages"
+		case "entertainment":
+			edMetricFilter = "Entertainment"
+		case "airline":
+			edMetricFilter = "Flights"
+		case "transport":
+			edMetricFilter = "Transportation"
+		case "utilitie":
+			edMetricFilter = "Utilities"
+		}
+	}
+
 	dateJoinCondition := s.buildTrendsDateCondition(forecasted, "e", "dateJoin", "", "")
 	if dateJoinCondition == "" {
 		dateJoinCondition = "e.start_date <= ds.date AND e.end_date >= ds.date"
-	}
-	if columnStr == "hotel" || columnStr == "food" || columnStr == "entertainment" || columnStr == "airline" || columnStr == "transport" || columnStr == "utilitie" {
-		dateJoinCondition = "JSONHas(toJSONString(e.event_economic_dayWiseEconomicImpact), formatDateTime(ds.date, '%Y-%m-%d'))"
 	}
 
 	startDateParsed, err := time.Parse("2006-01-02", startDate)
@@ -6918,7 +6931,6 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 
 	var query string
 	if isDayWiseEconomicColumn {
-		joinStrE2 := strings.ReplaceAll(joinStr, "e.event_id", "e2.event_id")
 		selectStrWithDateAlias := strings.Replace(selectStr, "ds.date", "ds.date AS date", 1)
 		query = fmt.Sprintf(`
 		WITH %sdate_series AS (
@@ -6931,19 +6943,15 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			FROM testing_db.allevent_ch AS e
 			%s
 			WHERE %s
-		),
-		exploded AS (
-			SELECT e.event_id AS event_id, toDate(kv.1) AS date, kv.2 AS value_json
-			FROM preFilterEvent e
-			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
-			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
 		)
 		SELECT
 			%s
-		FROM exploded e2
-		INNER JOIN date_series ds ON e2.date = ds.date
+		FROM preFilterEvent e
+		INNER JOIN testing_db.event_daywiseEconomicImpact_ch ed ON e.event_id = ed.event_id
+		INNER JOIN date_series ds ON ed.date = ds.date
 		%s
 		WHERE %s
+		AND ed.metric = '%s'
 		GROUP BY %s
 		ORDER BY ds.date
 		`,
@@ -6960,12 +6968,13 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 			preFilterWhereWithDate,
 			selectStrWithDateAlias,
 			func() string {
-				if joinStrE2 != "" {
-					return "\n            " + joinStrE2
+				if joinStr != "" {
+					return "\n            " + joinStr
 				}
 				return ""
 			}(),
 			whereClause,
+			edMetricFilter,
 			groupByStr,
 		)
 	} else {
@@ -7128,7 +7137,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	var groupByClauses []string
 	var joinClauses []string
 	needsEventTypeJoin := false
-	useDayWiseExplodedCTE := false
+	isDayWiseEconomicColumn := false
 
 	switch column {
 	case "eventCount":
@@ -7144,23 +7153,20 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "economicImpact":
 		selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-		useDayWiseExplodedCTE = true
-		dayWiseSumFromE2 := func(categoryKey string) string {
-			return "sum(toFloat64OrZero(JSONExtractString(e2.value_json, 'breakdown', " + "'" + categoryKey + "'" + ")))"
-		}
+		isDayWiseEconomicColumn = true
 		switch column {
 		case "hotel":
-			selectors = append(selectors, dayWiseSumFromE2("Accommodation")+" AS hotel")
+			selectors = append(selectors, "sum(ed.value) AS hotel")
 		case "food":
-			selectors = append(selectors, dayWiseSumFromE2("Food & Beverages")+" AS food")
+			selectors = append(selectors, "sum(ed.value) AS food")
 		case "entertainment":
-			selectors = append(selectors, dayWiseSumFromE2("Entertainment")+" AS entertainment")
+			selectors = append(selectors, "sum(ed.value) AS entertainment")
 		case "airline":
-			selectors = append(selectors, dayWiseSumFromE2("Flights")+" AS airline")
+			selectors = append(selectors, "sum(ed.value) AS airline")
 		case "transport":
-			selectors = append(selectors, dayWiseSumFromE2("Transportation")+" AS transport")
+			selectors = append(selectors, "sum(ed.value) AS transport")
 		case "utilitie":
-			selectors = append(selectors, dayWiseSumFromE2("Utilities")+" AS utilitie")
+			selectors = append(selectors, "sum(ed.value) AS utilitie")
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -7180,18 +7186,14 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 
 	if needsEventTypeJoin {
-		eventTableAlias := "e"
-		if useDayWiseExplodedCTE {
-			eventTableAlias = "e2"
-		}
-		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON "+eventTableAlias+".event_id = et.event_id and et.published = 1")
+		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1")
 		if len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 			joinClauses = append(joinClauses, "ARRAY JOIN et.groups AS group_name")
 		}
 	}
 
 	whereConditions := []string{}
-	if !useDayWiseExplodedCTE && filterWhereClause != "" {
+	if filterWhereClause != "" {
 		cleaned := strings.ReplaceAll(filterWhereClause, "ee.", "e.")
 		cleaned = strings.ReplaceAll(cleaned, "e.event_id = et.event_id", "")
 		cleaned = strings.TrimSpace(cleaned)
@@ -7204,7 +7206,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 	forecasted := filterFields.Forecasted
 	finalDatesJoinCond := s.buildTrendsDateCondition(forecasted, "e", "finalDatesJoin", "", "")
-	if finalDatesJoinCond != "" && !useDayWiseExplodedCTE {
+	if finalDatesJoinCond != "" && !isDayWiseEconomicColumn {
 		whereConditions = append(whereConditions, finalDatesJoinCond)
 	}
 	if needsEventTypeJoin && len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
@@ -7244,8 +7246,6 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 			preFilterSelect += ", e.impactScore"
 		case "economicImpact":
 			preFilterSelect += ", e.event_economic_value"
-		case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
-			preFilterSelect += ", e.event_economic_dayWiseEconomicImpact"
 		}
 	}
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
@@ -7254,8 +7254,26 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		preFilterSelect += ", e.keywords"
 	}
 
+	edMetricFilter := ""
+	if isDayWiseEconomicColumn {
+		switch columnStr {
+		case "hotel":
+			edMetricFilter = "Accommodation"
+		case "food":
+			edMetricFilter = "Food & Beverages"
+		case "entertainment":
+			edMetricFilter = "Entertainment"
+		case "airline":
+			edMetricFilter = "Flights"
+		case "transport":
+			edMetricFilter = "Transportation"
+		case "utilitie":
+			edMetricFilter = "Utilities"
+		}
+	}
+
 	var query string
-	if useDayWiseExplodedCTE {
+	if isDayWiseEconomicColumn {
 		query = fmt.Sprintf(`
 		WITH %sdate_series AS (
 			SELECT toStartOfInterval(toDate('%s'), INTERVAL 1 %s) + INTERVAL number %s AS duration_start
@@ -7284,19 +7302,15 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 			FROM testing_db.allevent_ch AS e
 			%s
 			WHERE %s
-		),
-		exploded AS (
-			SELECT e.event_id AS event_id, toDate(kv.1) AS date, kv.2 AS value_json
-			FROM preFilterEvent e
-			ARRAY JOIN JSONExtractKeysAndValuesRaw(ifNull(toJSONString(e.event_economic_dayWiseEconomicImpact), '{}')) AS kv
-			WHERE toJSONString(e.event_economic_dayWiseEconomicImpact) != '{}' AND toJSONString(e.event_economic_dayWiseEconomicImpact) != 'null'
 		)
 		SELECT
 			%s
-		FROM exploded e2
-		INNER JOIN final_dates fd ON e2.date >= fd.start_date AND e2.date <= fd.end_date
+		FROM preFilterEvent e
+		INNER JOIN testing_db.event_daywiseEconomicImpact_ch ed ON e.event_id = ed.event_id
+		INNER JOIN final_dates fd ON ed.date >= fd.start_date AND ed.date <= fd.end_date
 		%s
 		WHERE %s
+		AND ed.metric = '%s'
 		GROUP BY %s
 		ORDER BY fd.start_date
 		`,
@@ -7320,6 +7334,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 				return ""
 			}(),
 			whereClause,
+			edMetricFilter,
 			groupByStr,
 		)
 	} else {
