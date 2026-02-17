@@ -33,6 +33,7 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 	designationChan := make(chan conversionResult, 1)
 	roleChan := make(chan conversionResult, 1)
 	departmentChan := make(chan conversionResult, 1)
+	pageUrlChan := make(chan conversionResult, 1)
 
 	go func() {
 		log.Printf("Getting EVENT ID's Data")
@@ -82,6 +83,12 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 		departmentChan <- conversionResult{data: data, err: err}
 	}()
 
+	go func() {
+		log.Printf("Getting PAGE URL's Data")
+		data, err := s.convertPageUrls(ctx, query.ParsedPageUrls)
+		pageUrlChan <- conversionResult{data: data, err: err}
+	}()
+
 	eventRes := <-eventChan
 	if eventRes.err != nil {
 		return nil, eventRes.err
@@ -122,12 +129,18 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 		return nil, departmentRes.err
 	}
 
+	pageUrlRes := <-pageUrlChan
+	if pageUrlRes.err != nil {
+		return nil, pageUrlRes.err
+	}
+
 	response := map[string]interface{}{
 		"cityIds":     cityRes.data,
 		"countryIds":  countryRes.data,
 		"eventIds":    eventRes.data,
 		"categoryIds": categoryRes.data,
 		"locationIds": locationRes.data,
+		"pageUrls":    pageUrlRes.data,
 		"designations": map[string]interface{}{
 			"designation": designationRes.data,
 			"role":        roleRes.data,
@@ -663,6 +676,55 @@ func (s *ConvertService) convertLocationIds(ctx context.Context, uuids []string)
 				venueMap[locationUUID] = locationData
 			}
 		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (s *ConvertService) convertPageUrls(ctx context.Context, pageUrls []string) (map[string]interface{}, error) {
+	if len(pageUrls) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	quotedUrls := make([]string, 0, len(pageUrls))
+	for _, url := range pageUrls {
+		url = strings.TrimSpace(url)
+		if url != "" {
+			quotedUrls = append(quotedUrls, fmt.Sprintf("'%s'", strings.ReplaceAll(url, "'", "''")))
+		}
+	}
+
+	if len(quotedUrls) == 0 {
+		return map[string]interface{}{}, nil
+	}
+
+	colPageUrl := "`10timesEventPageUrl`"
+	query := fmt.Sprintf(`
+		SELECT %s, event_uuid
+		FROM testing_db.allevent_ch
+		WHERE edition_type = 'current_edition' AND %s IN (%s)
+	`, colPageUrl, colPageUrl, strings.Join(quotedUrls, ","))
+
+	log.Printf("convertPageUrls query: %s", query)
+	rows, err := s.clickhouseService.ExecuteQuery(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make(map[string]interface{})
+	for rows.Next() {
+		var pageUrl, eventUUID string
+
+		if err := rows.Scan(&pageUrl, &eventUUID); err != nil {
+			return nil, err
+		}
+
+		result[pageUrl] = eventUUID
 	}
 
 	if err := rows.Err(); err != nil {
