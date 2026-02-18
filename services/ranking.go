@@ -47,6 +47,21 @@ type PrioritizedRanks struct {
 	CategoryCountry *RankingCategoryCountryRank `json:"category_country"`
 }
 
+// RankingDataResponse preserves key order: global → country → category → category_country
+type RankingDataResponse struct {
+	Global          *RankGroup `json:"global,omitempty"`
+	Country         *RankGroup `json:"country,omitempty"`
+	Category        *RankGroup `json:"category,omitempty"`
+	CategoryCountry *RankGroup `json:"category_country,omitempty"`
+}
+
+type RankGroup struct {
+	MaxRank          int                      `json:"maxRank"`
+	PrecedingEvents  []map[string]interface{} `json:"precedingEvents"`
+	SucceedingEvents []map[string]interface{} `json:"succeedingEvents"`
+	CurrentEvent     map[string]interface{}   `json:"currentEvent"`
+}
+
 func extractRank(rankValue interface{}) int {
 	switch v := rankValue.(type) {
 	case int:
@@ -803,9 +818,15 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 		}
 	}
 
-	sortedRankedEvents := make(map[string]interface{})
-	for rankType := range groupRankedEventsByRankType {
-		group := groupRankedEventsByRankType[rankType].(map[string]interface{})
+	// Response order: global → country → category → category_country (omit missing)
+	rankTypeOrder := []string{"global", "country", "category", "category_country"}
+	data := &RankingDataResponse{}
+	for _, rankType := range rankTypeOrder {
+		groupRaw, exists := groupRankedEventsByRankType[rankType]
+		if !exists || groupRaw == nil {
+			continue
+		}
+		group := groupRaw.(map[string]interface{})
 
 		var precedingEvents []map[string]interface{}
 		if pe, ok := group["precedingEvents"].([]map[string]interface{}); ok {
@@ -838,15 +859,27 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 			succeedingEvents = []map[string]interface{}{}
 		}
 
-		sortedRankedEvents[rankType] = map[string]interface{}{
-			"maxRank":          group["maxRank"],
-			"precedingEvents":  precedingEvents,
-			"succeedingEvents": succeedingEvents,
-			"currentEvent":     currentEvent,
+		maxRank := extractRank(group["maxRank"])
+
+		rankGroup := &RankGroup{
+			MaxRank:          maxRank,
+			PrecedingEvents:  precedingEvents,
+			SucceedingEvents: succeedingEvents,
+			CurrentEvent:     currentEvent,
+		}
+		switch rankType {
+		case "global":
+			data.Global = rankGroup
+		case "country":
+			data.Country = rankGroup
+		case "category":
+			data.Category = rankGroup
+		case "category_country":
+			data.CategoryCountry = rankGroup
 		}
 	}
 
 	return fiber.Map{
-		"data": sortedRankedEvents,
+		"data": data,
 	}, nil
 }
