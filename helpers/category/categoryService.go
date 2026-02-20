@@ -29,11 +29,7 @@ type Category struct {
 func (s *CategoryService) GetCategory(query models.SearchCategoryDto) (interface{}, error) {
 	ctx := context.Background()
 
-	if query.ParsedIsGroup != nil && !*query.ParsedIsGroup {
-		return s.getProducts(ctx, query)
-	}
-
-	// Build WHERE conditions for category table with priority: id > id_10x > slugs > name
+	// Build WHERE conditions with priority: id > id_10x > slugs > name
 	whereConditions := []string{}
 
 	// Priority 1: IDs
@@ -75,8 +71,12 @@ func (s *CategoryService) GetCategory(query models.SearchCategoryDto) (interface
 		}
 	}
 
-	// is_group (category: default to group categories)
-	whereConditions = append(whereConditions, "is_group = 1")
+	// is_group
+	if query.ParsedIsGroup == nil || *query.ParsedIsGroup {
+		whereConditions = append(whereConditions, "is_group = 1")
+	} else {
+		whereConditions = append(whereConditions, "is_group = 0")
+	}
 
 	// is_designation
 	if query.ParsedIsDesignation != nil && *query.ParsedIsDesignation {
@@ -180,159 +180,4 @@ func (s *CategoryService) GetCategory(query models.SearchCategoryDto) (interface
 	}
 
 	return categories, nil
-}
-
-func (s *CategoryService) getProducts(ctx context.Context, query models.SearchCategoryDto) (interface{}, error) {
-	// Build WHERE conditions for product table with priority: id > id_10x > slugs > name
-	whereConditions := []string{}
-
-	// Priority 1: IDs (product_uuid)
-	if len(query.ParsedID) > 0 {
-		escapedIDs := make([]string, len(query.ParsedID))
-		for i, id := range query.ParsedID {
-			escapedIDs[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(id, "'", "''"))
-		}
-		whereConditions = append(whereConditions, fmt.Sprintf("product_uuid IN (%s)", strings.Join(escapedIDs, ",")))
-	} else if len(query.ParsedID10x) > 0 {
-		// Priority 2: id_10x (maps to product id)
-		id10xStrs := make([]string, len(query.ParsedID10x))
-		for i, id := range query.ParsedID10x {
-			id10xStrs[i] = fmt.Sprintf("%d", id)
-		}
-		whereConditions = append(whereConditions, fmt.Sprintf("id IN (%s)", strings.Join(id10xStrs, ",")))
-	} else {
-		// Priority 3: slugs
-		if len(query.ParsedSlugs) > 0 {
-			escapedSlugs := make([]string, len(query.ParsedSlugs))
-			for i, slug := range query.ParsedSlugs {
-				escapedSlugs[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(slug, "'", "''"))
-			}
-			whereConditions = append(whereConditions, fmt.Sprintf("slug IN (%s)", strings.Join(escapedSlugs, ",")))
-		} else if query.Name != "" {
-			// Priority 4: name
-			nameConditions := []string{}
-			names := strings.Split(query.Name, "|:")
-			for _, name := range names {
-				name = strings.TrimSpace(name)
-				if name != "" {
-					escapedName := strings.ReplaceAll(name, "'", "''")
-					nameConditions = append(nameConditions, fmt.Sprintf("lower(name) LIKE lower('%%%s%%')", escapedName))
-				}
-			}
-			if len(nameConditions) > 0 {
-				whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR ")))
-			}
-		}
-	}
-
-	whereClause := strings.Join(whereConditions, " AND ")
-	if whereClause == "" {
-		whereClause = "1=1"
-	}
-
-	selectQuery := fmt.Sprintf(`
-		SELECT any(id) AS id, product_uuid, any(name) AS name, any(slug) AS slug, any(product_published) AS product_published, any(created) AS created
-		FROM testing_db.event_product_ch
-		WHERE %s
-		GROUP BY product_uuid
-		ORDER BY name ASC
-	`, whereClause)
-
-	log.Printf("product query (isGroup=false): %s", selectQuery)
-
-	selectQuery += fmt.Sprintf(" LIMIT %d", query.ParsedTake)
-	if query.ParsedSkip > 0 {
-		selectQuery += fmt.Sprintf(" OFFSET %d", query.ParsedSkip)
-	}
-
-	rows, err := s.clickhouseService.ExecuteQuery(ctx, selectQuery)
-	if err != nil {
-		return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
-	}
-	defer rows.Close()
-
-	columns := rows.Columns()
-	var products []map[string]interface{}
-
-	for rows.Next() {
-		scanArgs := make([]interface{}, len(columns))
-		for i, col := range columns {
-			switch col {
-			case "id":
-				scanArgs[i] = new(uint32)
-			case "product_published":
-				scanArgs[i] = new(int8)
-			case "created":
-				scanArgs[i] = new(time.Time)
-			default:
-				scanArgs[i] = new(string)
-			}
-		}
-
-		if err := rows.Scan(scanArgs...); err != nil {
-			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
-		}
-
-		product := make(map[string]interface{})
-		for i, col := range columns {
-			switch col {
-			case "id":
-				if val, ok := scanArgs[i].(*uint32); ok && val != nil {
-					product["category"] = *val
-				} else {
-					product["category"] = uint32(0)
-				}
-			case "product_uuid":
-				if val, ok := scanArgs[i].(*string); ok && val != nil {
-					product["category_uuid"] = *val
-				} else {
-					product["category_uuid"] = ""
-				}
-			case "name":
-				if val, ok := scanArgs[i].(*string); ok && val != nil {
-					product["name"] = *val
-				} else {
-					product["name"] = ""
-				}
-				product["short_name"] = ""
-			case "slug":
-				if val, ok := scanArgs[i].(*string); ok && val != nil {
-					product["slug"] = *val
-				} else {
-					product["slug"] = ""
-				}
-			case "product_published":
-				if val, ok := scanArgs[i].(*int8); ok && val != nil {
-					product["published"] = *val
-				} else {
-					product["published"] = int8(0)
-				}
-			case "created":
-				if val, ok := scanArgs[i].(*time.Time); ok && val != nil {
-					product["created"] = *val
-				} else {
-					product["created"] = nil
-				}
-			}
-		}
-		// isGroup=false for products
-		product["is_group"] = uint8(0)
-		if _, ok := product["published"]; !ok {
-			product["published"] = int8(0)
-		}
-		if _, ok := product["created"]; !ok {
-			product["created"] = nil
-		}
-		products = append(products, product)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
-	}
-
-	if len(products) == 0 {
-		return nil, middleware.NewNotFoundError("No record found", "")
-	}
-
-	return products, nil
 }
