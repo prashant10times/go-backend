@@ -110,7 +110,7 @@ func (s *CategoryService) GetCategory(query models.SearchCategoryDto) (interface
 	defer rows.Close()
 
 	columns := rows.Columns()
-	var categories []map[string]interface{}
+	categories := make([]map[string]interface{}, 0)
 
 	for rows.Next() {
 		scanArgs := make([]interface{}, len(columns))
@@ -173,10 +173,6 @@ func (s *CategoryService) GetCategory(query models.SearchCategoryDto) (interface
 
 	if err := rows.Err(); err != nil {
 		return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
-	}
-
-	if len(categories) == 0 {
-		return nil, middleware.NewNotFoundError("No record found", "")
 	}
 
 	return categories, nil
@@ -252,7 +248,7 @@ func (s *CategoryService) getProducts(ctx context.Context, query models.SearchCa
 	defer rows.Close()
 
 	columns := rows.Columns()
-	var products []map[string]interface{}
+	products := make([]map[string]interface{}, 0)
 
 	for rows.Next() {
 		scanArgs := make([]interface{}, len(columns))
@@ -328,10 +324,6 @@ func (s *CategoryService) getProducts(ctx context.Context, query models.SearchCa
 
 	if err := rows.Err(); err != nil {
 		return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
-	}
-
-	if len(products) == 0 {
-		return nil, middleware.NewNotFoundError("No record found", "")
 	}
 
 	return products, nil
