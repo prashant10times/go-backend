@@ -2938,8 +2938,8 @@ func (s *SharedFunctionService) buildWebsiteMatchCondition(filterFields models.F
 	editionDomainMatch := fmt.Sprintf("(ee.edition_domain IS NOT NULL AND (ee.edition_domain = '%s' OR ee.edition_domain LIKE concat('%%', '.', '%s')))", inputDomain, inputDomain)
 	conditions = append(conditions, editionDomainMatch)
 
-	// Condition 3: Match events where the organizer's company_domain equals input_domain or is a subdomain of it.
-	companyDomainMatch := fmt.Sprintf("(ee.company_domain IS NOT NULL AND (ee.company_domain = '%s' OR ee.company_domain LIKE concat('%%', '.', '%s')))", inputDomain, inputDomain)
+	// Condition 3: Match events where the organizer's company_domain equals input_domain.
+	companyDomainMatch := fmt.Sprintf("(ee.company_domain IS NOT NULL AND ee.company_domain = '%s')", inputDomain)
 	conditions = append(conditions, companyDomainMatch)
 
 	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR "))
