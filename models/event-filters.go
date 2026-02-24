@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -326,6 +327,9 @@ type FilterDataDto struct {
 	CompanyName    string `json:"companyName,omitempty" form:"companyName"`
 	CompanyWebsite string `json:"companyWebsite,omitempty" form:"companyWebsite"`
 
+	Website   string `json:"website,omitempty" form:"website"`
+	ExactMatch *bool  `json:"exactMatch,omitempty" form:"exactMatch"`
+
 	View                string `json:"view,omitempty" form:"view"`
 	CalendarType        string `json:"calendar_type,omitempty" form:"calendar_type"`
 	TrackerDates        string `json:"trackerDates,omitempty" form:"trackerDates"`
@@ -455,6 +459,9 @@ type FilterDataDto struct {
 	ParsedEstimatedVisitors   []string      `json:"-"`
 	ParsedEstimatedExhibitors []string      `json:"-"`
 	ParsedMaturity            []string      `json:"-"`
+	ParsedWebsiteFull         string       `json:"-"` 
+	ParsedWebsiteDomain       string       `json:"-"`
+	ParsedExactMatch          bool         `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -475,6 +482,39 @@ func (f *FilterDataDto) SetDefaultValues() {
 	if f.EditionType == "" {
 		f.EditionType = "current"
 	}
+}
+
+func NormalizeWebsiteInput(website string) (inputFull, inputDomain string) {
+	website = strings.TrimSpace(website)
+	if website == "" {
+		return "", ""
+	}
+	website = strings.ToLower(website)
+	if !strings.Contains(website, "://") {
+		website = "https://" + website
+	}
+	parsed, err := url.Parse(website)
+	if err != nil {
+		return "", ""
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return "", ""
+	}
+	host = strings.TrimPrefix(host, "www.")
+	if strings.Contains(host, "@") {
+		parts := strings.Split(host, "@")
+		if len(parts) > 1 {
+			host = parts[len(parts)-1]
+		}
+	}
+	path := strings.Trim(parsed.Path, "/")
+	if path != "" {
+		inputFull = host + "/" + path
+	} else {
+		inputFull = host
+	}
+	return inputFull, host
 }
 
 func validateAndNormalizeDate(dateStr *string, fieldName string) validation.Rule {
@@ -2557,6 +2597,22 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("entity_required", "searchByEntity is required when companyWebsite is provided")
 			}
 
+			return nil
+		}))),
+
+		validation.Field(&f.Website, validation.When(f.Website != "", validation.By(func(value interface{}) error {
+			websiteStr := value.(string)
+			websiteStr = strings.TrimSpace(websiteStr)
+			if websiteStr == "" {
+				return nil
+			}
+			inputFull, inputDomain := NormalizeWebsiteInput(websiteStr)
+			if inputFull == "" {
+				return validation.NewError("invalid_website", "Invalid website value: "+websiteStr+". Provide a valid URL or domain (e.g., abc.com/event1 or events.abc.com)")
+			}
+			f.ParsedWebsiteFull = inputFull
+			f.ParsedWebsiteDomain = inputDomain
+			f.ParsedExactMatch = f.ExactMatch != nil && *f.ExactMatch
 			return nil
 		}))),
 

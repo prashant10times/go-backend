@@ -1379,6 +1379,13 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addInFilter("companyDomain", "company_domain", &whereConditions, filterFields)
 	s.addInFilter("companyState", "company_state", &whereConditions, filterFields)
 
+	if filterFields.ParsedWebsiteFull != "" {
+		websiteCondition := s.buildWebsiteMatchCondition(filterFields)
+		if websiteCondition != "" {
+			whereConditions = append(whereConditions, websiteCondition)
+		}
+	}
+
 	if len(filterFields.ParsedEventIds) > 0 {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id IN (SELECT event_id FROM testing_db.allevent_ch WHERE event_uuid IN (%s))", strings.Join(filterFields.ParsedEventIds, ",")))
 	}
@@ -2904,6 +2911,38 @@ func (s *SharedFunctionService) addInFilter(filterKey string, dbField string, wh
 		}
 		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.%s IN (%s)", dbField, strings.Join(escapedValues, ",")))
 	}
+}
+
+func (s *SharedFunctionService) buildWebsiteMatchCondition(filterFields models.FilterDataDto) string {
+	inputFull := strings.ReplaceAll(filterFields.ParsedWebsiteFull, "'", "''")
+	inputDomain := strings.ReplaceAll(filterFields.ParsedWebsiteDomain, "'", "''")
+	if inputFull == "" || inputDomain == "" {
+		return ""
+	}
+	inputFullLower := strings.ToLower(inputFull)
+
+	editionWebsiteNorm := "lower(replaceRegexpOne(replaceRegexpOne(ee.edition_website, '^https?://', ''), '^www\\.', ''))"
+
+	if filterFields.ParsedExactMatch {
+		// Case A: exact_match=true — only exact edition website match allowed.
+		return fmt.Sprintf("(ee.edition_website IS NOT NULL AND %s = '%s')", editionWebsiteNorm, inputFullLower)
+	}
+
+	// Case B: exact_match=false — match if ANY of the three conditions is true.
+	var conditions []string
+
+	// Condition 1: Exact edition website match.
+	conditions = append(conditions, fmt.Sprintf("(ee.edition_website IS NOT NULL AND %s = '%s')", editionWebsiteNorm, inputFullLower))
+
+	// Condition 2: Edition domain match (including subdomains).
+	editionDomainMatch := fmt.Sprintf("(ee.edition_domain IS NOT NULL AND (ee.edition_domain = '%s' OR ee.edition_domain LIKE concat('%%', '.', '%s')))", inputDomain, inputDomain)
+	conditions = append(conditions, editionDomainMatch)
+
+	// Condition 3: Match events where the organizer's company_domain equals input_domain or is a subdomain of it.
+	companyDomainMatch := fmt.Sprintf("(ee.company_domain IS NOT NULL AND (ee.company_domain = '%s' OR ee.company_domain LIKE concat('%%', '.', '%s')))", inputDomain, inputDomain)
+	conditions = append(conditions, companyDomainMatch)
+
+	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR "))
 }
 
 func (s *SharedFunctionService) buildDefaultDateCondition(forecasted string, tableAlias string, today string) string {
