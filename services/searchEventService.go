@@ -1079,6 +1079,21 @@ func (s *SearchEventService) buildEventFilterFields(
 		}
 	}
 
+	if queryResult.HasWebsiteFilter && queryResult.WebsiteMatchPriorityExpr != "" {
+		eventFilterSelectFields = append(eventFilterSelectFields, queryResult.WebsiteMatchPriorityExpr)
+		eventFilterGroupByFields = append(eventFilterGroupByFields, "match_priority")
+		conditionalFields = append(conditionalFields, queryResult.WebsiteMatchPriorityExpr)
+		if queryResult.WebsiteMatchOrderClause != "" {
+			websiteOrder := strings.TrimPrefix(queryResult.WebsiteMatchOrderClause, "ORDER BY ")
+			if eventFilterOrderBy != "" && eventFilterOrderBy != "ORDER BY event_score ASC" {
+				otherOrder := strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
+				eventFilterOrderBy = fmt.Sprintf("ORDER BY %s, %s", websiteOrder, otherOrder)
+			} else {
+				eventFilterOrderBy = fmt.Sprintf("ORDER BY %s, event_score ASC", websiteOrder)
+			}
+		}
+	}
+
 	// If eventFilterOrderBy requires event_score, ensure it's in the fields
 	if eventFilterOrderBy == "ORDER BY event_score ASC" || eventFilterOrderBy == "" {
 		hasEventScore := false
@@ -1162,25 +1177,38 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		return converted
 	}
 
-	finalOrderClause := orderByClause
+	var orderParts []string
+	if queryResult.HasWebsiteFilter && queryResult.WebsiteMatchOrderClause != "" {
+		orderParts = append(orderParts, strings.TrimPrefix(queryResult.WebsiteMatchOrderClause, "ORDER BY "))
+	}
 	if queryResult.DistanceOrderClause != "" {
-		if orderByClause != "" {
-			distanceOrder := strings.TrimPrefix(queryResult.DistanceOrderClause, "ORDER BY ")
-			otherOrder := strings.TrimPrefix(orderByClause, "ORDER BY ")
-			finalOrderClause = fmt.Sprintf("ORDER BY %s, %s", distanceOrder, otherOrder)
-		} else {
-			finalOrderClause = queryResult.DistanceOrderClause
-		}
+		orderParts = append(orderParts, strings.TrimPrefix(queryResult.DistanceOrderClause, "ORDER BY "))
+	}
+	if orderByClause != "" {
+		orderParts = append(orderParts, strings.TrimPrefix(orderByClause, "ORDER BY "))
+	}
+	finalOrderClause := ""
+	if len(orderParts) > 0 {
+		finalOrderClause = "ORDER BY " + strings.Join(orderParts, ", ")
+	}
+
+	if queryResult.DistanceOrderClause != "" {
+		distanceOrderConverted := convertDistanceOrderForEventFilter(queryResult.DistanceOrderClause)
 		if eventFilterOrderBy == "" || eventFilterOrderBy == "ORDER BY event_score ASC" {
-			eventFilterOrderBy = convertDistanceOrderForEventFilter(queryResult.DistanceOrderClause)
+			eventFilterOrderBy = distanceOrderConverted
 		} else {
-			distanceOrder := strings.TrimPrefix(convertDistanceOrderForEventFilter(queryResult.DistanceOrderClause), "ORDER BY ")
+			distanceOrder := strings.TrimPrefix(distanceOrderConverted, "ORDER BY ")
 			eventOrder := strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
 			combinedOrder := fmt.Sprintf("ORDER BY %s, %s", distanceOrder, eventOrder)
 			eventFilterOrderBy = fieldCtx.FieldsSelector.FixOrderByForFields(combinedOrder, eventFilterFields.SelectFields)
 			if eventFilterOrderBy == "" {
-				eventFilterOrderBy = convertDistanceOrderForEventFilter(queryResult.DistanceOrderClause)
+				eventFilterOrderBy = distanceOrderConverted
 			}
+		}
+		if queryResult.HasWebsiteFilter && queryResult.WebsiteMatchOrderClause != "" {
+			websiteOrder := strings.TrimPrefix(queryResult.WebsiteMatchOrderClause, "ORDER BY ")
+			otherOrder := strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
+			eventFilterOrderBy = fmt.Sprintf("ORDER BY %s, %s", websiteOrder, otherOrder)
 		}
 	} else {
 		if eventFilterOrderBy != "" && eventFilterOrderBy != "ORDER BY event_score ASC" {
@@ -1415,6 +1443,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			switch col {
 			case "event_id", "edition_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors", "inboundScore", "internationalScore", "inboundAttendance", "internationalAttendance", "exhibitorsCount", "speakersCount", "sponsorsCount", "editions", "estimatedAttendanceMean", "estimatedVisitorsMean", "organizer_companyId", "trustScore":
 				values[i] = new(uint32)
+			case "match_priority":
+				values[i] = new(uint8)
 			case "score", "duration", "futurePredictionScore":
 				values[i] = new(int32)
 			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown", "shortName", "format", "entryType", "website", "10timesEventPageUrl", "estimatedVisitorRangeTag", "maturity", "frequency", "organizer_id", "organizer_name", "organizer_website", "organizer_logoUrl", "organizer_address", "organizer_city", "organizer_state", "organizer_country", "audienceZone":
@@ -1652,6 +1682,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				} else {
 					rowData[col] = nil
 				}
+			case "match_priority":
 			default:
 				if ptr, ok := val.(*string); ok && ptr != nil {
 					if strings.TrimSpace(*ptr) == "" {

@@ -626,6 +626,9 @@ type ClickHouseQueryResult struct {
 	WhereClause                   string
 	SearchClause                  string
 	DistanceOrderClause           string
+	HasWebsiteFilter              bool
+	WebsiteMatchPriorityExpr      string
+	WebsiteMatchOrderClause       string
 	NeedsVisitorJoin              bool
 	NeedsSpeakerJoin              bool
 	NeedsExhibitorJoin            bool
@@ -1383,6 +1386,10 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		websiteCondition := s.buildWebsiteMatchCondition(filterFields)
 		if websiteCondition != "" {
 			whereConditions = append(whereConditions, websiteCondition)
+			result.HasWebsiteFilter = true
+			priorityExpr, orderClause := s.buildWebsiteMatchOrderClause(filterFields)
+			result.WebsiteMatchPriorityExpr = priorityExpr
+			result.WebsiteMatchOrderClause = orderClause
 		}
 	}
 
@@ -2924,8 +2931,11 @@ func (s *SharedFunctionService) buildWebsiteMatchCondition(filterFields models.F
 	editionWebsiteNorm := "lower(replaceRegexpOne(replaceRegexpOne(ee.edition_website, '^https?://', ''), '^www\\.', ''))"
 
 	if filterFields.ParsedExactMatch {
-		// Case A: exact_match=true — only exact edition website match allowed.
-		return fmt.Sprintf("(ee.edition_website IS NOT NULL AND %s = '%s')", editionWebsiteNorm, inputFullLower)
+		// Case A: exact_match=true —exact edition website OR company domain strict equality
+		var exactConditions []string
+		exactConditions = append(exactConditions, fmt.Sprintf("(ee.edition_website IS NOT NULL AND %s = '%s')", editionWebsiteNorm, inputFullLower))
+		exactConditions = append(exactConditions, fmt.Sprintf("(ee.company_domain IS NOT NULL AND ee.company_domain = '%s')", inputDomain))
+		return fmt.Sprintf("(%s)", strings.Join(exactConditions, " OR "))
 	}
 
 	// Case B: exact_match=false — match if ANY of the three conditions is true.
@@ -2943,6 +2953,30 @@ func (s *SharedFunctionService) buildWebsiteMatchCondition(filterFields models.F
 	conditions = append(conditions, companyDomainMatch)
 
 	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR "))
+}
+
+// buildWebsiteMatchOrderClause returns the match_priority CASE expression and ORDER BY clause
+// for ordering: exact match (1) > domain match (2) > company match (3).
+func (s *SharedFunctionService) buildWebsiteMatchOrderClause(filterFields models.FilterDataDto) (priorityExpr string, orderClause string) {
+	inputFull := strings.ReplaceAll(filterFields.ParsedWebsiteFull, "'", "''")
+	inputDomain := strings.ReplaceAll(filterFields.ParsedWebsiteDomain, "'", "''")
+	if inputFull == "" || inputDomain == "" {
+		return "", ""
+	}
+	inputFullLower := strings.ToLower(inputFull)
+	editionWebsiteNorm := "lower(replaceRegexpOne(replaceRegexpOne(ee.edition_website, '^https?://', ''), '^www\\.', ''))"
+
+	cond1 := fmt.Sprintf("(ee.edition_website IS NOT NULL AND %s = '%s')", editionWebsiteNorm, inputFullLower)
+	cond2 := fmt.Sprintf("(ee.edition_domain IS NOT NULL AND (ee.edition_domain = '%s' OR ee.edition_domain LIKE concat('%%', '.', '%s')))", inputDomain, inputDomain)
+	cond3 := fmt.Sprintf("(ee.company_domain IS NOT NULL AND ee.company_domain = '%s')", inputDomain)
+
+	var caseExpr string
+	if filterFields.ParsedExactMatch {
+		caseExpr = fmt.Sprintf("CASE WHEN %s THEN 1 WHEN %s THEN 3 ELSE 4 END", cond1, cond3)
+	} else {
+		caseExpr = fmt.Sprintf("CASE WHEN %s THEN 1 WHEN %s THEN 2 WHEN %s THEN 3 ELSE 4 END", cond1, cond2, cond3)
+	}
+	return caseExpr + " AS match_priority", "ORDER BY match_priority ASC"
 }
 
 func (s *SharedFunctionService) buildDefaultDateCondition(forecasted string, tableAlias string, today string) string {
