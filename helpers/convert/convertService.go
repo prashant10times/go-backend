@@ -73,13 +73,13 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 
 	go func() {
 		log.Printf("Getting ROLE ID's Data")
-		data, err := s.convertRoleIds(ctx, query.ParsedRoleIds)
+		data, err := s.convertDesignationIds(ctx, query.ParsedRoleIds)
 		roleChan <- conversionResult{data: data, err: err}
 	}()
 
 	go func() {
 		log.Printf("Getting DEPARTMENT ID's Data")
-		data, err := s.convertDepartmentIds(ctx, query.ParsedDepartmentIds)
+		data, err := s.convertDesignationIds(ctx, query.ParsedDepartmentIds)
 		departmentChan <- conversionResult{data: data, err: err}
 	}()
 
