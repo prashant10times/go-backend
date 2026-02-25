@@ -7006,8 +7006,8 @@ func (s *SharedFunctionService) GetEventCountByDay(
 			return ""
 		}(),
 		preFilterWhereClause,
-		eventTypePublishedCondForGrouped,
 		eventsCountSelect,
+		eventTypePublishedCondForGrouped,
 		func() string {
 			conditions := []string{}
 			if filterWhereClause != "" {
