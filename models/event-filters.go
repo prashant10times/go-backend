@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
@@ -199,6 +200,12 @@ type JobCompositeFilter struct {
 	PropertyIds    []string                `json:"propertyIds,omitempty"`
 	Property       *JobCompositeProperty   `json:"property,omitempty"`
 }
+type WebsiteMatchFilter struct {
+	Website                string `json:"website"`
+	EventWebsiteExactMatch *int   `json:"eventWebsiteExactMatch,omitempty"`
+	EventDomainMatch       *int   `json:"eventDomainMatch,omitempty"`
+	CompanyDomainMatch     *int   `json:"companyDomainMatch,omitempty"`
+}
 
 type FilterDataDto struct {
 	Q              string `json:"q,omitempty" form:"q"`
@@ -325,6 +332,8 @@ type FilterDataDto struct {
 	CompanyId      string `json:"companyId,omitempty" form:"companyId"`
 	CompanyName    string `json:"companyName,omitempty" form:"companyName"`
 	CompanyWebsite string `json:"companyWebsite,omitempty" form:"companyWebsite"`
+
+	WebsiteMatch string `json:"websiteMatch,omitempty" form:"websiteMatch"`
 
 	View                string `json:"view,omitempty" form:"view"`
 	CalendarType        string `json:"calendar_type,omitempty" form:"calendar_type"`
@@ -455,6 +464,11 @@ type FilterDataDto struct {
 	ParsedEstimatedVisitors   []string      `json:"-"`
 	ParsedEstimatedExhibitors []string      `json:"-"`
 	ParsedMaturity            []string      `json:"-"`
+	ParsedWebsiteFull           string `json:"-"`
+	ParsedWebsiteDomain         string `json:"-"`
+	ParsedEventWebsiteExactMatch *int  `json:"-"`
+	ParsedEventDomainMatch      *int  `json:"-"`
+	ParsedCompanyDomainMatch    *int  `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -475,6 +489,39 @@ func (f *FilterDataDto) SetDefaultValues() {
 	if f.EditionType == "" {
 		f.EditionType = "current"
 	}
+}
+
+func NormalizeWebsiteInput(website string) (inputFull, inputDomain string) {
+	website = strings.TrimSpace(website)
+	if website == "" {
+		return "", ""
+	}
+	website = strings.ToLower(website)
+	if !strings.Contains(website, "://") {
+		website = "https://" + website
+	}
+	parsed, err := url.Parse(website)
+	if err != nil {
+		return "", ""
+	}
+	host := parsed.Hostname()
+	if host == "" {
+		return "", ""
+	}
+	host = strings.TrimPrefix(host, "www.")
+	if strings.Contains(host, "@") {
+		parts := strings.Split(host, "@")
+		if len(parts) > 1 {
+			host = parts[len(parts)-1]
+		}
+	}
+	path := strings.Trim(parsed.Path, "/")
+	if path != "" {
+		inputFull = host + "/" + path
+	} else {
+		inputFull = host
+	}
+	return inputFull, host
 }
 
 var ValidEditionTypes = map[string][]string{
@@ -2584,6 +2631,66 @@ func (f *FilterDataDto) Validate() error {
 				return validation.NewError("entity_required", "searchByEntity is required when companyWebsite is provided")
 			}
 
+			return nil
+		}))),
+
+		validation.Field(&f.WebsiteMatch, validation.When(f.WebsiteMatch != "", validation.By(func(value interface{}) error {
+			rawStr := strings.TrimSpace(value.(string))
+			if rawStr == "" {
+				return nil
+			}
+			var filter WebsiteMatchFilter
+			rawTrimmed := rawStr
+			if rawTrimmed != "" && (rawTrimmed[0] == '{' || rawTrimmed[0] == '[') {
+				if err := json.Unmarshal([]byte(rawTrimmed), &filter); err != nil {
+					return validation.NewError("invalid_website_match_json", "Invalid websiteMatch JSON format: "+err.Error())
+				}
+			} else {
+				filter.Website = rawTrimmed
+			}
+			websiteStr := strings.TrimSpace(filter.Website)
+			if websiteStr == "" {
+				return validation.NewError("invalid_website_match", "websiteMatch requires a non-empty website value")
+			}
+			inputFull, inputDomain := NormalizeWebsiteInput(websiteStr)
+			if inputFull == "" {
+				return validation.NewError("invalid_website", "Invalid website value: "+websiteStr+". Provide a valid URL or domain (e.g., abc.com/event1 or events.abc.com)")
+			}
+			f.ParsedWebsiteFull = inputFull
+			f.ParsedWebsiteDomain = inputDomain
+
+			exactP := filter.EventWebsiteExactMatch
+			domainP := filter.EventDomainMatch
+			companyP := filter.CompanyDomainMatch
+			hasAny := exactP != nil || domainP != nil || companyP != nil
+
+			if hasAny {
+				for name, p := range map[string]*int{"eventWebsiteExactMatch": exactP, "eventDomainMatch": domainP, "companyDomainMatch": companyP} {
+					if p != nil && (*p < 1 || *p > 3) {
+						return validation.NewError("invalid_priority", fmt.Sprintf("%s must be between 1 and 3", name))
+					}
+				}
+				seen := make(map[int]bool)
+				for _, p := range []*int{exactP, domainP, companyP} {
+					if p != nil {
+						if seen[*p] {
+							return validation.NewError("duplicate_priority", "Priority values must be unique")
+						}
+						seen[*p] = true
+					}
+				}
+			}
+
+			if !hasAny {
+				one, two, three := 1, 2, 3
+				f.ParsedEventWebsiteExactMatch = &one
+				f.ParsedEventDomainMatch = &two
+				f.ParsedCompanyDomainMatch = &three
+			} else {
+				f.ParsedEventWebsiteExactMatch = exactP
+				f.ParsedEventDomainMatch = domainP
+				f.ParsedCompanyDomainMatch = companyP
+			}
 			return nil
 		}))),
 
