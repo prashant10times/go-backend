@@ -56,19 +56,6 @@ func (h *SearchEventsHandler) extractDotNotationFields(c *fiber.Ctx, request *mo
 		}
 		return ""
 	}
-	getBoolValue := func(key string) *bool {
-		if val := c.Query(key); val != "" {
-			b := strings.EqualFold(val, "true") || val == "1"
-			return &b
-		}
-		if bodyMap != nil {
-			if val, ok := bodyMap[key].(bool); ok {
-				return &val
-			}
-		}
-		return nil
-	}
-
 	request.StartGte = getValue("start.gte")
 	request.EndLte = getValue("end.lte")
 	request.StartLte = getValue("start.lte")
@@ -108,8 +95,6 @@ func (h *SearchEventsHandler) extractDotNotationFields(c *fiber.Ctx, request *mo
 	request.EconomicImpactGte = getValue("economicImpact.gte")
 	request.EconomicImpactLte = getValue("economicImpact.lte")
 	request.CalendarType = getValue("calendar_type")
-	request.Website = getValue("website")
-	request.ExactMatch = getBoolValue("exactMatch")
 }
 
 func (h *SearchEventsHandler) processSearchRequest(c *fiber.Ctx, request *models.SearchEventsRequest, bodyMap map[string]interface{}) error {

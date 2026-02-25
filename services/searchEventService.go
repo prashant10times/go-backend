@@ -1089,13 +1089,15 @@ func (s *SearchEventService) buildEventFilterFields(
 				otherOrder := strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
 				eventFilterOrderBy = fmt.Sprintf("ORDER BY %s, %s", websiteOrder, otherOrder)
 			} else {
-				eventFilterOrderBy = fmt.Sprintf("ORDER BY %s, event_score ASC", websiteOrder)
+				eventFilterOrderBy = fmt.Sprintf("ORDER BY %s, event_score DESC", websiteOrder)
 			}
 		}
 	}
 
 	// If eventFilterOrderBy requires event_score, ensure it's in the fields
-	if eventFilterOrderBy == "ORDER BY event_score ASC" || eventFilterOrderBy == "" {
+	needsEventScore := eventFilterOrderBy == "ORDER BY event_score ASC" || eventFilterOrderBy == "" ||
+		strings.Contains(eventFilterOrderBy, "event_score")
+	if needsEventScore {
 		hasEventScore := false
 		for _, field := range eventFilterSelectFields {
 			if strings.Contains(field, "event_score") || strings.Contains(field, "score") {
