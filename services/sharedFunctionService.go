@@ -5697,6 +5697,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			preFilterSelectFields = append(preFilterSelectFields, "ee.event_created")
 		}
 		preFilterSelectStr := strings.Join(preFilterSelectFields, ", ")
+		eventTypePublishedCondForGrouped := GetEventTypePublishedConditionForJoin(filterFields.ParsedEventTypes, "et")
 
 		query := fmt.Sprintf(`
 			WITH %spreFilterEvent AS (
@@ -5710,7 +5711,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 				SELECT
 					group_name%s
 				FROM preFilterEvent AS ee
-				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id and et.published = 1
+				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id and %s
 				ARRAY JOIN et.groups AS group_name
 				WHERE group_name IN ('business', 'social', 'unattended')
 				GROUP BY group_name
@@ -5727,6 +5728,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			}(),
 			whereClause,
 			strings.ReplaceAll(selectStr, "e.", "ee."),
+			eventTypePublishedCondForGrouped,
 		)
 
 		log.Printf("Event count by event type group query (scenario 1): %s", query)
@@ -5882,6 +5884,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			preFilterSelectFields = append(preFilterSelectFields, "ee.event_created")
 		}
 		preFilterSelectStr := strings.Join(preFilterSelectFields, ", ")
+		eventTypePublishedCondForGrouped := GetEventTypePublishedConditionForJoin(filterFields.ParsedEventTypes, "et")
 
 		query := fmt.Sprintf(`
 			WITH %spreFilterEvent AS (
@@ -5895,7 +5898,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 				SELECT
 					%s
 				FROM preFilterEvent AS ee
-				INNER JOIN testing_db.event_type_ch et ON ee.event_id = et.event_id and et.published = 1
+				INNER JOIN testing_db.event_type_ch et ON ee.event_id = et.event_id and %s
 				WHERE %s
 				GROUP BY group_name
 			)
@@ -5918,6 +5921,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 			}(),
 			whereClause,
 			groupedSelectStr,
+			eventTypePublishedCondForGrouped,
 			eventGroupCountWhere,
 			finalSelectStr,
 		)
@@ -5990,6 +5994,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 
 	// eventEstimateCount - Group by business/social with past/upcoming counts and visitor estimates
 	if searchByEntity == "eventestimatecount" {
+		eventTypePublishedCondForClassified := GetEventTypePublishedConditionForJoin(filterFields.ParsedEventTypes, "et")
 		query := fmt.Sprintf(`
 			WITH %spreFilterEvent AS (
 				SELECT
@@ -6011,7 +6016,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 					END AS group_name,
 					if(ee.end_date < today(), 'past', 'upcoming') AS time_state
 				FROM preFilterEvent AS ee
-				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id and et.published = 1
+				INNER JOIN testing_db.event_type_ch AS et ON ee.event_id = et.event_id and %s
 				WHERE has(et.groups, 'business') OR has(et.groups, 'social')
 			),
 			grouped AS (
@@ -6046,6 +6051,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 				return ""
 			}(),
 			whereClause,
+			eventTypePublishedCondForClassified,
 		)
 
 		log.Printf("Event count by event type group query (eventEstimateCount): %s", query)
@@ -6159,6 +6165,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		preFilterSelectFields = append(preFilterSelectFields, "ee.event_created")
 	}
 	preFilterSelectStr := strings.Join(preFilterSelectFields, ", ")
+	eventTypePublishedCondForGrouped := GetEventTypePublishedConditionForJoin(filterFields.ParsedEventTypes, "et")
 
 	finalSelectClauses := []string{"uniq(e.event_id) AS count"}
 	if selectStr != "" {
@@ -6176,7 +6183,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		)
 		SELECT %s
 		FROM preFilterEvent e
-		INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1
+		INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and %s
 		WHERE has(et.groups, '%s')
 		`,
 		cteClausesStr,
@@ -6189,6 +6196,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		}(),
 		whereClause,
 		finalSelectStr,
+		eventTypePublishedCondForGrouped,
 		groupValue,
 	)
 
@@ -6659,6 +6667,8 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		preFilterSelect += ", e.keywords"
 	}
 
+	eventTypePublishedCondForGrouped := GetEventTypePublishedConditionForJoin(filterFields.ParsedEventTypes, "et")
+
 	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
 			SELECT toDate(addDays(toDate('%s'), number)) AS date
@@ -6679,7 +6689,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 				sum(e.impactScore) AS eventImpactScore
 			FROM preFilterEvent e
 			INNER JOIN date_series ds ON true
-			INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1
+			INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and %s
 			ARRAY JOIN et.groups AS group_name
 			WHERE %s
 			GROUP BY
@@ -6701,6 +6711,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 			return ""
 		}(),
 		preFilterWhereClause,
+		eventTypePublishedCondForGrouped,
 		func() string {
 			conditions := []string{}
 			if filterWhereClause != "" {
@@ -6824,7 +6835,8 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	}
 
 	if needsEventTypeJoin {
-		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1")
+		eventTypePublishedCond := GetEventTypePublishedConditionForJoin(filterFields.ParsedEventTypes, "et")
+		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and "+eventTypePublishedCond)
 		if len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 			joinClauses = append(joinClauses, "ARRAY JOIN et.groups AS group_name")
 		}
@@ -7186,7 +7198,8 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	}
 
 	if needsEventTypeJoin {
-		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and et.published = 1")
+		eventTypePublishedCond := GetEventTypePublishedConditionForJoin(filterFields.ParsedEventTypes, "et")
+		joinClauses = append(joinClauses, "INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and "+eventTypePublishedCond)
 		if len(secondaryGroupBy) > 0 && secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 			joinClauses = append(joinClauses, "ARRAY JOIN et.groups AS group_name")
 		}
