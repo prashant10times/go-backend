@@ -611,6 +611,9 @@ func (f *FilterDataDto) applyEventTypeBasedMappings(wasPublishedExplicitlyProvid
 	if !wasEventAudienceExplicitlyProvided {
 		audienceSet := make(map[int]bool)
 
+		if hasHoliday {
+			audienceSet[0] = true // unattended / holiday - no audience type
+		}
 		if hasSocial {
 			audienceSet[10100] = true // B2C
 		}
