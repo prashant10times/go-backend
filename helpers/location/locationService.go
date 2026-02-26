@@ -24,6 +24,7 @@ type Location struct {
 	DisplayName  string                 `json:"displayName"`
 	Slug         *string                `json:"slug,omitempty"`
 	LocationType string                 `json:"locationType"`
+	Address      *string                `json:"address,omitempty"`
 	Latitude     *float64               `json:"latitude,omitempty"`
 	Longitude    *float64               `json:"longitude,omitempty"`
 	ISO          *string                `json:"iso,omitempty"`
@@ -56,6 +57,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	var rankCase string
 	var windowOrderBy string
 	var venueSearchWhereClause string
+	var keywordMatchCountExpr string
 	isVenueQuery := query.ParsedLocationType != nil && *query.ParsedLocationType == models.LocationTypeVenue
 
 	if query.Slug != "" {
@@ -134,6 +136,18 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 				}
 				rankCase += "  ELSE 5\n"
 				rankCase += "END AS search_rank"
+
+				keywordMatchParts := make([]string, 0, len(keywords))
+				for _, keyword := range keywords {
+					keyword = strings.TrimSpace(keyword)
+					if keyword != "" {
+						escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
+						keywordMatchParts = append(keywordMatchParts, fmt.Sprintf("if(l.name ILIKE '%%%s%%' OR l.alias ILIKE '%%%s%%' OR l.search_text ILIKE '%%%s%%', 1, 0)", escapedKeyword, escapedKeyword, escapedKeyword))
+					}
+				}
+				if len(keywordMatchParts) > 0 {
+					keywordMatchCountExpr = fmt.Sprintf("(\n\t\t\t\t%s\n\t\t\t) AS keyword_match_count", strings.Join(keywordMatchParts, " +\n\t\t\t\t"))
+				}
 
 				// Build window function ORDER BY clause for venue query
 				windowOrderBy = fmt.Sprintf("%s,\n\t\t\tlength(l.name) ASC,\n\t\t\tl.location_type DESC,\n\t\t\tl.name,\n\t\t\tl.id_uuid", rankCase)
@@ -253,6 +267,26 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		}
 
 		rankedFirstSelect := "l.id_uuid AS id,\n\t\t\tl.name,\n\t\t\tl.alias,\n\t\t\tl.location_type,\n\t\t\t" + rankCase
+		if keywordMatchCountExpr != "" {
+			rankedFirstSelect += ",\n\t\t\t" + keywordMatchCountExpr
+		}
+
+		locationIdsSelect := "id,\n\t\t\t\tname,\n\t\t\t\talias,\n\t\t\t\tlocation_type,\n\t\t\t\tsearch_rank"
+		locationIdsOrderBy := "search_rank, length(name) ASC, location_type DESC, name, id"
+		if keywordMatchCountExpr != "" {
+			locationIdsSelect += ",\n\t\t\t\tkeyword_match_count"
+			locationIdsOrderBy = "search_rank, keyword_match_count DESC, length(name) ASC, location_type DESC, name, id"
+		}
+
+		locationIdsOrderByClause := "ORDER BY search_rank, rn"
+		if keywordMatchCountExpr != "" {
+			locationIdsOrderByClause = "ORDER BY search_rank, keyword_match_count DESC, rn"
+		}
+
+		finalOrderBy := "ORDER BY search_rank, rn"
+		if keywordMatchCountExpr != "" {
+			finalOrderBy = "ORDER BY search_rank, keyword_match_count DESC, rn"
+		}
 
 		selectQuery = fmt.Sprintf(`
 		WITH ranked_first AS (
@@ -264,16 +298,12 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		),
 		location_ids AS (
 			SELECT 
-				id,
-				name,
-				alias,
-				location_type,
-				search_rank,
+				%s,
 				row_number() OVER (
-					ORDER BY search_rank, length(name) ASC, location_type DESC, name, id
+					ORDER BY %s
 				) AS rn
 			FROM ranked_first
-			ORDER BY search_rank, rn
+			%s
 			LIMIT %d
 			OFFSET %d
 		)
@@ -282,6 +312,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			location.name,
 			location.slug AS location_slug,
 			location.location_type,
+			location.address AS address,
 			location.latitude,
 			location.longitude,
 			replace(location.id_10x, 'country-', '') AS location_iso,
@@ -319,8 +350,8 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			ON location.state_uuid = state.id_uuid 
 			AND state.location_type = 'STATE' 
 			AND state.published = 1
-		ORDER BY search_rank, rn
-		`, rankedFirstSelect, venuePreWhereClause, venueMainWhereClause, take, offset)
+		%s
+		`, rankedFirstSelect, venuePreWhereClause, venueMainWhereClause, locationIdsSelect, locationIdsOrderBy, locationIdsOrderByClause, take, offset, finalOrderBy)
 	} else {
 		cteSelectFields := "id_uuid,\n\t\t\tname,\n\t\t\talias,\n\t\t\tlocation_type"
 		if rankCase != "" {
@@ -351,6 +382,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			location.name,
 			location.slug AS location_slug,
 			location.location_type,
+			location.address AS address,
 			location.latitude,
 			location.longitude,
 			replace(location.id_10x, 'country-', '') AS location_iso,
@@ -410,11 +442,13 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		var stateIDUUID, stateName, stateSlug, stateCountryID *string
 		var stateLatitude, stateLongitude *float64
 
+		var locationAddress *string
 		if err := rows.Scan(
 			&loc.ID,
 			&loc.Name,
 			&locationSlug,
 			&loc.LocationType,
+			&locationAddress,
 			&loc.Latitude,
 			&loc.Longitude,
 			&locationISO,
@@ -440,6 +474,9 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		}
 
 		loc.Slug = locationSlug
+		if loc.LocationType == "VENUE" {
+			loc.Address = locationAddress
+		}
 
 		displayNameParts := []string{loc.Name}
 		if cityName != nil && *cityName != "" {
