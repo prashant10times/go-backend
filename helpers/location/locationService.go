@@ -24,6 +24,7 @@ type Location struct {
 	DisplayName  string                 `json:"displayName"`
 	Slug         *string                `json:"slug,omitempty"`
 	LocationType string                 `json:"locationType"`
+	Address      *string                `json:"address,omitempty"`
 	Latitude     *float64               `json:"latitude,omitempty"`
 	Longitude    *float64               `json:"longitude,omitempty"`
 	ISO          *string                `json:"iso,omitempty"`
@@ -282,6 +283,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			location.name,
 			location.slug AS location_slug,
 			location.location_type,
+			location.address AS address,
 			location.latitude,
 			location.longitude,
 			replace(location.id_10x, 'country-', '') AS location_iso,
@@ -351,6 +353,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			location.name,
 			location.slug AS location_slug,
 			location.location_type,
+			location.address AS address,
 			location.latitude,
 			location.longitude,
 			replace(location.id_10x, 'country-', '') AS location_iso,
@@ -410,11 +413,13 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		var stateIDUUID, stateName, stateSlug, stateCountryID *string
 		var stateLatitude, stateLongitude *float64
 
+		var locationAddress *string
 		if err := rows.Scan(
 			&loc.ID,
 			&loc.Name,
 			&locationSlug,
 			&loc.LocationType,
+			&locationAddress,
 			&loc.Latitude,
 			&loc.Longitude,
 			&locationISO,
@@ -440,6 +445,9 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		}
 
 		loc.Slug = locationSlug
+		if loc.LocationType == "VENUE" {
+			loc.Address = locationAddress
+		}
 
 		displayNameParts := []string{loc.Name}
 		if cityName != nil && *cityName != "" {
