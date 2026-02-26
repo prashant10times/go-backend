@@ -55,6 +55,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	whereConditions := []string{}
 	var rankCase string
 	var windowOrderBy string
+	var venueSearchWhereClause string
 	isVenueQuery := query.ParsedLocationType != nil && *query.ParsedLocationType == models.LocationTypeVenue
 
 	if query.Slug != "" {
@@ -90,7 +91,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			keywords := strings.Fields(queryLower)
 
 			if isVenueQuery {
-				concatenatedStr := "concat(coalesce(l.name, ''), ' ', coalesce(l.state_name, ''), ' ', coalesce(l.city_name, ''))"
+				concatenatedStr := "l.search_text"
 
 				queryPattern := strings.ReplaceAll(queryLower, " ", "%")
 				escapedQueryPattern := strings.ReplaceAll(queryPattern, "'", "''")
@@ -105,21 +106,22 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 				}
 				if len(nameConditions) > 0 {
 					nameConditions = append(nameConditions, fmt.Sprintf("%s ILIKE '%%%s%%'", concatenatedStr, escapedQueryPattern))
-					whereConditions = append(whereConditions, fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR ")))
+					venueSearchWhereClause = fmt.Sprintf("(%s)", strings.Join(nameConditions, " OR "))
+					whereConditions = append(whereConditions, venueSearchWhereClause)
 				}
 				escapedQueryLower := strings.ReplaceAll(queryLower, "'", "''")
 				escapedQueryPattern = strings.ReplaceAll(queryPattern, "'", "''")
 
 				rankCase = "CASE\n"
 				rankCase += fmt.Sprintf("  WHEN lower(l.name) = '%s' THEN 0\n", escapedQueryLower)
-				rankCase += fmt.Sprintf("  WHEN %s ILIKE '%%%s%%' THEN 1\n", concatenatedStr, escapedQueryPattern)
-				rankCase += fmt.Sprintf("  WHEN l.name ILIKE '%s%%' THEN 2\n", escapedQueryLower)
-
 				if len(keywords) > 0 {
 					firstKeyword := strings.TrimSpace(keywords[0])
 					if firstKeyword != "" {
 						escapedFirstKeyword := strings.ReplaceAll(firstKeyword, "'", "''")
-						rankCase += fmt.Sprintf("  WHEN l.name ILIKE '%%%s%%' OR l.alias ILIKE '%%%s%%' OR %s ILIKE '%%%s%%' THEN 3\n", escapedFirstKeyword, escapedFirstKeyword, concatenatedStr, escapedFirstKeyword)
+						rankCase += fmt.Sprintf("  WHEN l.name ILIKE '%%%s%%' THEN 1\n", escapedFirstKeyword)
+						rankCase += fmt.Sprintf("  WHEN %s ILIKE '%%%s%%' THEN 2\n", concatenatedStr, escapedQueryPattern)
+						rankCase += fmt.Sprintf("  WHEN l.name ILIKE '%s%%' THEN 3\n", escapedQueryLower)
+						rankCase += fmt.Sprintf("  WHEN l.alias ILIKE '%%%s%%' THEN 4\n", escapedFirstKeyword)
 					}
 				}
 
@@ -127,10 +129,10 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 					keyword := strings.TrimSpace(keywords[i])
 					if keyword != "" {
 						escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
-						rankCase += fmt.Sprintf("  WHEN l.name ILIKE '%%%s%%' OR l.alias ILIKE '%%%s%%' OR %s ILIKE '%%%s%%' THEN 4\n", escapedKeyword, escapedKeyword, concatenatedStr, escapedKeyword)
+						rankCase += fmt.Sprintf("  WHEN l.name ILIKE '%%%s%%' OR l.alias ILIKE '%%%s%%' OR %s ILIKE '%%%s%%' THEN 5\n", escapedKeyword, escapedKeyword, concatenatedStr, escapedKeyword)
 					}
 				}
-				rankCase += "  ELSE 4\n"
+				rankCase += "  ELSE 5\n"
 				rankCase += "END AS search_rank"
 
 				// Build window function ORDER BY clause for venue query
@@ -221,27 +223,57 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	var selectQuery string
 
 	if isVenueQuery && query.ParsedQuery != nil && *query.ParsedQuery != "" {
-		cteSelectFields := "l.id_uuid AS id,\n\t\t\tl.name,\n\t\t\tl.alias,\n\t\t\tl.location_type"
-		if rankCase != "" {
-			cteSelectFields += ",\n\t\t\t" + rankCase
+		// Build PREWHERE and main WHERE for optimized venue query
+		venueLocationType := "VENUE"
+		if query.ParsedLocationType != nil {
+			venueLocationType = string(*query.ParsedLocationType)
+		}
+		venuePreWhereClause := fmt.Sprintf("l.location_type = '%s' AND l.published = 1", venueLocationType)
+
+		venueMainWhereParts := []string{}
+		if venueSearchWhereClause != "" {
+			venueMainWhereParts = append(venueMainWhereParts, venueSearchWhereClause)
+		}
+		if query.ID10x != "" {
+			id10xParts := strings.Split(query.ID10x, ",")
+			escapedID10x := make([]string, 0, len(id10xParts))
+			for _, id10x := range id10xParts {
+				id10x = strings.TrimSpace(id10x)
+				if id10x != "" {
+					escapedID10x = append(escapedID10x, fmt.Sprintf("'%s'", strings.ReplaceAll(id10x, "'", "''")))
+				}
+			}
+			if len(escapedID10x) > 0 {
+				venueMainWhereParts = append(venueMainWhereParts, fmt.Sprintf("l.id_10x IN (%s)", strings.Join(escapedID10x, ",")))
+			}
+		}
+		venueMainWhereClause := strings.Join(venueMainWhereParts, " AND ")
+		if venueMainWhereClause == "" {
+			venueMainWhereClause = "1=1"
 		}
 
-		finalOrderBy := ""
-		cteSelectFieldsWithRowNum := cteSelectFields
-		cteOrderByClause := ""
-
-		if rankCase != "" {
-			finalOrderBy = " ORDER BY search_rank, rn"
-			cteSelectFieldsWithRowNum += ",\n\t\t\trow_number() OVER (\n\t\t\t\tORDER BY " + windowOrderBy + "\n\t\t\t) AS rn"
-			cteOrderByClause = "\n\t\t\tORDER BY search_rank, rn"
-		}
+		rankedFirstSelect := "l.id_uuid AS id,\n\t\t\tl.name,\n\t\t\tl.alias,\n\t\t\tl.location_type,\n\t\t\t" + rankCase
 
 		selectQuery = fmt.Sprintf(`
-		WITH location_ids AS (
+		WITH ranked_first AS (
 			SELECT 
 				%s
 			FROM testing_db.location_ch AS l
-			WHERE %s%s
+			PREWHERE %s
+			WHERE %s
+		),
+		location_ids AS (
+			SELECT 
+				id,
+				name,
+				alias,
+				location_type,
+				search_rank,
+				row_number() OVER (
+					ORDER BY search_rank, length(name) ASC, location_type DESC, name, id
+				) AS rn
+			FROM ranked_first
+			ORDER BY search_rank, rn
 			LIMIT %d
 			OFFSET %d
 		)
@@ -286,8 +318,9 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 		LEFT JOIN testing_db.location_ch AS state
 			ON location.state_uuid = state.id_uuid 
 			AND state.location_type = 'STATE' 
-			AND state.published = 1%s
-		`, cteSelectFieldsWithRowNum, whereClause, cteOrderByClause, take, offset, finalOrderBy)
+			AND state.published = 1
+		ORDER BY search_rank, rn
+		`, rankedFirstSelect, venuePreWhereClause, venueMainWhereClause, take, offset)
 	} else {
 		cteSelectFields := "id_uuid,\n\t\t\tname,\n\t\t\talias,\n\t\t\tlocation_type"
 		if rankCase != "" {
