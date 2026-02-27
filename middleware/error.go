@@ -121,13 +121,16 @@ func isDatabaseConnectionError(err error) bool {
 	return false
 }
 
-func formatDatabaseError(err error) (string, string) {
+// formatDatabaseError returns (userMessage, safeClientDetail).
+// Raw error with connection strings/IPs/credentials is never returned for the client;
+// log the original err server-side when needed.
+func formatDatabaseError(err error) (userMessage, safeClientDetail string) {
 	if isDatabaseConnectionError(err) {
 		return "Database server connection error: The database server is currently unavailable or unreachable. Please try again later.",
-			"DB_CONNECTION_ERROR: " + err.Error()
+			"DB_CONNECTION_ERROR"
 	}
 	return "Database query error: An error occurred while executing the database query.",
-		err.Error()
+		"DB_QUERY_ERROR"
 }
 
 type ErrorResponse struct {
@@ -152,9 +155,9 @@ func GlobalErrorHandler(c *fiber.Ctx, err error) error {
 			if isDatabaseConnectionError(errors.New(customErr.Details)) {
 				statusCode = fiber.StatusServiceUnavailable
 				errorType = string(ServiceUnavailableError)
-				userMessage, detailedError := formatDatabaseError(errors.New(customErr.Details))
+				userMessage, safeDetail := formatDatabaseError(errors.New(customErr.Details))
 				message = userMessage
-				details = detailedError
+				details = safeDetail
 				log.Printf("Database connection error detected in CustomError details: %v", customErr.Details)
 			}
 		}
@@ -182,9 +185,9 @@ func GlobalErrorHandler(c *fiber.Ctx, err error) error {
 		if isDatabaseConnectionError(err) {
 			statusCode = fiber.StatusServiceUnavailable
 			errorType = string(ServiceUnavailableError)
-			userMessage, detailedError := formatDatabaseError(err)
+			userMessage, safeDetail := formatDatabaseError(err)
 			message = userMessage
-			details = detailedError
+			details = safeDetail
 			log.Printf("Database connection error detected: %v", err)
 		}
 	}
