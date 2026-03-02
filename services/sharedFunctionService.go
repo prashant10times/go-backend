@@ -225,9 +225,21 @@ func (s *SharedFunctionService) commonUserCompanyILikeCondition(searchTerm strin
 	return fmt.Sprintf("(user_company ILIKE '%%%s%%')", escaped)
 }
 
-func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields models.FilterDataDto, useILikeLogic bool, useCommonColumnsOnly bool) string {
+func (s *SharedFunctionService) shouldCleanCompanyNamesForSpeakerUser(filterFields models.FilterDataDto) bool {
+	if len(filterFields.ParsedSearchByEntity) == 0 || len(filterFields.ParsedUserCompanyName) == 0 {
+		return false
+	}
+	entity := strings.ToLower(strings.TrimSpace(filterFields.ParsedSearchByEntity[0]))
+	return entity == "speaker" || entity == "user"
+}
+
+func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields models.FilterDataDto, useILikeLogic bool, useCommonColumnsOnly bool, companyNamesForQuery []string) string {
+	companyNames := filterFields.ParsedUserCompanyName
+	if companyNamesForQuery != nil {
+		companyNames = companyNamesForQuery
+	}
 	hasUserNameFilter := len(filterFields.ParsedUserName) > 0
-	hasUserCompanyNameFilter := len(filterFields.ParsedUserCompanyName) > 0
+	hasUserCompanyNameFilter := len(companyNames) > 0
 	if !hasUserNameFilter && !hasUserCompanyNameFilter {
 		return ""
 	}
@@ -255,12 +267,12 @@ func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields m
 	if hasUserNameFilter && hasUserCompanyNameFilter {
 		var allConditions []string
 		minCount := len(filterFields.ParsedUserName)
-		if len(filterFields.ParsedUserCompanyName) < minCount {
-			minCount = len(filterFields.ParsedUserCompanyName)
+		if len(companyNames) < minCount {
+			minCount = len(companyNames)
 		}
 		for i := 0; i < minCount; i++ {
 			nameCondition := nameConditionFunc(filterFields.ParsedUserName[i])
-			companyCondition := companyConditionFunc(filterFields.ParsedUserCompanyName[i])
+			companyCondition := companyConditionFunc(companyNames[i])
 			if nameCondition != "" && companyCondition != "" {
 				allConditions = append(allConditions, fmt.Sprintf("(%s AND %s)", nameCondition, companyCondition))
 			}
@@ -270,8 +282,8 @@ func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields m
 				allConditions = append(allConditions, c)
 			}
 		}
-		for i := minCount; i < len(filterFields.ParsedUserCompanyName); i++ {
-			if c := companyConditionFunc(filterFields.ParsedUserCompanyName[i]); c != "" {
+		for i := minCount; i < len(companyNames); i++ {
+			if c := companyConditionFunc(companyNames[i]); c != "" {
 				allConditions = append(allConditions, c)
 			}
 		}
@@ -293,7 +305,7 @@ func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields m
 		}
 		if hasUserCompanyNameFilter {
 			var companyConditions []string
-			for _, companyName := range filterFields.ParsedUserCompanyName {
+			for _, companyName := range companyNames {
 				if c := companyConditionFunc(companyName); c != "" {
 					companyConditions = append(companyConditions, c)
 				}
@@ -848,12 +860,17 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	if hasUserNameFilter || hasUserCompanyNameFilter {
 		hasVisitor, hasSpeaker, _, _, _ = getEntityTypes()
 
-		if finalCondition := s.buildUserNameUserCompanyCondition(filterFields, hasSpeaker, hasVisitor); finalCondition != "" {
+		var companyNamesForQuery []string
+		if s.shouldCleanCompanyNamesForSpeakerUser(filterFields) {
+			companyNamesForQuery = CleanCompanyNamesForSpeakerUser(filterFields.ParsedUserCompanyName)
+		}
+
+		if finalCondition := s.buildUserNameUserCompanyCondition(filterFields, hasSpeaker, hasVisitor, companyNamesForQuery); finalCondition != "" {
 			if hasVisitor && hasSpeaker {
 				result.NeedsVisitorJoin = true
 				result.NeedsSpeakerJoin = true
-				visitorCondition := s.buildUserNameUserCompanyCondition(filterFields, false, true)
-				speakerCondition := s.buildUserNameUserCompanyCondition(filterFields, true, false)
+				visitorCondition := s.buildUserNameUserCompanyCondition(filterFields, false, true, companyNamesForQuery)
+				speakerCondition := s.buildUserNameUserCompanyCondition(filterFields, true, false, companyNamesForQuery)
 				if len(result.UserIdWhereConditions) > 0 {
 					userIdPart := strings.Join(result.UserIdWhereConditions, " AND ")
 					result.VisitorWhereConditions = append(result.VisitorWhereConditions, userIdPart, visitorCondition)
@@ -866,7 +883,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			} else {
 				useILikeLogic := hasSpeaker
 				useCommonColumnsOnly := hasVisitor
-				finalCondition := s.buildUserNameUserCompanyCondition(filterFields, useILikeLogic, useCommonColumnsOnly)
+				finalCondition := s.buildUserNameUserCompanyCondition(filterFields, useILikeLogic, useCommonColumnsOnly, companyNamesForQuery)
 				if hasVisitor {
 					result.NeedsVisitorJoin = true
 					if len(result.VisitorWhereConditions) > 0 {
@@ -10745,13 +10762,22 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		}
 	}
 
+	var companyNamesForQuery []string
+	if s.shouldCleanCompanyNamesForSpeakerUser(filterFields) {
+		companyNamesForQuery = CleanCompanyNamesForSpeakerUser(filterFields.ParsedUserCompanyName)
+	}
+	companyNamesToUse := filterFields.ParsedUserCompanyName
+	if companyNamesForQuery != nil {
+		companyNamesToUse = companyNamesForQuery
+	}
+
 	useILikeForSpeaker := hasSpeaker && (len(filterFields.ParsedUserName) > 0 || len(filterFields.ParsedUserCompanyName) > 0)
 	if useILikeForSpeaker {
-		speakerUserNameCompanyCond := s.buildUserNameUserCompanyCondition(filterFields, true, false)
+		speakerUserNameCompanyCond := s.buildUserNameUserCompanyCondition(filterFields, true, false, companyNamesForQuery)
 		if speakerUserNameCompanyCond != "" && hasSpeaker {
 			speakerConditions = append(speakerConditions, speakerUserNameCompanyCond)
 		}
-		visitorUserNameCompanyCond := s.buildUserNameUserCompanyCondition(filterFields, false, true)
+		visitorUserNameCompanyCond := s.buildUserNameUserCompanyCondition(filterFields, false, true, companyNamesForQuery)
 		if visitorUserNameCompanyCond != "" && hasVisitor {
 			visitorConditions = append(visitorConditions, visitorUserNameCompanyCond)
 		}
@@ -10765,8 +10791,8 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 			}
 		}
 
-		if hasSpeaker && (isSpeakerEntity || isUserEntity) && len(filterFields.ParsedUserCompanyName) > 0 {
-			for _, companyName := range filterFields.ParsedUserCompanyName {
+		if hasSpeaker && (isSpeakerEntity || isUserEntity) && len(companyNamesToUse) > 0 {
+			for _, companyName := range companyNamesToUse {
 				speakerCondition := s.matchPhraseConverter("user_company", companyName)
 				if speakerCondition != "" {
 					speakerConditions = append(speakerConditions, speakerCondition)
@@ -10783,8 +10809,8 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 			}
 		}
 
-		if hasVisitor && (isUserEntity || isSpeakerEntity) && len(filterFields.ParsedUserCompanyName) > 0 {
-			for _, companyName := range filterFields.ParsedUserCompanyName {
+		if hasVisitor && (isUserEntity || isSpeakerEntity) && len(companyNamesToUse) > 0 {
+			for _, companyName := range companyNamesToUse {
 				visitorCondition := s.matchPhraseConverter("user_company", companyName)
 				if visitorCondition != "" {
 					visitorConditions = append(visitorConditions, visitorCondition)

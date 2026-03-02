@@ -488,3 +488,55 @@ func (s *SearchEventService) Encrypt(text string) (string, error) {
 
 	return hex.EncodeToString(ciphertext), nil
 }
+
+
+var stopKeywords = []string{
+	"I", "you", "he", "she", "it", "we", "they", "me", "him", "her", "us", "them", "mine", "yours", "his", "hers", "its", "ours", "theirs", "myself", "yourself", "himself", "herself", "itself", "ourselves", "yourselves", "themselves", "this", "that", "these", "those", "who", "whom", "whose", "which", "what", "anybody", "anyone", "anything", "somebody", "someone", "something", "nobody", "no one", "nothing", "everybody", "everyone", "everything", "some", "any", "none", "all", "both", "few", "many", "several", "others", "each", "either", "neither", "one", "ones", "anyones", "someones", "everyones", "anythings", "everythings", "somethings", "everybodies", "somebodies", "each other", "one another", "about", "above", "across", "after", "against", "along", "among", "around", "as", "at", "before", "behind", "below", "beneath", "beside", "between", "beyond", "but", "by", "concerning", "despite", "down", "during", "except", "for", "from", "in", "inside", "into", "like", "near", "of", "off", "on", "onto", "out", "outside", "over", "past", "regarding", "round", "since", "through", "throughout", "till", "to", "toward", "under", "underneath", "until", "unto", "up", "upon", "with", "within", "without", "or", "annual", "conclave", "congress", "congresso", "forum", "fongress", "course", "day", "demo", "digital", "edition", "free", "live", "online", "season", "series", "session", "the", "virtual", "webcast", "week", "a", "how", "can", "in-person", "inperson", "in person", "virtual only", "virtual-only",
+	"europe", "asia", "south america", "africa", "antarctica", "oceania", "north america", "mar", "march", "jan", "january", "feb", "february", "apr", "april", "may", "jun", "june", "july", "jul", "aug", "august", "september", "sept", "nov", "november", "dec", "december", "oct", "october", "hour", "hours", "trade", "and", "international", "gen", "new", "data", "your", "want", "work", "ion", "act", "year", "com", "an", "than", "then", "via", "&", "so", "my", "our", "their",
+	"another", "most", "other", "will", "should", "be", "besides", "nor", "yet", "not", "now", "too", "far", "if",
+	"global", "v", "vs", "is", "are", "co", "ltd", "inc", "corp", "llc", "gmbh", "sarl", "pty", "limited", "company", "corporation", "incorporated", "plc", "llp", "trust", "fund", "ventures", "holdings", "pvt", "private", "lld", "lmt",
+	"enterprises", "mfg", "tech", "sys", "grp", "adv", "sol", "assoc", "prod", "fin", "dept", "ops", "int",
+	"ag", "sas", "sp", "lp", "bv", "kft", "kk", "pte", "enterprise", "network", "intl", "system", "systems",
+}
+
+var stopKeywordSet map[string]struct{}
+
+func init() {
+	stopKeywordSet = make(map[string]struct{}, len(stopKeywords)*2)
+	for _, kw := range stopKeywords {
+		kw = strings.TrimSpace(strings.ToLower(kw))
+		if kw == "" {
+			continue
+		}
+
+		normalized := strings.ReplaceAll(kw, "-", " ")
+		for _, part := range strings.Fields(normalized) {
+			if part != "" {
+				stopKeywordSet[part] = struct{}{}
+			}
+		}
+	}
+}
+
+
+func CleanCompanyNamesForSpeakerUser(raw []string) []string {
+	if len(raw) == 0 {
+		return raw
+	}
+	out := make([]string, 0, len(raw))
+	for _, name := range raw {
+		words := strings.Fields(strings.TrimSpace(name))
+		var kept []string
+		for _, w := range words {
+			if _, isStop := stopKeywordSet[strings.ToLower(w)]; !isStop {
+				kept = append(kept, w)
+			}
+		}
+		cleaned := strings.Join(kept, " ")
+		if cleaned == "" {
+			cleaned = strings.TrimSpace(name)
+		}
+		out = append(out, cleaned)
+	}
+	return out
+}
