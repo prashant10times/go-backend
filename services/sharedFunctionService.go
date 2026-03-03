@@ -2090,29 +2090,87 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		unifiedUnionParts = append(unifiedUnionParts, speakerPart)
 	}
 
-	if needsExhibitorJoin && len(exhibitorWhereConditions) > 0 {
-		exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " OR ")
-		exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
+	const maxMultiSearchAnyArgs = 255
+	usedMultiSearchAnyForWebsite := false
+	if len(filterFields.ParsedCompanyWebsite) > 0 && (needsExhibitorJoin || needsSponsorJoin || len(organizerWhereConditions) > 0) {
+		websiteTerms := make([]string, 0, len(filterFields.ParsedCompanyWebsite))
+		for _, w := range filterFields.ParsedCompanyWebsite {
+			term := strings.TrimSpace(w)
+			if term == "" {
+				continue
+			}
+			escaped := strings.ReplaceAll(term, "'", "''")
+			websiteTerms = append(websiteTerms, "'"+escaped+"'")
+		}
+		if len(websiteTerms) > 0 {
+			var websiteChunks [][]string
+			for i := 0; i < len(websiteTerms); i += maxMultiSearchAnyArgs {
+				end := i + maxMultiSearchAnyArgs
+				if end > len(websiteTerms) {
+					end = len(websiteTerms)
+				}
+				websiteChunks = append(websiteChunks, websiteTerms[i:end])
+			}
+			buildMultiSearchPart := func(table, wherePrefix string, chunks [][]string) string {
+				if len(chunks) == 1 {
+					arrayLit := "[" + strings.Join(chunks[0], ", ") + "]"
+					return fmt.Sprintf(`SELECT DISTINCT event_id
+			FROM %s
+			WHERE %s
+      AND multiSearchAny(website_lc, %s)`, table, wherePrefix, arrayLit)
+				}
+				var innerParts []string
+				for _, ch := range chunks {
+					arrayLit := "[" + strings.Join(ch, ", ") + "]"
+					innerParts = append(innerParts, fmt.Sprintf(`SELECT DISTINCT event_id
+			FROM %s
+			WHERE %s
+      AND multiSearchAny(website_lc, %s)`, table, wherePrefix, arrayLit))
+				}
+				return "SELECT DISTINCT event_id FROM (\n\t\t\t\t" + strings.Join(innerParts, "\n\t\t\t\tUNION ALL\n\t\t\t\t") + "\n\t\t\t)"
+			}
+			if needsExhibitorJoin {
+				exhibitorPart := buildMultiSearchPart("testing_db.event_exhibitor_ch", "published IN (1, 2)", websiteChunks)
+				unifiedUnionParts = append(unifiedUnionParts, exhibitorPart)
+			}
+			if needsSponsorJoin {
+				sponsorPart := buildMultiSearchPart("testing_db.event_sponsors_ch", "published IN (1, 2)", websiteChunks)
+				unifiedUnionParts = append(unifiedUnionParts, sponsorPart)
+			}
+			if len(organizerWhereConditions) > 0 {
+				editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
+				organizerPart := buildMultiSearchPart("testing_db.allevent_ch", editionTypeCondition, websiteChunks)
+				unifiedUnionParts = append(unifiedUnionParts, organizerPart)
+			}
+			usedMultiSearchAnyForWebsite = true
+		}
+	}
+
+	if !usedMultiSearchAnyForWebsite {
+		if needsExhibitorJoin && len(exhibitorWhereConditions) > 0 {
+			exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " OR ")
+			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_exhibitor_ch
 			WHERE %s%s`, exhibitorWhereClause, publishedConditionCh)
-		unifiedUnionParts = append(unifiedUnionParts, exhibitorPart)
-	}
+			unifiedUnionParts = append(unifiedUnionParts, exhibitorPart)
+		}
 
-	if needsSponsorJoin && len(sponsorWhereConditions) > 0 {
-		sponsorWhereClause := strings.Join(sponsorWhereConditions, " OR ")
-		sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
+		if needsSponsorJoin && len(sponsorWhereConditions) > 0 {
+			sponsorWhereClause := strings.Join(sponsorWhereConditions, " OR ")
+			sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_sponsors_ch
 			WHERE %s%s`, sponsorWhereClause, publishedConditionCh)
-		unifiedUnionParts = append(unifiedUnionParts, sponsorPart)
-	}
+			unifiedUnionParts = append(unifiedUnionParts, sponsorPart)
+		}
 
-	if len(organizerWhereConditions) > 0 {
-		organizerWhereClause := strings.Join(organizerWhereConditions, " OR ")
-		editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
-		organizerPart := fmt.Sprintf(`SELECT DISTINCT event_id
+		if len(organizerWhereConditions) > 0 {
+			organizerWhereClause := strings.Join(organizerWhereConditions, " OR ")
+			editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
+			organizerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.allevent_ch
 			WHERE %s AND %s`, organizerWhereClause, editionTypeCondition)
-		unifiedUnionParts = append(unifiedUnionParts, organizerPart)
+			unifiedUnionParts = append(unifiedUnionParts, organizerPart)
+		}
 	}
 
 	if needsVisitorJoin && len(visitorWhereConditions) > 0 {
