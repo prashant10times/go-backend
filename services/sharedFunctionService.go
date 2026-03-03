@@ -638,6 +638,9 @@ type ClickHouseQueryResult struct {
 	WhereClause                   string
 	SearchClause                  string
 	DistanceOrderClause           string
+	HasWebsiteFilter              bool
+	WebsiteMatchPriorityExpr      string
+	WebsiteMatchOrderClause       string
 	NeedsVisitorJoin              bool
 	NeedsSpeakerJoin              bool
 	NeedsExhibitorJoin            bool
@@ -1395,6 +1398,17 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 	s.addInFilter("companyCity", "company_city_name", &whereConditions, filterFields)
 	s.addInFilter("companyDomain", "company_domain", &whereConditions, filterFields)
 	s.addInFilter("companyState", "company_state", &whereConditions, filterFields)
+
+	if filterFields.ParsedWebsiteFull != "" {
+		websiteCondition := s.buildWebsiteMatchCondition(filterFields)
+		if websiteCondition != "" {
+			whereConditions = append(whereConditions, websiteCondition)
+			result.HasWebsiteFilter = true
+			priorityExpr, orderClause := s.buildWebsiteMatchOrderClause(filterFields)
+			result.WebsiteMatchPriorityExpr = priorityExpr
+			result.WebsiteMatchOrderClause = orderClause
+		}
+	}
 
 	if len(filterFields.ParsedEventIds) > 0 {
 		whereConditions = append(whereConditions, fmt.Sprintf("ee.event_id IN (SELECT event_id FROM testing_db.allevent_ch WHERE event_uuid IN (%s))", strings.Join(filterFields.ParsedEventIds, ",")))
@@ -2921,6 +2935,86 @@ func (s *SharedFunctionService) addInFilter(filterKey string, dbField string, wh
 		}
 		*whereConditions = append(*whereConditions, fmt.Sprintf("ee.%s IN (%s)", dbField, strings.Join(escapedValues, ",")))
 	}
+}
+
+func (s *SharedFunctionService) buildWebsiteMatchCondition(filterFields models.FilterDataDto) string {
+	inputFull := strings.ReplaceAll(filterFields.ParsedWebsiteFull, "'", "''")
+	inputDomain := strings.ReplaceAll(filterFields.ParsedWebsiteDomain, "'", "''")
+	if inputFull == "" || inputDomain == "" {
+		return ""
+	}
+	inputFullLower := strings.ToLower(inputFull)
+
+	editionWebsiteNorm := "lower(replaceRegexpOne(replaceRegexpOne(ee.edition_website, '^https?://', ''), '^www\\.', ''))"
+
+	condExact := fmt.Sprintf("(ee.edition_website IS NOT NULL AND %s = '%s')", editionWebsiteNorm, inputFullLower)
+	condDomain := fmt.Sprintf("(ee.edition_domain IS NOT NULL AND (ee.edition_domain = '%s' OR ee.edition_domain LIKE concat('%%', '.', '%s')))", inputDomain, inputDomain)
+	condCompany := fmt.Sprintf("(ee.company_domain IS NOT NULL AND ee.company_domain = '%s')", inputDomain)
+
+	var conditions []string
+	if filterFields.ParsedEventWebsiteExactMatch != nil {
+		conditions = append(conditions, condExact)
+	}
+	if filterFields.ParsedEventDomainMatch != nil {
+		conditions = append(conditions, condDomain)
+	}
+	if filterFields.ParsedCompanyDomainMatch != nil {
+		conditions = append(conditions, condCompany)
+	}
+
+	if len(conditions) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("(%s)", strings.Join(conditions, " OR "))
+}
+
+func (s *SharedFunctionService) buildWebsiteMatchOrderClause(filterFields models.FilterDataDto) (priorityExpr string, orderClause string) {
+	inputFull := strings.ReplaceAll(filterFields.ParsedWebsiteFull, "'", "''")
+	inputDomain := strings.ReplaceAll(filterFields.ParsedWebsiteDomain, "'", "''")
+	if inputFull == "" || inputDomain == "" {
+		return "", ""
+	}
+	inputFullLower := strings.ToLower(inputFull)
+	editionWebsiteNorm := "lower(replaceRegexpOne(replaceRegexpOne(ee.edition_website, '^https?://', ''), '^www\\.', ''))"
+
+	condExact := fmt.Sprintf("(ee.edition_website IS NOT NULL AND %s = '%s')", editionWebsiteNorm, inputFullLower)
+	condDomain := fmt.Sprintf("(ee.edition_domain IS NOT NULL AND (ee.edition_domain = '%s' OR ee.edition_domain LIKE concat('%%', '.', '%s')))", inputDomain, inputDomain)
+	condCompany := fmt.Sprintf("(ee.company_domain IS NOT NULL AND ee.company_domain = '%s')", inputDomain)
+
+	type condPri struct {
+		cond string
+		pri  int
+	}
+	var pairs []condPri
+	if filterFields.ParsedEventWebsiteExactMatch != nil {
+		pairs = append(pairs, condPri{condExact, *filterFields.ParsedEventWebsiteExactMatch})
+	}
+	if filterFields.ParsedEventDomainMatch != nil {
+		pairs = append(pairs, condPri{condDomain, *filterFields.ParsedEventDomainMatch})
+	}
+	if filterFields.ParsedCompanyDomainMatch != nil {
+		pairs = append(pairs, condPri{condCompany, *filterFields.ParsedCompanyDomainMatch})
+	}
+
+	if len(pairs) == 0 {
+		return "", ""
+	}
+
+	// Sort by priority ascending so CASE evaluates higher-priority matches first
+	for i := 0; i < len(pairs)-1; i++ {
+		for j := i + 1; j < len(pairs); j++ {
+			if pairs[j].pri < pairs[i].pri {
+				pairs[i], pairs[j] = pairs[j], pairs[i]
+			}
+		}
+	}
+
+	var whens []string
+	for _, p := range pairs {
+		whens = append(whens, fmt.Sprintf("WHEN %s THEN %d", p.cond, p.pri))
+	}
+	caseExpr := fmt.Sprintf("CASE %s ELSE 100 END", strings.Join(whens, " "))
+	return caseExpr + " AS match_priority", "ORDER BY match_priority ASC"
 }
 
 func (s *SharedFunctionService) buildDefaultDateCondition(forecasted string, tableAlias string, today string) string {

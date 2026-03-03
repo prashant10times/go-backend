@@ -56,7 +56,6 @@ func (h *SearchEventsHandler) extractDotNotationFields(c *fiber.Ctx, request *mo
 		}
 		return ""
 	}
-
 	request.StartGte = getValue("start.gte")
 	request.EndLte = getValue("end.lte")
 	request.StartLte = getValue("start.lte")
