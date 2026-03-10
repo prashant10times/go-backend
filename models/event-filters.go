@@ -207,6 +207,15 @@ type WebsiteMatchFilter struct {
 	CompanyDomainMatch     *int   `json:"companyDomainMatch,omitempty"`
 }
 
+// CompanyCriteria holds optional company/entity filter criteria.
+type CompanyCriteria struct {
+	EntityType     []string `json:"entity_type,omitempty"`
+	CompanyRole    []string `json:"company_role,omitempty"`
+	Specialization []string `json:"specialization,omitempty"`
+	CompanyName    []string `json:"companyName,omitempty"`
+	CompanyWebsite []string `json:"companyWebsite,omitempty"`
+}
+
 type FilterDataDto struct {
 	Q              string `json:"q,omitempty" form:"q"`
 	EventIds       string `json:"eventIds,omitempty" form:"eventIds"`
@@ -333,7 +342,8 @@ type FilterDataDto struct {
 	CompanyName    string `json:"companyName,omitempty" form:"companyName"`
 	CompanyWebsite string `json:"companyWebsite,omitempty" form:"companyWebsite"`
 
-	WebsiteMatch string `json:"websiteMatch,omitempty" form:"websiteMatch"`
+	WebsiteMatch         string `json:"websiteMatch,omitempty" form:"websiteMatch"`
+	CompanyCriteria string `json:"companyCriteria,omitempty" form:"companyCriteria"`
 
 	View                string `json:"view,omitempty" form:"view"`
 	CalendarType        string `json:"calendar_type,omitempty" form:"calendar_type"`
@@ -411,8 +421,9 @@ type FilterDataDto struct {
 	ParsedSponsorState       []string            `json:"-"`
 	ParsedVisitorState       []string            `json:"-"`
 	ParsedJobComposite       []string            `json:"-"`
-	ParsedJobCompositeFilter *JobCompositeFilter `json:"-"`
-	ParsedEventRanking       []string            `json:"-"`
+	ParsedJobCompositeFilter     *JobCompositeFilter     `json:"-"`
+	ParsedCompanyCriteria *CompanyCriteria `json:"-"`
+	ParsedEventRanking          []string               `json:"-"`
 	ParsedAudienceZone       []string            `json:"-"`
 	ParsedAudienceSpread     []string            `json:"-"`
 	ParsedEventAudience      []int               `json:"-"`
@@ -2070,6 +2081,89 @@ func (f *FilterDataDto) Validate() error {
 						f.ParsedJobComposite = append(f.ParsedJobComposite, jobComposite)
 					}
 				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.CompanyCriteria, validation.When(f.CompanyCriteria != "", validation.By(func(value interface{}) error {
+			companyCriteriaStr := value.(string)
+			companyCriteriaStr = strings.TrimSpace(companyCriteriaStr)
+			if companyCriteriaStr == "" {
+				return nil
+			}
+			if !strings.HasPrefix(companyCriteriaStr, "{") {
+				return validation.NewError("invalid_company_criteria_filter", "companyCriteria must be a JSON object")
+			}
+			var criteria CompanyCriteria
+			if err := json.Unmarshal([]byte(companyCriteriaStr), &criteria); err != nil {
+				return validation.NewError("invalid_company_criteria_filter_json", "Invalid companyCriteria JSON format: "+err.Error())
+			}
+			// Normalize: trim slice elements and string fields, drop empty
+			var trimmed []string
+			for _, s := range criteria.EntityType {
+				if t := strings.TrimSpace(s); t != "" {
+					trimmed = append(trimmed, t)
+				}
+			}
+			criteria.EntityType = trimmed
+			trimmed = nil
+			for _, s := range criteria.CompanyRole {
+				if t := strings.TrimSpace(s); t != "" {
+					trimmed = append(trimmed, t)
+				}
+			}
+			criteria.CompanyRole = trimmed
+			trimmed = nil
+			for _, s := range criteria.Specialization {
+				if t := strings.TrimSpace(s); t != "" {
+					trimmed = append(trimmed, t)
+				}
+			}
+			criteria.Specialization = trimmed
+			trimmed = nil
+			for _, s := range criteria.CompanyName {
+				if t := strings.TrimSpace(s); t != "" {
+					trimmed = append(trimmed, t)
+				}
+			}
+			criteria.CompanyName = trimmed
+			trimmed = nil
+			for _, s := range criteria.CompanyWebsite {
+				if t := strings.TrimSpace(s); t != "" {
+					trimmed = append(trimmed, t)
+				}
+			}
+			criteria.CompanyWebsite = trimmed
+			// At least one criterion must be present
+			hasAny := len(criteria.EntityType) > 0 || len(criteria.CompanyRole) > 0 || len(criteria.Specialization) > 0 ||
+				len(criteria.CompanyName) > 0 || len(criteria.CompanyWebsite) > 0
+			if !hasAny {
+				return validation.NewError("empty_company_criteria_filter", "companyCriteria must contain at least one of: entity_type, company_role, specialization, companyName, companyWebsite")
+			}
+			f.ParsedCompanyCriteria = &criteria
+			// advanceSearchBy or searchByEntity=company required to scope the search.
+			// Check raw fields (not ParsedAdvancedSearchBy) since this validator runs before AdvanceSearchBy/SearchByEntity.
+			hasCompanyEntity := false
+			advanceStr := strings.ToLower(strings.TrimSpace(f.AdvanceSearchBy))
+			for _, entity := range strings.Split(advanceStr, ",") {
+				entity = strings.TrimSpace(entity)
+				if entity == "exhibitor" || entity == "sponsor" || entity == "organizer" {
+					hasCompanyEntity = true
+					break
+				}
+			}
+			if !hasCompanyEntity {
+				searchByEntityStr := strings.ToLower(strings.TrimSpace(f.SearchByEntity))
+				for _, entity := range strings.Split(searchByEntityStr, ",") {
+					if strings.TrimSpace(entity) == "company" {
+						hasCompanyEntity = true
+						break
+					}
+				}
+			}
+			if !hasCompanyEntity {
+				return validation.NewError("company_criteria_requires_advance_search_by",
+					"advanceSearchBy or searchByEntity is required when companyCriteria is provided. Provide advanceSearchBy with at least one of: exhibitor, sponsor, organizer. Alternatively, provide searchByEntity=company")
 			}
 			return nil
 		}))),
