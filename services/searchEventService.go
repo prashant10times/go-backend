@@ -2559,10 +2559,14 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 					}
 				}
 				if !alreadyAdded {
-					if sort.Field == "duration" {
+					switch sort.Field {
+					case "duration":
 						eventFilterSelectFields = append(eventFilterSelectFields, "(end_date - start_date) as duration")
 						eventFilterGroupByFields = append(eventFilterGroupByFields, "duration")
-					} else {
+					case "updated", "event_updated":
+						eventFilterSelectFields = append(eventFilterSelectFields, "ee.event_updated")
+						eventFilterGroupByFields = append(eventFilterGroupByFields, "ee.event_updated")
+					default:
 						eventFilterSelectFields = append(eventFilterSelectFields, sort.Field)
 						eventFilterGroupByFields = append(eventFilterGroupByFields, sort.Field)
 					}
@@ -2619,6 +2623,8 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	} else {
 		eventFilterOrderBy = strings.TrimPrefix(eventFilterOrderBy, "ORDER BY ")
 		eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "ee.", "")
+		// Map selects ee.event_updated (no alias), so ORDER BY must use event_updated not updated
+		eventFilterOrderBy = strings.ReplaceAll(eventFilterOrderBy, "updated", "event_updated")
 		eventFilterOrderBy = "ORDER BY " + eventFilterOrderBy
 	}
 
