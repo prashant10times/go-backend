@@ -102,7 +102,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 	rankLimit := 5
 
 	query := fmt.Sprintf(`
-		SELECT event_rank, country, category_name FROM event_ranking_ch WHERE event_id = '%s'
+		SELECT event_rank, country, category_name FROM event_ranking_ch WHERE event_id = '%s' ORDER BY event_rank ASC
 	`, eventId)
 
 	log.Printf("Event Rankings Query: %s", query)
@@ -218,9 +218,6 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 				}
 				prioritizedRanks.CategoryCountry = categoryCountry
 			} else if prioritizedRanks.CategoryCountry.Rank > eventRanking.Rank {
-				if prioritizedRanks.Category != nil {
-					continue
-				}
 				categoryCountry := &RankingCategoryCountryRank{
 					Category: &categoryName,
 					Country:  &country,
@@ -261,10 +258,13 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 				if erCategoryName == categoryName && erCountry != "" {
 					categoryNameCopy := erCategoryName
 					countryCopy := erCountry
-					prioritizedRanks.CategoryCountry = &RankingCategoryCountryRank{
-						Category: &categoryNameCopy,
-						Country:  &countryCopy,
-						Rank:     er.Rank,
+					newRank := er.Rank
+					if prioritizedRanks.CategoryCountry == nil || prioritizedRanks.CategoryCountry.Rank > newRank {
+						prioritizedRanks.CategoryCountry = &RankingCategoryCountryRank{
+							Category: &categoryNameCopy,
+							Country:  &countryCopy,
+							Rank:     newRank,
+						}
 					}
 					break
 				}
