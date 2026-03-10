@@ -603,6 +603,10 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 	if strings.TrimSpace(b.rankingScopeConditions) != "" {
 		whereClause += " AND " + b.rankingScopeConditions
 	}
+
+	if uuidConditions := b.buildRankingUuidConditions(); uuidConditions != "" {
+		whereClause += " AND " + uuidConditions
+	}
 	return `
 		UNION ALL
 
@@ -633,4 +637,26 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 		WHERE ` + whereClause + `
 		GROUP BY er.event_id
 		`
+}
+
+func (b *RelatedDataQueryBuilder) buildRankingUuidConditions() string {
+	countryUUIDs := b.filterFields.ParsedCountryIds
+	if len(countryUUIDs) == 0 && len(b.filterFields.ParsedLocationIds) > 0 {
+		countryUUIDs = b.filterFields.ParsedLocationIds
+	}
+	hasCountryFilter := len(countryUUIDs) > 0
+	hasCategoryFilter := len(b.filterFields.ParsedCategoryIds) > 0
+
+	if !hasCountryFilter && !hasCategoryFilter {
+		return ""
+	}
+
+	var conditions []string
+	if hasCountryFilter {
+		conditions = append(conditions, fmt.Sprintf("country_loc.id_uuid IN (%s)", strings.Join(countryUUIDs, ",")))
+	}
+	if hasCategoryFilter {
+		conditions = append(conditions, fmt.Sprintf("cat.category_uuid IN (%s)", strings.Join(b.filterFields.ParsedCategoryIds, ",")))
+	}
+	return strings.Join(conditions, " AND ")
 }
