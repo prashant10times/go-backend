@@ -21,7 +21,7 @@ func NewRankingService(clickhouseService *ClickHouseService) *RankingService {
 	}
 }
 
-const rankingNilUUID= "00000000-0000-0000-0000-000000000000"
+const rankingNilUUID = "00000000-0000-0000-0000-000000000000"
 
 type RankRange struct {
 	Min int
@@ -87,8 +87,27 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 	rankLimit := 5
 
 	query := fmt.Sprintf(`
-		SELECT event_rank, country, category_name FROM event_ranking_ch WHERE event_id = '%s' ORDER BY event_rank ASC
-	`, eventId)
+		SELECT
+			er.event_rank,
+			er.country,
+			er.category_name
+		FROM testing_db.event_ranking_ch AS er
+		INNER JOIN
+		(
+			SELECT DISTINCT category
+			FROM testing_db.event_category_ch
+			WHERE is_group = 1
+		) AS ec ON ec.category = er.category
+		WHERE er.event_id = '%s'
+		UNION ALL
+		SELECT
+			event_rank,
+			country,
+			category_name
+		FROM testing_db.event_ranking_ch
+		WHERE (event_id = '%s') AND (category IS NULL)
+		ORDER BY event_rank ASC
+	`, eventId, eventId)
 
 	log.Printf("Event Rankings Query: %s", query)
 	timeStart := time.Now()
@@ -570,7 +589,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 			}
 
 			var categoryUUIDVal interface{}
-			if categoryUUID != nil && *categoryUUID != rankingNilUUID{
+			if categoryUUID != nil && *categoryUUID != rankingNilUUID {
 				categoryUUIDVal = *categoryUUID
 			} else {
 				categoryUUIDVal = nil
@@ -610,7 +629,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 			var categoryUUID interface{}
 			if curr["category_uuid"] != nil {
 				s := curr["category_uuid"].(string)
-				if s != rankingNilUUID{
+				if s != rankingNilUUID {
 					categoryUUID = s
 				}
 			}
@@ -758,7 +777,7 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 						locationName := parts[1]
 						locationType := parts[2]
 						var idVal interface{} = locationUUID
-						if locationUUID == rankingNilUUID{
+						if locationUUID == rankingNilUUID {
 							idVal = nil
 						}
 						eventLocation[locationType] = map[string]interface{}{
