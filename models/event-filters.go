@@ -422,7 +422,7 @@ type FilterDataDto struct {
 	ParsedVisitorState       []string            `json:"-"`
 	ParsedJobComposite       []string            `json:"-"`
 	ParsedJobCompositeFilter     *JobCompositeFilter     `json:"-"`
-	ParsedCompanyCriteria *CompanyCriteria `json:"-"`
+	ParsedCompanyCriteria []CompanyCriteria `json:"-"`
 	ParsedEventRanking          []string               `json:"-"`
 	ParsedAudienceZone       []string            `json:"-"`
 	ParsedAudienceSpread     []string            `json:"-"`
@@ -2091,58 +2091,61 @@ func (f *FilterDataDto) Validate() error {
 			if companyCriteriaStr == "" {
 				return nil
 			}
-			if !strings.HasPrefix(companyCriteriaStr, "{") {
-				return validation.NewError("invalid_company_criteria_filter", "companyCriteria must be a JSON object")
+			if !strings.HasPrefix(companyCriteriaStr, "[") {
+				return validation.NewError("invalid_company_criteria_filter", "companyCriteria must be a JSON array of objects")
 			}
-			var criteria CompanyCriteria
-			if err := json.Unmarshal([]byte(companyCriteriaStr), &criteria); err != nil {
+			var criteriaList []CompanyCriteria
+			if err := json.Unmarshal([]byte(companyCriteriaStr), &criteriaList); err != nil {
 				return validation.NewError("invalid_company_criteria_filter_json", "Invalid companyCriteria JSON format: "+err.Error())
 			}
-			// Normalize: trim slice elements and string fields, drop empty
-			var trimmed []string
-			for _, s := range criteria.EntityType {
-				if t := strings.TrimSpace(s); t != "" {
-					trimmed = append(trimmed, t)
+			if len(criteriaList) == 0 {
+				return validation.NewError("empty_company_criteria_filter", "companyCriteria array must contain at least one object")
+			}
+			parsed := make([]CompanyCriteria, 0, len(criteriaList))
+			for i, criteria := range criteriaList {
+				var trimmed []string
+				for _, s := range criteria.EntityType {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
 				}
-			}
-			criteria.EntityType = trimmed
-			trimmed = nil
-			for _, s := range criteria.CompanyRole {
-				if t := strings.TrimSpace(s); t != "" {
-					trimmed = append(trimmed, t)
+				criteria.EntityType = trimmed
+				trimmed = nil
+				for _, s := range criteria.CompanyRole {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
 				}
-			}
-			criteria.CompanyRole = trimmed
-			trimmed = nil
-			for _, s := range criteria.Specialization {
-				if t := strings.TrimSpace(s); t != "" {
-					trimmed = append(trimmed, t)
+				criteria.CompanyRole = trimmed
+				trimmed = nil
+				for _, s := range criteria.Specialization {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
 				}
-			}
-			criteria.Specialization = trimmed
-			trimmed = nil
-			for _, s := range criteria.CompanyName {
-				if t := strings.TrimSpace(s); t != "" {
-					trimmed = append(trimmed, t)
+				criteria.Specialization = trimmed
+				trimmed = nil
+				for _, s := range criteria.CompanyName {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
 				}
-			}
-			criteria.CompanyName = trimmed
-			trimmed = nil
-			for _, s := range criteria.CompanyWebsite {
-				if t := strings.TrimSpace(s); t != "" {
-					trimmed = append(trimmed, t)
+				criteria.CompanyName = trimmed
+				trimmed = nil
+				for _, s := range criteria.CompanyWebsite {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
 				}
+				criteria.CompanyWebsite = trimmed
+				hasAny := len(criteria.EntityType) > 0 || len(criteria.CompanyRole) > 0 || len(criteria.Specialization) > 0 ||
+					len(criteria.CompanyName) > 0 || len(criteria.CompanyWebsite) > 0
+				if !hasAny {
+					return validation.NewError("empty_company_criteria_row", fmt.Sprintf("companyCriteria row %d must contain at least one of: entity_type, company_role, specialization, companyName, companyWebsite", i+1))
+				}
+				parsed = append(parsed, criteria)
 			}
-			criteria.CompanyWebsite = trimmed
-			// At least one criterion must be present
-			hasAny := len(criteria.EntityType) > 0 || len(criteria.CompanyRole) > 0 || len(criteria.Specialization) > 0 ||
-				len(criteria.CompanyName) > 0 || len(criteria.CompanyWebsite) > 0
-			if !hasAny {
-				return validation.NewError("empty_company_criteria_filter", "companyCriteria must contain at least one of: entity_type, company_role, specialization, companyName, companyWebsite")
-			}
-			f.ParsedCompanyCriteria = &criteria
-			// advanceSearchBy or searchByEntity=company required to scope the search.
-			// Check raw fields (not ParsedAdvancedSearchBy) since this validator runs before AdvanceSearchBy/SearchByEntity.
+			f.ParsedCompanyCriteria = parsed
 			hasCompanyEntity := false
 			advanceStr := strings.ToLower(strings.TrimSpace(f.AdvanceSearchBy))
 			for _, entity := range strings.Split(advanceStr, ",") {
