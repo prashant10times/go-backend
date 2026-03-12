@@ -9053,6 +9053,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 					queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
 					queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 					queryResult.NeedsUserIdUnionCTE,
+					queryResult.NeedsClassifiedCompanyIdsCTE,
+					queryResult.ClassifiedCompanyIdsCTESql,
 					queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
 					queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 					queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
