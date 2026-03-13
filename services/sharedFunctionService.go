@@ -6197,38 +6197,30 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		return response, nil
 	}
 
-	// economicImpactBreakdownCount - Sum economic impact breakdown by category
+	// economicImpactBreakdownCount - Sum economic impact breakdown by category using direct columns
 	if searchByEntity == "economicimpactbreakdowncount" {
 		query := fmt.Sprintf(`
 			WITH %spreFilterEvent AS (
 				SELECT
 					ee.event_id,
-					ee.event_economic_breakdown
+					ee.event_economic_Accomodation,
+					ee.event_economic_flights,
+					ee.event_economic_FoodAndBevarage,
+					ee.event_economic_Transportation,
+					ee.event_economic_Utilities
 				FROM testing_db.allevent_ch AS ee
 				WHERE %s
-			),
-			extracted AS (
-				SELECT
-					toJSONString(e.event_economic_breakdown) AS breakdown_json
-				FROM preFilterEvent e
-				%s
 			)
 			SELECT
-				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Accommodation'))) AS accommodation,
-				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Flights'))) AS inbound_transport,
-				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Food & Beverages'))) AS food,
-				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Transportation'))) AS local_transport,
-				sum(toFloat64OrZero(JSONExtractString(breakdown_json, 'Utilities'))) AS utilities
-			FROM extracted
+				sum(coalesce(e.event_economic_Accomodation, 0)) AS accommodation,
+				sum(coalesce(e.event_economic_flights, 0)) AS inbound_transport,
+				sum(coalesce(e.event_economic_FoodAndBevarage, 0)) AS food,
+				sum(coalesce(e.event_economic_Transportation, 0)) AS local_transport,
+				sum(coalesce(e.event_economic_Utilities, 0)) AS utilities
+			FROM preFilterEvent e
 		`,
 			cteClausesStr,
 			whereClause,
-			func() string {
-				if joinConditionsStr != "" {
-					return "WHERE " + strings.TrimPrefix(joinConditionsStr, "AND ")
-				}
-				return ""
-			}(),
 		)
 
 		log.Printf("Event count by event type group query (economicImpactBreakdownCount): %s", query)
