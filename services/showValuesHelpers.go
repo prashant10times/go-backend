@@ -627,13 +627,17 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 			'' AS slug_value,
 			'' AS eventGroupType_value
 		FROM testing_db.event_ranking_ch AS er
-		LEFT JOIN testing_db.location_ch AS country_loc 
-			ON er.country = country_loc.iso 
-			AND country_loc.location_type = 'COUNTRY'
-			AND country_loc.published = 1
-		LEFT JOIN testing_db.event_category_ch AS cat 
-			ON er.category_name = cat.name 
-			AND cat.is_group = 1
+		LEFT JOIN (
+			SELECT iso, id_uuid 
+			FROM testing_db.location_ch 
+			WHERE location_type = 'COUNTRY' AND published = 1
+		) AS country_loc ON er.country = country_loc.iso
+		LEFT JOIN (
+			SELECT category, any(category_uuid) AS category_uuid 
+			FROM testing_db.event_category_ch 
+			WHERE is_group = 1 
+			GROUP BY category
+		) AS cat ON er.category = cat.category
 		WHERE ` + whereClause + `
 		GROUP BY er.event_id
 		`
