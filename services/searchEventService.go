@@ -2749,12 +2749,20 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		delete(combinedEvent, "event_id")
 
 		if hasPast {
+			var editionId interface{}
+			if editionUUID, ok := event["edition_uuid"].(string); ok && editionUUID != "" {
+				editionId = editionUUID
+			} else {
+				editionId = nil
+			}
 			if fieldCtx.Processor.IsGroupedStructure() {
 				if basicGroup, ok := combinedEvent[string(ResponseGroupBasic)].(map[string]interface{}); ok && basicGroup != nil {
 					basicGroup["isCurrent"] = true
+					basicGroup["editionId"] = editionId
 				}
 			} else {
 				combinedEvent["isCurrent"] = true
+				combinedEvent["editionId"] = editionId
 			}
 		}
 
