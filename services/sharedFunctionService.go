@@ -567,14 +567,20 @@ func (s *SharedFunctionService) buildOrderByClause(sortClause []SortClause, need
 		}
 
 		var fieldName string
-
-		if sort.Field == "duration" {
+		switch sort.Field {
+		case "duration":
 			if needsAnyJoin {
 				fieldName = "(ee.end_date - ee.start_date)"
 			} else {
 				fieldName = "(end_date - start_date)"
 			}
-		} else {
+		case "event_name":
+			if needsAnyJoin {
+				fieldName = "lowerUTF8(ee.event_name)"
+			} else {
+				fieldName = "lowerUTF8(event_name)"
+			}
+		default:
 			fieldName = sort.Field
 			if needsAnyJoin {
 				fieldName = fmt.Sprintf("ee.%s", fieldName)
