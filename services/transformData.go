@@ -77,53 +77,60 @@ type PrioritizedRank struct {
 }
 
 func (s *TransformDataService) ParseSortFields(sort string, filterFields *models.FilterDataDto) ([]SortClause, error) {
+	var sortClauses []SortClause
+
 	if sort == "" && filterFields != nil && filterFields.Q == "" {
-		return []SortClause{
+		sortClauses = []SortClause{
 			{
 				Field: models.SortFieldMap["score"],
 				Order: "asc",
 			},
-		}, nil
-	}
-
-	sortFields := strings.Split(sort, ",")
-	var sortClauses []SortClause
-
-	for _, field := range sortFields {
-		field = strings.TrimSpace(field)
-		if field == "" {
-			continue
 		}
+	} else {
+		sortFields := strings.Split(sort, ",")
 
-		isDescending := strings.HasPrefix(field, "-")
-		cleanField := strings.TrimPrefix(field, "-")
-
-		if cleanField == "distance" {
-			if filterFields != nil {
-				if isDescending {
-					filterFields.EventDistanceOrder = "farthest"
-				} else {
-					filterFields.EventDistanceOrder = "closest"
-				}
+		for _, field := range sortFields {
+			field = strings.TrimSpace(field)
+			if field == "" {
+				continue
 			}
-			continue
-		}
 
-		dbField, exists := models.SortFieldMap[cleanField]
-		if !exists {
-			return nil, &InvalidSortFieldError{Field: cleanField}
-		}
+			isDescending := strings.HasPrefix(field, "-")
+			cleanField := strings.TrimPrefix(field, "-")
 
-		order := "asc"
-		if isDescending {
-			order = "desc"
-		}
+			if cleanField == "distance" {
+				if filterFields != nil {
+					if isDescending {
+						filterFields.EventDistanceOrder = "farthest"
+					} else {
+						filterFields.EventDistanceOrder = "closest"
+					}
+				}
+				continue
+			}
 
-		sortClauses = append(sortClauses, SortClause{
-			Field: dbField,
-			Order: order,
-		})
+			dbField, exists := models.SortFieldMap[cleanField]
+			if !exists {
+				return nil, &InvalidSortFieldError{Field: cleanField}
+			}
+
+			order := "asc"
+			if isDescending {
+				order = "desc"
+			}
+
+			sortClauses = append(sortClauses, SortClause{
+				Field: dbField,
+				Order: order,
+			})
+		}
 	}
+
+	// Add event_id as tiebreaker for deterministic ordering
+	sortClauses = append(sortClauses, SortClause{
+		Field: "event_id",
+		Order: "asc",
+	})
 
 	return sortClauses, nil
 }
