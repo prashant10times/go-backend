@@ -281,8 +281,6 @@ var PastEditionMinimalDBSelects = []string{
 	"ee.event_format as format",
 	"ee.futureExpexctedStartDate as futureExpectedStartDate", "ee.futureExpexctedEndDate as futureExpectedEndDate",
 	"ee.event_score as score",
-	"ee.event_editions as editions", "ee.eventBrandId as isBranded", "ee.eventSeriesId as isSeries",
-	"ee.maturity as maturity", "ee.event_frequency as frequency", "ee.predictionScore as futurePredictionScore",
 }
 
 var FieldsFromRelatedQueries = map[string]bool{
