@@ -1247,6 +1247,73 @@ func (s *SearchEventService) buildPastEditionBasicPayload(event map[string]inter
 	return basic
 }
 
+func (s *SearchEventService) buildPastEditionAdvancePayload(event map[string]interface{}) map[string]interface{} {
+	advance := make(map[string]interface{})
+
+	if v, ok := event["editions"].(uint32); ok {
+		advance["editions"] = v
+	} else if v, ok := event["editions"].(float64); ok {
+		advance["editions"] = uint32(v)
+	} else {
+		advance["editions"] = nil
+	}
+
+	if v, ok := event["isBranded"].(bool); ok {
+		advance["isBranded"] = v
+	} else {
+		advance["isBranded"] = nil
+	}
+
+	if v, ok := event["isSeries"].(bool); ok {
+		advance["isSeries"] = v
+	} else {
+		advance["isSeries"] = nil
+	}
+
+	advance["rehostDate"] = s.formatAdvanceDateField(event["futureExpectedStartDate"])
+
+	if v, ok := event["maturity"].(string); ok && strings.TrimSpace(v) != "" {
+		advance["maturity"] = v
+	} else {
+		advance["maturity"] = nil
+	}
+
+	if v, ok := event["frequency"].(string); ok && strings.TrimSpace(v) != "" {
+		advance["frequency"] = v
+	} else {
+		advance["frequency"] = nil
+	}
+
+	advance["futureExpectedStartDate"] = s.formatAdvanceDateField(event["futureExpectedStartDate"])
+
+	advance["futureExpectedEndDate"] = s.formatAdvanceDateField(event["futureExpectedEndDate"])
+
+	if v, ok := event["futurePredictionScore"].(int32); ok {
+		advance["futurePredictionScore"] = v
+	} else if v, ok := event["futurePredictionScore"].(float64); ok {
+		advance["futurePredictionScore"] = int32(v)
+	} else if v, ok := event["futurePredictionScore"].(uint32); ok {
+		advance["futurePredictionScore"] = int32(v)
+	} else {
+		advance["futurePredictionScore"] = nil
+	}
+
+	return advance
+}
+
+func (s *SearchEventService) formatAdvanceDateField(v interface{}) interface{} {
+	if v == nil {
+		return nil
+	}
+	if str, ok := v.(string); ok && str != "" {
+		return str
+	}
+	if t, ok := v.(time.Time); ok && !t.IsZero() {
+		return t.Format("2006-01-02")
+	}
+	return nil
+}
+
 func (s *SearchEventService) getListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto, showValues string) (*ListResult, error) {
 	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
 
@@ -2396,7 +2463,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					editionIDStr = fmt.Sprintf("%d", eid)
 				}
 				pastBasic := s.buildPastEditionBasicPayload(event, eventLocationsMap, editionIDStr)
-				combinedData = append(combinedData, map[string]interface{}{"basic": pastBasic})
+				pastAdvance := s.buildPastEditionAdvancePayload(event)
+				combinedData = append(combinedData, map[string]interface{}{"basic": pastBasic, "advance": pastAdvance})
 				continue
 			}
 		}
