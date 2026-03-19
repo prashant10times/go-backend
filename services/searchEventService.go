@@ -2388,28 +2388,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	results := make([]map[string]interface{}, len(eventData))
-	eventIdToNonBasic := make(map[string]map[string]interface{})
-	type pendingPastItem struct {
-		index       int
-		event       map[string]interface{}
-		editionIDStr string
-		eventID     string
-	}
-	var pendingPast []pendingPastItem
 
 	for i, event := range eventData {
-		if hasPast {
-			if editionType, _ := event["edition_type"].(string); editionType == "past_edition" {
-				editionIDStr := ""
-				if eid, ok := event["edition_id"].(uint32); ok {
-					editionIDStr = fmt.Sprintf("%d", eid)
-				}
-				eventID := fmt.Sprintf("%d", event["event_id"])
-				pendingPast = append(pendingPast, pendingPastItem{i, event, editionIDStr, eventID})
-				continue
-			}
-		}
-
 		eventID := fmt.Sprintf("%d", event["event_id"])
 
 		grouper := NewFieldGrouper(fieldCtx.Processor)
@@ -2758,6 +2738,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		delete(combinedEvent, "event_id")
 
 		if hasPast {
+			editionTypeStr, _ := event["edition_type"].(string)
+			isPast := editionTypeStr == "past_edition"
 			var editionId interface{}
 			if editionUUID, ok := event["edition_uuid"].(string); ok && editionUUID != "" {
 				editionId = editionUUID
@@ -2766,11 +2748,11 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			}
 			if fieldCtx.Processor.IsGroupedStructure() {
 				if basicGroup, ok := combinedEvent[string(ResponseGroupBasic)].(map[string]interface{}); ok && basicGroup != nil {
-					basicGroup["isCurrent"] = true
+					basicGroup["isCurrent"] = !isPast
 					basicGroup["editionId"] = editionId
 				}
 			} else {
-				combinedEvent["isCurrent"] = true
+				combinedEvent["isCurrent"] = !isPast
 				combinedEvent["editionId"] = editionId
 			}
 		}
@@ -2784,45 +2766,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 
 		results[i] = combinedEvent
-
-		if hasPast && fieldCtx.Processor.IsGroupedStructure() {
-			nonBasic := make(map[string]interface{})
-			if requestedGroupsSet[ResponseGroupAdvance] {
-				if v := combinedEvent[string(ResponseGroupAdvance)]; v != nil {
-					nonBasic[string(ResponseGroupAdvance)] = v
-				} else {
-					nonBasic[string(ResponseGroupAdvance)] = map[string]interface{}{}
-				}
-			}
-			if requestedGroupsSet[ResponseGroupAudience] {
-				if v := combinedEvent[string(ResponseGroupAudience)]; v != nil {
-					nonBasic[string(ResponseGroupAudience)] = v
-				} else {
-					nonBasic[string(ResponseGroupAudience)] = map[string]interface{}{}
-				}
-			}
-			if requestedGroupsSet[ResponseGroupInsights] {
-				if v := combinedEvent[string(ResponseGroupInsights)]; v != nil {
-					nonBasic[string(ResponseGroupInsights)] = v
-				} else {
-					nonBasic[string(ResponseGroupInsights)] = map[string]interface{}{}
-				}
-			}
-			if len(nonBasic) > 0 {
-				eventIdToNonBasic[eventID] = nonBasic
-			}
-		}
-	}
-
-	for _, p := range pendingPast {
-		pastBasic := s.buildPastEditionBasicPayload(p.event, eventLocationsMap, p.editionIDStr)
-		payload := map[string]interface{}{"basic": pastBasic}
-		if nonBasic, ok := eventIdToNonBasic[p.eventID]; ok {
-			for k, v := range nonBasic {
-				payload[k] = v
-			}
-		}
-		results[p.index] = payload
 	}
 
 	combinedData := results
