@@ -338,9 +338,7 @@ func (s *SharedFunctionService) matchWebsiteConverter(fieldName string, searchTe
 	return fmt.Sprintf("lower(%s) LIKE '%%%s%%'", fieldName, strings.ToLower(escapedValue))
 }
 
-// buildClassifiedCompanyIdsCTE builds the CTE SQL for company classification filtering.
-// Returns empty string if no classification filters (entity_type, company_role, specialization) are present.
-func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.CompanyCriteria) string {
+func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.CompanyCriteria, cteIndex int) string {
 	if criteria == nil {
 		return ""
 	}
@@ -350,6 +348,7 @@ func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.Co
 		return fmt.Sprintf("'%s'", strings.ToLower(v))
 	}
 	var orClauses []string
+	numDimensions := 0
 
 	if len(criteria.EntityType) > 0 {
 		vals := make([]string, 0, len(criteria.EntityType))
@@ -360,6 +359,7 @@ func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.Co
 		}
 		if len(vals) > 0 {
 			orClauses = append(orClauses, fmt.Sprintf("(classification_type = 'entity_type' AND lower(classification_name) IN (%s))", strings.Join(vals, ",")))
+			numDimensions++
 		}
 	}
 	if len(criteria.CompanyRole) > 0 {
@@ -371,6 +371,7 @@ func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.Co
 		}
 		if len(vals) > 0 {
 			orClauses = append(orClauses, fmt.Sprintf("(classification_type = 'company_role' AND lower(classification_name) IN (%s))", strings.Join(vals, ",")))
+			numDimensions++
 		}
 	}
 	if len(criteria.Specialization) > 0 {
@@ -382,17 +383,75 @@ func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.Co
 		}
 		if len(vals) > 0 {
 			orClauses = append(orClauses, fmt.Sprintf("(classification_type = 'specialization' AND lower(classification_name) IN (%s))", strings.Join(vals, ",")))
+			numDimensions++
 		}
 	}
 	if len(orClauses) == 0 {
 		return ""
 	}
+	cteName := fmt.Sprintf("classified_company_ids_%d", cteIndex)
 	whereClause := strings.Join(orClauses, " OR ")
-	return fmt.Sprintf(`classified_company_ids AS (
-		SELECT DISTINCT company_id
+	havingClause := fmt.Sprintf("count(DISTINCT classification_type) = %d", numDimensions)
+	return fmt.Sprintf(`%s AS (
+		SELECT company_id
 		FROM testing_db.company_classification_ch
 		WHERE %s
-	)`, whereClause)
+		GROUP BY company_id
+		HAVING %s
+	)`, cteName, whereClause, havingClause)
+}
+
+func (s *SharedFunctionService) buildMultiRowCompanyCriteriaCTEsAndCondition(criteriaList []models.CompanyCriteria, nameField string) (ctes []string, cteNamesByRow []string, condition string) {
+	if len(criteriaList) == 0 {
+		return nil, nil, ""
+	}
+	cteNamesByRow = make([]string, len(criteriaList))
+	cteIndex := 1
+	var rowConditions []string
+	for i := range criteriaList {
+		criteria := &criteriaList[i]
+		hasClassFilters := len(criteria.EntityType) > 0 || len(criteria.CompanyRole) > 0 || len(criteria.Specialization) > 0
+		cteName := ""
+		if hasClassFilters {
+			cte := s.buildClassifiedCompanyIdsCTE(criteria, cteIndex)
+			if cte != "" {
+				ctes = append(ctes, cte)
+				cteName = fmt.Sprintf("classified_company_ids_%d", cteIndex)
+				cteNamesByRow[i] = cteName
+				cteIndex++
+			}
+		}
+		rowCond := s.buildCompanyCriteriaCondition(criteria, cteName, nameField)
+		if rowCond != "" {
+			rowConditions = append(rowConditions, rowCond)
+		}
+	}
+	if len(rowConditions) == 0 {
+		return ctes, cteNamesByRow, ""
+	}
+	condition = fmt.Sprintf("(%s)", strings.Join(rowConditions, " OR "))
+	return ctes, cteNamesByRow, condition
+}
+
+func (s *SharedFunctionService) buildMultiRowCompanyCriteriaConditionOnly(criteriaList []models.CompanyCriteria, cteNamesByRow []string, nameField string) string {
+	if len(criteriaList) == 0 {
+		return ""
+	}
+	var rowConditions []string
+	for i := range criteriaList {
+		cteName := ""
+		if i < len(cteNamesByRow) {
+			cteName = cteNamesByRow[i]
+		}
+		rowCond := s.buildCompanyCriteriaCondition(&criteriaList[i], cteName, nameField)
+		if rowCond != "" {
+			rowConditions = append(rowConditions, rowCond)
+		}
+	}
+	if len(rowConditions) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("(%s)", strings.Join(rowConditions, " OR "))
 }
 
 func (s *SharedFunctionService) buildCompanyCriteriaCondition(criteria *models.CompanyCriteria, cteName string, nameField string) string {
@@ -794,8 +853,8 @@ type ClickHouseQueryResult struct {
 	NeedsStateIdsJoin               bool
 	NeedsCityIdsJoin                bool
 	NeedsVenueIdsJoin               bool
-	NeedsClassifiedCompanyIdsCTE    bool
-	ClassifiedCompanyIdsCTESql      string
+	NeedsClassifiedCompanyIdsCTE bool
+	ClassifiedCompanyIdsCTEs    []string 
 }
 
 func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterDataDto) (*ClickHouseQueryResult, error) {
@@ -825,8 +884,8 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		NeedsStateIdsJoin:             false,
 		NeedsCityIdsJoin:              false,
 		NeedsVenueIdsJoin:             false,
-		NeedsClassifiedCompanyIdsCTE:  false,
-		ClassifiedCompanyIdsCTESql:    "",
+		NeedsClassifiedCompanyIdsCTE: false,
+		ClassifiedCompanyIdsCTEs:     nil,
 	}
 
 	whereConditions := make([]string, 0)
@@ -1226,17 +1285,14 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
-	if filterFields.ParsedCompanyCriteria != nil && len(filterFields.ParsedAdvancedSearchBy) > 0 {
-		criteria := filterFields.ParsedCompanyCriteria
+	if len(filterFields.ParsedCompanyCriteria) > 0 && len(filterFields.ParsedAdvancedSearchBy) > 0 {
+		criteriaList := filterFields.ParsedCompanyCriteria
 		_, _, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
-		hasClassFilters := len(criteria.EntityType) > 0 || len(criteria.CompanyRole) > 0 || len(criteria.Specialization) > 0
-		cteName := ""
-		if hasClassFilters {
+		ctes, cteNamesByRow, condition := s.buildMultiRowCompanyCriteriaCTEsAndCondition(criteriaList, "company_id_name")
+		if len(ctes) > 0 {
 			result.NeedsClassifiedCompanyIdsCTE = true
-			result.ClassifiedCompanyIdsCTESql = s.buildClassifiedCompanyIdsCTE(criteria)
-			cteName = "classified_company_ids"
+			result.ClassifiedCompanyIdsCTEs = ctes
 		}
-		condition := s.buildCompanyCriteriaCondition(criteria, cteName, "company_id_name")
 		if condition != "" {
 			if hasExhibitor {
 				result.NeedsExhibitorJoin = true
@@ -1247,7 +1303,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				result.SponsorWhereConditions = append(result.SponsorWhereConditions, condition)
 			}
 			if hasOrganizer {
-				organizerCond := s.buildCompanyCriteriaCondition(criteria, cteName, "company_name")
+				organizerCond := s.buildMultiRowCompanyCriteriaConditionOnly(criteriaList, cteNamesByRow, "company_name")
 				if organizerCond != "" {
 					result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, organizerCond)
 				}
@@ -2080,7 +2136,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsVenueIdsJoin bool,
 	needsUserIdUnionCTE bool,
 	needsClassifiedCompanyIdsCTE bool,
-	classifiedCompanyIdsCTESql string,
+	classifiedCompanyIdsCTEs []string,
 	visitorWhereConditions []string,
 	speakerWhereConditions []string,
 	exhibitorWhereConditions []string,
@@ -2114,8 +2170,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 
 	previousCTE := ""
 
-	if needsClassifiedCompanyIdsCTE && classifiedCompanyIdsCTESql != "" {
-		result.CTEClauses = append(result.CTEClauses, classifiedCompanyIdsCTESql)
+	if needsClassifiedCompanyIdsCTE && len(classifiedCompanyIdsCTEs) > 0 {
+		result.CTEClauses = append(result.CTEClauses, classifiedCompanyIdsCTEs...)
 	}
 
 	addJoinClause := func(joinClause string) {
@@ -3690,7 +3746,7 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 		queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
 		queryResult.NeedsClassifiedCompanyIdsCTE,
-		queryResult.ClassifiedCompanyIdsCTESql,
+		queryResult.ClassifiedCompanyIdsCTEs,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -4059,8 +4115,8 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		cteClauses = append(cteClauses, venueIdsCTE)
 	}
 
-	if queryResult.NeedsClassifiedCompanyIdsCTE && queryResult.ClassifiedCompanyIdsCTESql != "" {
-		cteClauses = append(cteClauses, queryResult.ClassifiedCompanyIdsCTESql)
+	if queryResult.NeedsClassifiedCompanyIdsCTE && len(queryResult.ClassifiedCompanyIdsCTEs) > 0 {
+		cteClauses = append(cteClauses, queryResult.ClassifiedCompanyIdsCTEs...)
 	}
 
 	if queryResult.NeedsVisitorJoin {
@@ -8888,7 +8944,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 			queryResult.NeedsUserIdUnionCTE,
 			queryResult.NeedsClassifiedCompanyIdsCTE,
-			queryResult.ClassifiedCompanyIdsCTESql,
+			queryResult.ClassifiedCompanyIdsCTEs,
 			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
 			queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
@@ -9177,7 +9233,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 			queryResult.NeedsUserIdUnionCTE,
 			queryResult.NeedsClassifiedCompanyIdsCTE,
-			queryResult.ClassifiedCompanyIdsCTESql,
+			queryResult.ClassifiedCompanyIdsCTEs,
 			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
 			queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
@@ -9368,7 +9424,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 			queryResult.NeedsUserIdUnionCTE,
 			queryResult.NeedsClassifiedCompanyIdsCTE,
-			queryResult.ClassifiedCompanyIdsCTESql,
+			queryResult.ClassifiedCompanyIdsCTEs,
 			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
 			queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
@@ -9592,7 +9648,7 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
 		queryResult.NeedsClassifiedCompanyIdsCTE,
-		queryResult.ClassifiedCompanyIdsCTESql,
+		queryResult.ClassifiedCompanyIdsCTEs,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -9865,7 +9921,7 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 		queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
 		queryResult.NeedsClassifiedCompanyIdsCTE,
-		queryResult.ClassifiedCompanyIdsCTESql,
+		queryResult.ClassifiedCompanyIdsCTEs,
 		queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
 		queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 		queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
