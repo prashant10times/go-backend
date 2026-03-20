@@ -1162,6 +1162,36 @@ func extractAliasFromSelectField(field string) string {
 	return strings.TrimSpace(field)
 }
 
+func applyPastEditionMinimalBasicTrim(combinedEvent map[string]interface{}, isGrouped bool) {
+	if isGrouped {
+		basic, ok := combinedEvent[string(ResponseGroupBasic)].(map[string]interface{})
+		if !ok || basic == nil {
+			return
+		}
+		for k := range basic {
+			if !PastEditionMinimalBasicFieldNames[k] {
+				delete(basic, k)
+			}
+		}
+		return
+	}
+	for k := range combinedEvent {
+		if k == "trackerMatchInfo" {
+			continue
+		}
+		if PastEditionMinimalBasicFieldNames[k] {
+			continue
+		}
+		g := GetResponseGroupForField(k)
+		switch g {
+		case ResponseGroupAdvance, ResponseGroupInsights, ResponseGroupAudience, ResponseGroupSuggestion:
+			continue
+		default:
+			delete(combinedEvent, k)
+		}
+	}
+}
+
 func (s *SearchEventService) buildPastEditionBasicPayload(event map[string]interface{}, pastEventLocationsMap map[string]map[string]interface{}, editionIDStr string) map[string]interface{} {
 	basic := make(map[string]interface{})
 
@@ -1663,9 +1693,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				values[i] = new(uint8)
 			case "score", "duration", "futurePredictionScore":
 				values[i] = new(int32)
-			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown", "shortName", "format", "entryType", "website", "10timesEventPageUrl", "estimatedVisitorRangeTag", "maturity", "frequency", "organizer_id", "organizer_name", "organizer_website", "organizer_logoUrl", "organizer_address", "organizer_city", "organizer_state", "organizer_country", "audienceZone", "edition_type", "edition_uuid":
+			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown", "shortName", "format", "entryType", "website", "10timesEventPageUrl", "estimatedVisitorRangeTag", "maturity", "frequency", "organizer_id", "organizer_name", "organizer_website", "organizer_logoUrl", "organizer_address", "organizer_city", "organizer_state", "organizer_country", "audienceZone", "edition_type", "edition_uuid", "currentEditionId":
 				values[i] = new(string)
-			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate":
+			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate", "currentEditionStartDate", "currentEditionEndDate":
 				values[i] = new(time.Time)
 			case "isBranded", "isSeries":
 				values[i] = new(string)
@@ -1760,13 +1790,19 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				} else {
 					rowData[col] = nil
 				}
-			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate":
+			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate", "currentEditionStartDate", "currentEditionEndDate":
 				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
 					if dateVal.IsZero() {
 						rowData[col] = nil
 					} else {
 						rowData[col] = dateVal.Format("2006-01-02")
 					}
+				} else {
+					rowData[col] = nil
+				}
+			case "currentEditionId":
+				if s, ok := val.(*string); ok && s != nil && strings.TrimSpace(*s) != "" {
+					rowData[col] = *s
 				} else {
 					rowData[col] = nil
 				}
@@ -2737,9 +2773,10 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		combinedEvent = grouper.GetFinalEvent()
 		delete(combinedEvent, "event_id")
 
+		editionTypeStr, _ := event["edition_type"].(string)
+		isPastRow := editionTypeStr == "past_edition"
+
 		if hasPast {
-			editionTypeStr, _ := event["edition_type"].(string)
-			isPast := editionTypeStr == "past_edition"
 			var editionId interface{}
 			if editionUUID, ok := event["edition_uuid"].(string); ok && editionUUID != "" {
 				editionId = editionUUID
@@ -2748,12 +2785,30 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			}
 			if fieldCtx.Processor.IsGroupedStructure() {
 				if basicGroup, ok := combinedEvent[string(ResponseGroupBasic)].(map[string]interface{}); ok && basicGroup != nil {
-					basicGroup["isCurrent"] = !isPast
+					basicGroup["isCurrent"] = !isPastRow
 					basicGroup["editionId"] = editionId
 				}
 			} else {
-				combinedEvent["isCurrent"] = !isPast
+				combinedEvent["isCurrent"] = !isPastRow
 				combinedEvent["editionId"] = editionId
+			}
+			// currentEdition* only applies to past edition rows, omit for current/future in mixed listings.
+			if !isPastRow {
+				stripNonPastCurrentEditionMeta := func(m map[string]interface{}) {
+					delete(m, "currentEditionId")
+					delete(m, "currentEditionStartDate")
+					delete(m, "currentEditionEndDate")
+				}
+				if fieldCtx.Processor.IsGroupedStructure() {
+					if adv, ok := combinedEvent[string(ResponseGroupAdvance)].(map[string]interface{}); ok && adv != nil {
+						stripNonPastCurrentEditionMeta(adv)
+					}
+					if basicG, ok := combinedEvent[string(ResponseGroupBasic)].(map[string]interface{}); ok && basicG != nil {
+						stripNonPastCurrentEditionMeta(basicG)
+					}
+				} else {
+					stripNonPastCurrentEditionMeta(combinedEvent)
+				}
 			}
 		}
 
@@ -2763,6 +2818,10 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					combinedEvent["trackerMatchInfo"] = trackerInfo
 				}
 			}
+		}
+
+		if isPastRow {
+			applyPastEditionMinimalBasicTrim(combinedEvent, fieldCtx.Processor.IsGroupedStructure())
 		}
 
 		results[i] = combinedEvent

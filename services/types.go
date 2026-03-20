@@ -18,6 +18,19 @@ const (
 	ResponseGroupSuggestion ResponseGroups = "suggestion"
 )
 
+var PastEditionMinimalBasicFieldNames = map[string]bool{
+	"id":              true,
+	"editionId":       true,
+	"isCurrent":       true,
+	"startDateTime":   true,
+	"endDateTime":     true,
+	"status":          true,
+	"format":          true,
+	"organizer":       true,
+	"eventLocation":   true,
+	"score":           true,
+}
+
 var EventResponseKeys = []string{
 	"id",
 	"name",
@@ -84,6 +97,9 @@ var EventResponseKeys = []string{
 	"futureExpectedStartDate",
 	"futureExpectedEndDate",
 	"futurePredictionScore",
+	"currentEditionId",
+	"currentEditionStartDate",
+	"currentEditionEndDate",
 }
 
 var ResponseGroupsMap = map[ResponseGroups][]string{
@@ -143,6 +159,9 @@ var ResponseGroupsMap = map[ResponseGroups][]string{
 		"futureExpectedStartDate",
 		"futureExpectedEndDate",
 		"futurePredictionScore",
+		"currentEditionId",
+		"currentEditionStartDate",
+		"currentEditionEndDate",
 	},
 	ResponseGroupInsights: {
 		"estimatedExhibitors",
@@ -193,6 +212,9 @@ var APIFieldToDBSelect = map[string]string{
 	"publishStatus":              "ee.published as publishStatus",
 	"futureExpectedStartDate":    "ee.futureExpexctedStartDate as futureExpectedStartDate",
 	"futureExpectedEndDate":      "ee.futureExpexctedEndDate as futureExpectedEndDate",
+	"currentEditionId":           "ee.currentEditionId as currentEditionId",
+	"currentEditionStartDate":    "ee.currentEditionStartDate as currentEditionStartDate",
+	"currentEditionEndDate":      "ee.currentEditionEndDate as currentEditionEndDate",
 	"rehostDate":                 "ee.futureExpexctedStartDate as rehostDate",
 	"futurePredictionScore":      "ee.predictionScore as futurePredictionScore",
 	"estimatedVisitorRangeTag":   "ee.event_estimatedVisitors as estimatedVisitorRangeTag",
@@ -270,6 +292,9 @@ var DBColumnToAPIField = map[string]string{
 
 var PastEditionExtraDBSelects = []string{
 	"ee.edition_type", "ee.edition_uuid as edition_uuid", "ee.edition_id",
+	"ee.currentEditionId as currentEditionId",
+	"ee.currentEditionStartDate as currentEditionStartDate",
+	"ee.currentEditionEndDate as currentEditionEndDate",
 }
 
 var PastEditionMinimalDBSelects = []string{
@@ -280,6 +305,9 @@ var PastEditionMinimalDBSelects = []string{
 	"ee.companyLogoUrl as organizer_logoUrl", "ee.company_id as organizer_companyId",
 	"ee.event_format as format",
 	"ee.futureExpexctedStartDate as futureExpectedStartDate", "ee.futureExpexctedEndDate as futureExpectedEndDate",
+	"ee.currentEditionId as currentEditionId",
+	"ee.currentEditionStartDate as currentEditionStartDate",
+	"ee.currentEditionEndDate as currentEditionEndDate",
 	"ee.event_score as score",
 }
 
