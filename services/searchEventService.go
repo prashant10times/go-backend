@@ -1122,76 +1122,6 @@ func (s *SearchEventService) buildEventFilterFields(
 	}, conditionalFields
 }
 
-func (s *SearchEventService) ensureOrderByFieldsInPastEditionSelect(requiredFieldsStatic []string, sortClause []SortClause) []string {
-	aliasSet := make(map[string]bool)
-	for _, f := range requiredFieldsStatic {
-		alias := extractAliasFromSelectField(f)
-		if alias != "" {
-			aliasSet[alias] = true
-		}
-	}
-	out := append([]string(nil), requiredFieldsStatic...)
-	for _, sort := range sortClause {
-		if sort.Field == "" || sort.Field == "event_id" || sort.Field == "edition_id" {
-			continue
-		}
-		dbExpr := APIFieldToDBSelect[sort.Field]
-		if dbExpr == "" {
-			if apiField := DBColumnToAPIField[sort.Field]; apiField != "" {
-				dbExpr = APIFieldToDBSelect[apiField]
-			}
-		}
-		if dbExpr == "" || strings.Contains(dbExpr, ",") {
-			continue
-		}
-		alias := extractAliasFromSelectField(dbExpr)
-		if alias != "" && !aliasSet[alias] {
-			out = append(out, dbExpr)
-			aliasSet[alias] = true
-		}
-	}
-	return out
-}
-
-func extractAliasFromSelectField(field string) string {
-	field = strings.TrimSpace(field)
-	if idx := strings.LastIndex(field, " as "); idx != -1 {
-		return strings.TrimSpace(field[idx+4:])
-	}
-	field = strings.Replace(field, "ee.", "", 1)
-	return strings.TrimSpace(field)
-}
-
-func applyPastEditionMinimalBasicTrim(combinedEvent map[string]interface{}, isGrouped bool) {
-	if isGrouped {
-		basic, ok := combinedEvent[string(ResponseGroupBasic)].(map[string]interface{})
-		if !ok || basic == nil {
-			return
-		}
-		for k := range basic {
-			if !PastEditionMinimalBasicFieldNames[k] {
-				delete(basic, k)
-			}
-		}
-		return
-	}
-	for k := range combinedEvent {
-		if k == "trackerMatchInfo" {
-			continue
-		}
-		if PastEditionMinimalBasicFieldNames[k] {
-			continue
-		}
-		g := GetResponseGroupForField(k)
-		switch g {
-		case ResponseGroupAdvance, ResponseGroupInsights, ResponseGroupAudience, ResponseGroupSuggestion:
-			continue
-		default:
-			delete(combinedEvent, k)
-		}
-	}
-}
-
 func (s *SearchEventService) buildPastEditionBasicPayload(event map[string]interface{}, pastEventLocationsMap map[string]map[string]interface{}, editionIDStr string) map[string]interface{} {
 	basic := make(map[string]interface{})
 
@@ -1292,16 +1222,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	requestedGroupsSet := fieldCtx.Processor.GetRequestedGroups()
 
 	conditionalFields := s.buildConditionalFields(fieldCtx, sortClause, filterFields)
-	pastOnly := hasPast && models.IsPastOnly(filterFields.ParsedEditionType)
-	var requiredFieldsStatic []string
-	if pastOnly {
-		requiredFieldsStatic = append([]string(nil), PastEditionMinimalDBSelects...)
-	} else {
-		requiredFieldsStatic = append(fieldCtx.BaseFields, conditionalFields...)
-		if hasPast {
-			requiredFieldsStatic = append(requiredFieldsStatic, PastEditionExtraDBSelects...)
-		}
-	}
 
 	queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
 	if err != nil {
@@ -1324,38 +1244,34 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	eventFilterFields, conditionalFields := s.buildEventFilterFields(sortClause, queryResult, fieldCtx.DBToAliasMap, conditionalFields, eventFilterOrderBy)
-	if !pastOnly {
-		requiredFieldsStatic = append(fieldCtx.BaseFields, conditionalFields...)
-		if hasPast {
-			requiredFieldsStatic = append(requiredFieldsStatic, PastEditionExtraDBSelects...)
-		}
-	} else {
-		requiredFieldsStatic = s.ensureOrderByFieldsInPastEditionSelect(requiredFieldsStatic, sortClause)
-		if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
-			hasLat := false
-			hasLon := false
-			for _, f := range requiredFieldsStatic {
-				if strings.Contains(f, " as lat") {
-					hasLat = true
-				}
-				if strings.Contains(f, " as lon") {
-					hasLon = true
-				}
+	requiredFieldsStatic := append(fieldCtx.BaseFields, conditionalFields...)
+	if hasPast {
+		requiredFieldsStatic = append(requiredFieldsStatic, PastEditionExtraDBSelects...)
+	}
+	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
+		hasLat := false
+		hasLon := false
+		for _, f := range requiredFieldsStatic {
+			if strings.Contains(f, " as lat") {
+				hasLat = true
 			}
-			if strings.Contains(queryResult.DistanceOrderClause, "COALESCE") {
-				if !hasLat {
-					requiredFieldsStatic = append(requiredFieldsStatic, "COALESCE(ee.venue_lat, ee.edition_city_lat) as lat")
-				}
-				if !hasLon {
-					requiredFieldsStatic = append(requiredFieldsStatic, "COALESCE(ee.venue_long, ee.edition_city_long) as lon")
-				}
-			} else {
-				if !hasLat {
-					requiredFieldsStatic = append(requiredFieldsStatic, "ee.edition_city_lat as lat")
-				}
-				if !hasLon {
-					requiredFieldsStatic = append(requiredFieldsStatic, "ee.edition_city_long as lon")
-				}
+			if strings.Contains(f, " as lon") {
+				hasLon = true
+			}
+		}
+		if strings.Contains(queryResult.DistanceOrderClause, "COALESCE") {
+			if !hasLat {
+				requiredFieldsStatic = append(requiredFieldsStatic, "COALESCE(ee.venue_lat, ee.edition_city_lat) as lat")
+			}
+			if !hasLon {
+				requiredFieldsStatic = append(requiredFieldsStatic, "COALESCE(ee.venue_long, ee.edition_city_long) as lon")
+			}
+		} else {
+			if !hasLat {
+				requiredFieldsStatic = append(requiredFieldsStatic, "ee.edition_city_lat as lat")
+			}
+			if !hasLon {
+				requiredFieldsStatic = append(requiredFieldsStatic, "ee.edition_city_long as lon")
 			}
 		}
 	}
@@ -2818,10 +2734,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					combinedEvent["trackerMatchInfo"] = trackerInfo
 				}
 			}
-		}
-
-		if isPastRow {
-			applyPastEditionMinimalBasicTrim(combinedEvent, fieldCtx.Processor.IsGroupedStructure())
 		}
 
 		results[i] = combinedEvent

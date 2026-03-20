@@ -18,19 +18,6 @@ const (
 	ResponseGroupSuggestion ResponseGroups = "suggestion"
 )
 
-var PastEditionMinimalBasicFieldNames = map[string]bool{
-	"id":              true,
-	"editionId":       true,
-	"isCurrent":       true,
-	"startDateTime":   true,
-	"endDateTime":     true,
-	"status":          true,
-	"format":          true,
-	"organizer":       true,
-	"eventLocation":   true,
-	"score":           true,
-}
-
 var EventResponseKeys = []string{
 	"id",
 	"name",
@@ -295,20 +282,6 @@ var PastEditionExtraDBSelects = []string{
 	"ee.currentEditionId as currentEditionId",
 	"ee.currentEditionStartDate as currentEditionStartDate",
 	"ee.currentEditionEndDate as currentEditionEndDate",
-}
-
-var PastEditionMinimalDBSelects = []string{
-	"ee.event_id", "ee.edition_id", "ee.event_uuid as id",
-	"ee.edition_type", "ee.edition_uuid as edition_uuid",
-	"ee.start_date as start", "ee.end_date as end", "ee.status",
-	"ee.company_uuid as organizer_id", "ee.company_name as organizer_name", "ee.company_website as organizer_website",
-	"ee.companyLogoUrl as organizer_logoUrl", "ee.company_id as organizer_companyId",
-	"ee.event_format as format",
-	"ee.futureExpexctedStartDate as futureExpectedStartDate", "ee.futureExpexctedEndDate as futureExpectedEndDate",
-	"ee.currentEditionId as currentEditionId",
-	"ee.currentEditionStartDate as currentEditionStartDate",
-	"ee.currentEditionEndDate as currentEditionEndDate",
-	"ee.event_score as score",
 }
 
 var FieldsFromRelatedQueries = map[string]bool{
