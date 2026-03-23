@@ -33,6 +33,8 @@ func RateLimitMiddleware(config RateLimitConfig) fiber.Handler {
 		blocked, err := redis.GetClient().Get(context.Background(), blockKey).Result()
 		if err == nil && blocked != "" {
 			ttl, _ := redis.GetClient().TTL(context.Background(), blockKey).Result()
+			fmt.Printf("[RATE_LIMIT] blocked window | %s %s -> 429 retry_after=%.0fs\n",
+				c.Method(), requestLineForMetricsLog(c), ttl.Seconds())
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 				"error":       "Rate limit exceeded",
 				"retry_after": ttl.Seconds(),
@@ -55,6 +57,8 @@ func RateLimitMiddleware(config RateLimitConfig) fiber.Handler {
 		if count >= config.Limit {
 			redis.GetClient().Set(context.Background(), blockKey, "blocked", config.BlockDuration)
 
+			fmt.Printf("[RATE_LIMIT] limit exceeded (%d/%s) | %s %s -> 429\n",
+				config.Limit, config.Window, c.Method(), requestLineForMetricsLog(c))
 			return c.Status(fiber.StatusTooManyRequests).JSON(fiber.Map{
 				"error":       "Rate limit exceeded",
 				"retry_after": config.BlockDuration.Seconds(),

@@ -2,11 +2,30 @@ package middleware
 
 import (
 	"fmt"
+	"regexp"
 	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/prometheus/client_golang/prometheus"
 )
+
+var uuidPathSegment = regexp.MustCompile(`(?i)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
+
+func normalizeMetricPath(path string) string {
+	if path == "" {
+		return "unknown"
+	}
+	return uuidPathSegment.ReplaceAllString(path, ":id")
+}
+
+func requestLineForMetricsLog(c *fiber.Ctx) string {
+	path := c.Path()
+	qs := c.Request().URI().QueryString()
+	if len(qs) == 0 {
+		return path
+	}
+	return fmt.Sprintf("%s?%s", path, string(qs))
+}
 
 var (
 	httpRequestsTotal = prometheus.NewCounterVec(
@@ -80,19 +99,17 @@ func PrometheusMiddleware() fiber.Handler {
 			}
 		}
 
-		route := c.Route().Path
-		if route == "" {
-			route = "unknown"
-		}
+		metricPath := normalizeMetricPath(c.Path())
+		reqLine := requestLineForMetricsLog(c)
 
 		if err != nil {
-			fmt.Printf("[METRICS] %s %s -> %d in %.3fs (ERROR: %v)\n", c.Method(), route, finalStatusCode, duration, err)
+			fmt.Printf("[METRICS] %s %s -> %d in %.3fs (ERROR: %v)\n", c.Method(), reqLine, finalStatusCode, duration, err)
 		} else {
-			fmt.Printf("[METRICS] %s %s -> %d in %.3fs\n", c.Method(), route, finalStatusCode, duration)
+			fmt.Printf("[METRICS] %s %s -> %d in %.3fs\n", c.Method(), reqLine, finalStatusCode, duration)
 		}
 
-		httpRequestsTotal.WithLabelValues(c.Method(), route, fmt.Sprintf("%d", finalStatusCode)).Inc()
-		httpRequestDuration.WithLabelValues(c.Method(), route, fmt.Sprintf("%d", finalStatusCode)).Observe(duration)
+		httpRequestsTotal.WithLabelValues(c.Method(), metricPath, fmt.Sprintf("%d", finalStatusCode)).Inc()
+		httpRequestDuration.WithLabelValues(c.Method(), metricPath, fmt.Sprintf("%d", finalStatusCode)).Observe(duration)
 
 		return err
 	}
