@@ -2302,7 +2302,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " OR ")
 		exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_exhibitor_ch
-			WHERE %s%s`, exhibitorWhereClause, publishedConditionCh)
+			WHERE company_id IS NOT NULL AND (%s)%s`, exhibitorWhereClause, publishedConditionCh)
 		unifiedUnionParts = append(unifiedUnionParts, exhibitorPart)
 	}
 
@@ -2310,7 +2310,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		sponsorWhereClause := strings.Join(sponsorWhereConditions, " OR ")
 		sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_sponsors_ch
-			WHERE %s%s`, sponsorWhereClause, publishedConditionCh)
+			WHERE company_id IS NOT NULL AND (%s)%s`, sponsorWhereClause, publishedConditionCh)
 		unifiedUnionParts = append(unifiedUnionParts, sponsorPart)
 	}
 
@@ -2319,7 +2319,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
 		organizerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.allevent_ch
-			WHERE %s AND %s`, organizerWhereClause, editionTypeCondition)
+			WHERE company_id IS NOT NULL AND (%s) AND %s`, organizerWhereClause, editionTypeCondition)
 		unifiedUnionParts = append(unifiedUnionParts, organizerPart)
 	}
 
@@ -2467,14 +2467,14 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 		if hasExhibitor {
 			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_exhibitor_ch
-			WHERE %s%s`, companyIdCondition, publishedConditionCh)
+			WHERE company_id IS NOT NULL AND %s%s`, companyIdCondition, publishedConditionCh)
 			unionParts = append(unionParts, exhibitorPart)
 		}
 
 		if hasSponsor {
 			sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.event_sponsors_ch
-			WHERE %s%s`, companyIdCondition, publishedConditionCh)
+			WHERE company_id IS NOT NULL AND %s%s`, companyIdCondition, publishedConditionCh)
 			unionParts = append(unionParts, sponsorPart)
 		}
 
@@ -2482,7 +2482,7 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
 			organizerPart := fmt.Sprintf(`SELECT DISTINCT event_id
 			FROM testing_db.allevent_ch
-			WHERE %s AND %s`, companyIdCondition, editionTypeCondition)
+			WHERE company_id IS NOT NULL AND %s AND %s`, companyIdCondition, editionTypeCondition)
 			unionParts = append(unionParts, organizerPart)
 		}
 
@@ -2591,13 +2591,13 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			exhibitorWhereClause := strings.Join(exhibitorWhereConditions, " AND ")
 			exhibitorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_exhibitor_ch
-				WHERE %s%s AND published IN (1, 2)`, joinCondition, exhibitorWhereClause)
+				WHERE %scompany_id IS NOT NULL AND %s AND published IN (1, 2)`, joinCondition, exhibitorWhereClause)
 			unionParts = append(unionParts, exhibitorPart)
 
 			sponsorWhereClause := strings.Join(sponsorWhereConditions, " AND ")
 			sponsorPart := fmt.Sprintf(`SELECT DISTINCT event_id
 				FROM testing_db.event_sponsors_ch
-				WHERE %s%s AND published IN (1, 2)`, joinCondition, sponsorWhereClause)
+				WHERE %scompany_id IS NOT NULL AND %s AND published IN (1, 2)`, joinCondition, sponsorWhereClause)
 			unionParts = append(unionParts, sponsorPart)
 
 			unionCTE := fmt.Sprintf(`filtered_company_events_by_name AS (
@@ -2613,9 +2613,9 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if needsExhibitorJoin {
 				exhibitorWhereClause := ""
 				if len(exhibitorWhereConditions) > 0 {
-					exhibitorWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(exhibitorWhereConditions, " AND "))
+					exhibitorWhereClause = fmt.Sprintf("WHERE company_id IS NOT NULL AND %s AND published IN (1, 2)", strings.Join(exhibitorWhereConditions, " AND "))
 				} else {
-					exhibitorWhereClause = "WHERE published IN (1, 2)"
+					exhibitorWhereClause = "WHERE company_id IS NOT NULL AND published IN (1, 2)"
 				}
 
 				exhibitorQuery := fmt.Sprintf(`filtered_exhibitors AS (
@@ -2640,7 +2640,10 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 						WHERE %s IN (SELECT %s FROM %s)`, joinColumn, joinColumn, previousCTE)
 					if len(exhibitorWhereConditions) > 0 {
 						exhibitorQuery += fmt.Sprintf(`
-						AND %s`, strings.Join(exhibitorWhereConditions, " AND "))
+						AND company_id IS NOT NULL AND %s`, strings.Join(exhibitorWhereConditions, " AND "))
+					} else {
+						exhibitorQuery += `
+						AND company_id IS NOT NULL`
 					}
 					exhibitorQuery += `
 						AND published IN (1, 2)`
@@ -2657,9 +2660,9 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 			if needsSponsorJoin {
 				sponsorWhereClause := ""
 				if len(sponsorWhereConditions) > 0 {
-					sponsorWhereClause = fmt.Sprintf("WHERE %s AND published IN (1, 2)", strings.Join(sponsorWhereConditions, " AND "))
+					sponsorWhereClause = fmt.Sprintf("WHERE company_id IS NOT NULL AND %s AND published IN (1, 2)", strings.Join(sponsorWhereConditions, " AND "))
 				} else {
-					sponsorWhereClause = "WHERE published IN (1, 2)"
+					sponsorWhereClause = "WHERE company_id IS NOT NULL AND published IN (1, 2)"
 				}
 
 				sponsorQuery := fmt.Sprintf(`filtered_sponsors AS (
@@ -2684,7 +2687,10 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 						WHERE %s IN (SELECT %s FROM %s)`, joinColumn, joinColumn, previousCTE)
 					if len(sponsorWhereConditions) > 0 {
 						sponsorQuery += fmt.Sprintf(`
-						AND %s`, strings.Join(sponsorWhereConditions, " AND "))
+						AND company_id IS NOT NULL AND %s`, strings.Join(sponsorWhereConditions, " AND "))
+					} else {
+						sponsorQuery += `
+						AND company_id IS NOT NULL`
 					}
 					sponsorQuery += `
 						AND published IN (1, 2)`
@@ -4050,11 +4056,11 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 		previousCTE = "filtered_speakers"
 	}
 	if queryResult.NeedsExhibitorJoin {
-		cteClauses = append(cteClauses, fmt.Sprintf("filtered_exhibitors AS (SELECT event_id FROM testing_db.event_exhibitor_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.ExhibitorWhereConditions, " AND ")))
+		cteClauses = append(cteClauses, fmt.Sprintf("filtered_exhibitors AS (SELECT event_id FROM testing_db.event_exhibitor_ch WHERE company_id IS NOT NULL AND %s GROUP BY event_id)", strings.Join(queryResult.ExhibitorWhereConditions, " AND ")))
 		previousCTE = "filtered_exhibitors"
 	}
 	if queryResult.NeedsSponsorJoin {
-		cteClauses = append(cteClauses, fmt.Sprintf("filtered_sponsors AS (SELECT event_id FROM testing_db.event_sponsors_ch WHERE %s GROUP BY event_id)", strings.Join(queryResult.SponsorWhereConditions, " AND ")))
+		cteClauses = append(cteClauses, fmt.Sprintf("filtered_sponsors AS (SELECT event_id FROM testing_db.event_sponsors_ch WHERE company_id IS NOT NULL AND %s GROUP BY event_id)", strings.Join(queryResult.SponsorWhereConditions, " AND ")))
 		previousCTE = "filtered_sponsors"
 	}
 	if queryResult.NeedsCategoryJoin {
@@ -10863,7 +10869,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				SELECT DISTINCT event_id, %s
 				FROM testing_db.event_exhibitor_ch
 				WHERE event_id IN (%s)
-				AND %s
+				AND company_id IS NOT NULL AND %s
 			`, selectField, eventIdsStrJoined, exhibitorWhereClause)
 			log.Printf("Exhibitor query: %s", exhibitorQuery)
 
@@ -10942,7 +10948,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				SELECT DISTINCT event_id, %s
 				FROM testing_db.event_sponsors_ch
 				WHERE event_id IN (%s)
-				AND %s
+				AND company_id IS NOT NULL AND %s
 			`, selectField, eventIdsStrJoined, sponsorWhereClause)
 			log.Printf("Sponsor query: %s", sponsorQuery)
 			rows, err := s.clickhouseService.ExecuteQuery(ctx, sponsorQuery)
@@ -11020,7 +11026,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				SELECT DISTINCT event_id, %s
 				FROM testing_db.allevent_ch
 				WHERE event_id IN (%s)
-				AND %s
+				AND company_id IS NOT NULL AND %s
 			`, selectField, eventIdsStrJoined, organizerWhereClause)
 			log.Printf("Organizer query: %s", organizerQuery)
 			rows, err := s.clickhouseService.ExecuteQuery(ctx, organizerQuery)
@@ -11309,7 +11315,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					SELECT DISTINCT event_id
 					FROM testing_db.event_exhibitor_ch
 					WHERE event_id IN (%s)
-					AND %s
+					AND company_id IS NOT NULL AND %s
 					AND published IN (1, 2)
 				`, eventIdsStrJoined, companyIdCondition)
 				log.Printf("Exhibitor companyId query: %s", exhibitorQuery)
@@ -11347,7 +11353,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					SELECT DISTINCT event_id
 					FROM testing_db.event_sponsors_ch
 					WHERE event_id IN (%s)
-					AND %s
+					AND company_id IS NOT NULL AND %s
 					AND published IN (1, 2)
 				`, eventIdsStrJoined, companyIdCondition)
 				log.Printf("Sponsor companyId query: %s", sponsorQuery)
@@ -11386,7 +11392,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					SELECT DISTINCT event_id
 					FROM testing_db.allevent_ch
 					WHERE event_id IN (%s)
-					AND %s
+					AND company_id IS NOT NULL AND %s
 					AND %s
 				`, eventIdsStrJoined, companyIdCondition, editionTypeCondition)
 				log.Printf("Organizer companyId query: %s", organizerQuery)
