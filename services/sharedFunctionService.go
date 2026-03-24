@@ -7107,7 +7107,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
 	eventsCountSelect := "uniq(e.event_id) AS eventsCount"
 	if hasPast {
-		eventsCountSelect = `COUNT(e.event_id) AS eventsCount,
+		eventsCountSelect = `COUNT(DISTINCT e.edition_id) AS eventsCount,
             COUNT(DISTINCT e.event_id) AS uniqueEventCount,
             sum(CASE WHEN e.edition_type = 'past_edition' THEN e.impactScore ELSE 0 END) AS pastEditionSum,
             sum(CASE WHEN e.edition_type = 'current_edition' THEN e.impactScore ELSE 0 END) AS currentEditionSum,
@@ -7269,7 +7269,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "predictedAttendance":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS predictedAttendance",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.estimatedVisitorsMean ELSE 0 END) AS predictedAttendance",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS uniquePredictedAttendance",
 			)
 		} else {
@@ -7278,7 +7278,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "inboundEstimate":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.inboundAttendance ELSE 0 END) AS inboundEstimate",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.inboundAttendance ELSE 0 END) AS inboundEstimate",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.inboundAttendance ELSE 0 END) AS uniqueInboundEstimate",
 			)
 		} else {
@@ -7287,7 +7287,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "internationalEstimate":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.internationalAttendance ELSE 0 END) AS internationalEstimate",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.internationalAttendance ELSE 0 END) AS internationalEstimate",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.internationalAttendance ELSE 0 END) AS uniqueInternationalEstimate",
 			)
 		} else {
@@ -7296,7 +7296,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "impactScore":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.impactScore ELSE 0 END) AS impactScore",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.impactScore ELSE 0 END) AS impactScore",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.impactScore ELSE 0 END) AS uniqueImpactScore",
 			)
 		} else {
@@ -7305,7 +7305,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 	case "economicImpact":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.event_economic_value ELSE 0 END) AS economicImpact",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.event_economic_value ELSE 0 END) AS economicImpact",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.event_economic_value ELSE 0 END) AS uniqueEconomicImpact",
 			)
 		} else {
@@ -7316,7 +7316,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "hotel":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS hotel",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS hotel",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueHotel",
 				)
 			} else {
@@ -7325,7 +7325,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "food":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS food",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS food",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueFood",
 				)
 			} else {
@@ -7334,7 +7334,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "entertainment":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS entertainment",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS entertainment",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueEntertainment",
 				)
 			} else {
@@ -7343,7 +7343,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "airline":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS airline",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS airline",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueAirline",
 				)
 			} else {
@@ -7352,7 +7352,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "transport":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS transport",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS transport",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueTransport",
 				)
 			} else {
@@ -7361,7 +7361,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		case "utilitie":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS utilitie",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS utilitie",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueUtilitie",
 				)
 			} else {
@@ -7712,7 +7712,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "predictedAttendance":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS predictedAttendance",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.estimatedVisitorsMean ELSE 0 END) AS predictedAttendance",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS uniquePredictedAttendance",
 			)
 		} else {
@@ -7721,7 +7721,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "inboundEstimate":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.inboundAttendance ELSE 0 END) AS inboundEstimate",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.inboundAttendance ELSE 0 END) AS inboundEstimate",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.inboundAttendance ELSE 0 END) AS uniqueInboundEstimate",
 			)
 		} else {
@@ -7730,7 +7730,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "internationalEstimate":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.internationalAttendance ELSE 0 END) AS internationalEstimate",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.internationalAttendance ELSE 0 END) AS internationalEstimate",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.internationalAttendance ELSE 0 END) AS uniqueInternationalEstimate",
 			)
 		} else {
@@ -7739,7 +7739,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "impactScore":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.impactScore ELSE 0 END) AS impactScore",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.impactScore ELSE 0 END) AS impactScore",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.impactScore ELSE 0 END) AS uniqueImpactScore",
 			)
 		} else {
@@ -7748,7 +7748,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 	case "economicImpact":
 		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 			selectors = append(selectors,
-				"sum(CASE WHEN e.edition_type = 'past_edition' THEN e.event_economic_value ELSE 0 END) AS economicImpact",
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.event_economic_value ELSE 0 END) AS economicImpact",
 				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.event_economic_value ELSE 0 END) AS uniqueEconomicImpact",
 			)
 		} else {
@@ -7760,7 +7760,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		case "hotel":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS hotel",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS hotel",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueHotel",
 				)
 			} else {
@@ -7769,7 +7769,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		case "food":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS food",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS food",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueFood",
 				)
 			} else {
@@ -7778,7 +7778,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		case "entertainment":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS entertainment",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS entertainment",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueEntertainment",
 				)
 			} else {
@@ -7787,7 +7787,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		case "airline":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS airline",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS airline",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueAirline",
 				)
 			} else {
@@ -7796,7 +7796,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		case "transport":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS transport",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS transport",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueTransport",
 				)
 			} else {
@@ -7805,7 +7805,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		case "utilitie":
 			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
 				selectors = append(selectors,
-					"sum(CASE WHEN e.edition_type = 'past_edition' THEN ed.value ELSE 0 END) AS utilitie",
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS utilitie",
 					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueUtilitie",
 				)
 			} else {
