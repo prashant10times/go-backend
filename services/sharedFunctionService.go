@@ -10315,7 +10315,7 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 					}
 				}
 			} else {
-				// Flat byEventType (same shape as transformTrendsCountByDay): slug -> total, unique{slug} for past/current edition breakdown
+				// Flat byEventType for week/month/year (matches transformTrendsCountByDay): slug -> total, unique{slug} when past/current edition metrics exist
 				if dateData[groupKey] == nil {
 					dateData[groupKey] = columnValue
 				} else {
