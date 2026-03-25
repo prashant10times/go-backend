@@ -459,91 +459,114 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 		whereClause := strings.Join(whereConditions, " OR ")
 
 		closestRankingsQuery = fmt.Sprintf(`
-			WITH
-				ranking_cte AS (
-					SELECT
-						event_rank,
-						country,
-						category,
-						category_name,
-						event_id
-					FROM testing_db.event_ranking_ch
-				),
-			events_cte AS (
+			WITH ranking_cte AS (
 				SELECT
-					event_id,
-					event_uuid,
-					event_name,
-					start_date,
-					end_date,
-					edition_country,
-					edition_city_name,
-					edition_city_state,
-					venue_name,
-					venue_id,
-					venue_city,
-					edition_city_state_id
-				FROM testing_db.allevent_ch
-				WHERE edition_type = 'current_edition'
+					event_rank,
+					country,
+					category,
+					category_name,
+					event_id
+				FROM testing_db.event_ranking_ch AS er
+				WHERE (%s)
 			)
-		SELECT
-			er.event_rank,
-			er.category,
-			er.category_name,
-			er.country,
-			ec.event_id,
-			ec.event_uuid,
-			ec.event_name,
-			ec.start_date,
-			ec.end_date,
-			cat.category_uuid,
-			arrayStringConcat(
-			arrayCompact([
-				if(trim(toString(any(ec.edition_country))) != '', 
-					concat(
-						toString(any(country_loc.id_uuid)), 
-						'<val-split>', 
-						any(ec.edition_country), 
-						'<val-split>', 
-						'COUNTRY'
-					), ''),
-				if(trim(toString(any(ec.edition_city_name))) != '', 
-					concat(
-						toString(any(city_loc.id_uuid)), 
-						'<val-split>', 
-						any(ec.edition_city_name), 
-						'<val-split>', 
-						'CITY'
-					), ''),
-				if(trim(toString(any(ec.edition_city_state))) != '', 
-					concat(
-						toString(any(state_loc.id_uuid)), 
-						'<val-split>', 
-						any(ec.edition_city_state), 
-						'<val-split>', 
-						'STATE'
-					), ''),
-				if(trim(toString(any(ec.venue_name))) != '', 
-					concat(
-						toString(any(venue_loc.id_uuid)), 
-						'<val-split>', 
-						any(ec.venue_name), 
-						'<val-split>', 
-						'VENUE'
-					), '')
-			]),
-			'<line-split>'
-		) AS location
-		FROM
-			ranking_cte AS er
-			INNER JOIN events_cte AS ec ON er.event_id = ec.event_id
-			LEFT JOIN testing_db.event_category_ch AS cat ON ec.event_id = cat.event AND er.category_name = cat.name AND cat.is_group = 1
-			LEFT JOIN testing_db.location_ch AS country_loc ON ec.edition_country = country_loc.iso AND country_loc.location_type = 'COUNTRY'
-			LEFT JOIN testing_db.location_ch AS city_loc ON ec.venue_city = city_loc.id AND city_loc.location_type = 'CITY'
-			LEFT JOIN testing_db.location_ch AS state_loc ON ec.edition_city_state_id = state_loc.id AND state_loc.location_type = 'STATE'
-			LEFT JOIN testing_db.location_ch AS venue_loc ON ec.venue_id = venue_loc.id AND venue_loc.location_type = 'VENUE'
-			WHERE %s
-			GROUP BY
+			SELECT
+				er.event_rank,
+				er.category,
+				er.category_name,
+				er.country,
+				ec.event_id,
+				ec.event_uuid,
+				ec.event_name,
+				ec.start_date,
+				ec.end_date,
+				dictGetOrDefault(
+					'testing_db.dict_event_category',
+					'category_uuid',
+					(ec.event_id, toString(er.category_name)),
+					toUUID('00000000-0000-0000-0000-000000000000')
+				) AS category_uuid,
+				arrayStringConcat(
+					arrayCompact([
+						if(trimBoth(toString(ec.edition_country)) != '',
+							concat(
+								toString(dictGetOrDefault('testing_db.dict_location', 'id_uuid', (toUInt32(0), 'COUNTRY'), toUUID('00000000-0000-0000-0000-000000000000'))),
+								'<val-split>', toString(ec.edition_country), '<val-split>', 'COUNTRY'
+							),
+							''
+						),
+						if(trimBoth(toString(ec.edition_city_name)) != '',
+							concat(
+								toString(dictGetOrDefault(
+									'testing_db.dict_location',
+									'id_uuid',
+									(toUInt32(ifNull(ec.venue_city, 0)), 'CITY'),
+									toUUID('00000000-0000-0000-0000-000000000000')
+								)),
+								'<val-split>', toString(ec.edition_city_name), '<val-split>', 'CITY'
+							),
+							''
+						),
+						if(trimBoth(toString(ec.edition_city_state)) != '',
+							concat(
+								toString(dictGetOrDefault(
+									'testing_db.dict_location',
+									'id_uuid',
+									(toUInt32(ifNull(ec.edition_city_state_id, 0)), 'STATE'),
+									toUUID('00000000-0000-0000-0000-000000000000')
+								)),
+								'<val-split>', toString(ec.edition_city_state), '<val-split>', 'STATE'
+							),
+							''
+						),
+						if(trimBoth(toString(ec.venue_name)) != '',
+							concat(
+								toString(dictGetOrDefault(
+									'testing_db.dict_location',
+									'id_uuid',
+									(toUInt32(ifNull(ec.venue_id, 0)), 'VENUE'),
+									toUUID('00000000-0000-0000-0000-000000000000')
+								)),
+								'<val-split>', toString(ec.venue_name), '<val-split>', 'VENUE'
+							),
+							''
+						)
+					]),
+					'<line-split>'
+				) AS location
+			FROM ranking_cte AS er
+			INNER JOIN testing_db.allevent_ch AS ec
+				ON er.event_id = ec.event_id AND ec.edition_type = 'current_edition'
+		`, whereClause)
+
+		/*.
+				WITH
+					ranking_cte AS (
+						SELECT
+							event_rank,
+							country,
+							category,
+							category_name,
+							event_id
+						FROM testing_db.event_ranking_ch
+					),
+				events_cte AS (
+					SELECT
+						event_id,
+						event_uuid,
+						event_name,
+						start_date,
+						end_date,
+						edition_country,
+						edition_city_name,
+						edition_city_state,
+						venue_name,
+						venue_id,
+						venue_city,
+						edition_city_state_id
+					FROM testing_db.allevent_ch
+					WHERE event_id in (select event_id from ranking_cte) and edition_type = 'current_edition'
+				)
+			SELECT
 				er.event_rank,
 				er.category,
 				er.category_name,
@@ -554,11 +577,68 @@ func (s *RankingService) GetEventRankings(eventId string) (any, error) {
 				ec.start_date,
 				ec.end_date,
 				cat.category_uuid,
-				country_loc.id_uuid,
-				city_loc.id_uuid,
-				state_loc.id_uuid,
-				venue_loc.id_uuid
-		`, whereClause)
+				arrayStringConcat(
+				arrayCompact([
+					if(trim(toString(any(ec.edition_country))) != '',
+						concat(
+							toString(any(country_loc.id_uuid)),
+							'<val-split>',
+							any(ec.edition_country),
+							'<val-split>',
+							'COUNTRY'
+						), ''),
+					if(trim(toString(any(ec.edition_city_name))) != '',
+						concat(
+							toString(any(city_loc.id_uuid)),
+							'<val-split>',
+							any(ec.edition_city_name),
+							'<val-split>',
+							'CITY'
+						), ''),
+					if(trim(toString(any(ec.edition_city_state))) != '',
+						concat(
+							toString(any(state_loc.id_uuid)),
+							'<val-split>',
+							any(ec.edition_city_state),
+							'<val-split>',
+							'STATE'
+						), ''),
+					if(trim(toString(any(ec.venue_name))) != '',
+						concat(
+							toString(any(venue_loc.id_uuid)),
+							'<val-split>',
+							any(ec.venue_name),
+							'<val-split>',
+							'VENUE'
+						), '')
+				]),
+				'<line-split>'
+			) AS location
+			FROM
+				ranking_cte AS er
+				INNER JOIN events_cte AS ec ON er.event_id = ec.event_id
+				LEFT JOIN testing_db.event_category_ch AS cat ON ec.event_id = cat.event AND er.category_name = cat.name AND cat.is_group = 1
+				LEFT JOIN testing_db.location_ch AS country_loc ON ec.edition_country = country_loc.iso AND country_loc.location_type = 'COUNTRY'
+				LEFT JOIN testing_db.location_ch AS city_loc ON ec.venue_city = city_loc.id AND city_loc.location_type = 'CITY'
+				LEFT JOIN testing_db.location_ch AS state_loc ON ec.edition_city_state_id = state_loc.id AND state_loc.location_type = 'STATE'
+				LEFT JOIN testing_db.location_ch AS venue_loc ON ec.venue_id = venue_loc.id AND venue_loc.location_type = 'VENUE'
+				WHERE %s
+				GROUP BY
+					er.event_rank,
+					er.category,
+					er.category_name,
+					er.country,
+					ec.event_id,
+					ec.event_uuid,
+					ec.event_name,
+					ec.start_date,
+					ec.end_date,
+					cat.category_uuid,
+					country_loc.id_uuid,
+					city_loc.id_uuid,
+					state_loc.id_uuid,
+					venue_loc.id_uuid
+		*/
 
 		log.Printf("Closest Rankings Query: %s", closestRankingsQuery)
 		timeStart := time.Now()
