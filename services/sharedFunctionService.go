@@ -9625,7 +9625,15 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 
 		if result[dateStr] == nil {
 			if len(secondaryGroupBy) > 0 {
-				result[dateStr] = make(map[string]interface{})
+				if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
+					result[dateStr] = map[string]interface{}{
+						"business":   0,
+						"social":     0,
+						"unattended": 0,
+					}
+				} else {
+					result[dateStr] = make(map[string]interface{})
+				}
 			} else {
 				result[dateStr] = map[string]interface{}{
 					"total": columnValue,
@@ -9643,24 +9651,19 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 			}
 
 			if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
-				// Initialize with business, social, unattended if not exists
-				if dateData[columnStr] == nil {
-					dateData[columnStr] = map[string]interface{}{
-						"business":   0,
-						"social":     0,
-						"unattended": 0,
-					}
-				}
-				columnData := dateData[columnStr].(map[string]interface{})
 				if groupKey == "business" || groupKey == "social" || groupKey == "unattended" {
-					columnData[groupKey] = columnValue
+					dateData[groupKey] = columnValue
 				}
 			} else {
-				if dateData[columnStr] == nil {
-					dateData[columnStr] = make(map[string]interface{})
+				if existing, ok := dateData[groupKey]; ok {
+					if ev, ok := existing.(float64); ok {
+						if nv, ok := columnValue.(float64); ok {
+							dateData[groupKey] = ev + nv
+							continue
+						}
+					}
 				}
-				columnData := dateData[columnStr].(map[string]interface{})
-				columnData[groupKey] = columnValue
+				dateData[groupKey] = columnValue
 			}
 		}
 	}
