@@ -10272,7 +10272,21 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 
 		if result[dateStr] == nil {
 			if len(secondaryGroupBy) > 0 {
-				result[dateStr] = make(map[string]interface{})
+				if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
+					initMap := map[string]interface{}{
+						"business":   0,
+						"social":     0,
+						"unattended": 0,
+					}
+					if uniqueIdx != -1 {
+						initMap[makeUniqueKey("business")] = 0
+						initMap[makeUniqueKey("social")] = 0
+						initMap[makeUniqueKey("unattended")] = 0
+					}
+					result[dateStr] = initMap
+				} else {
+					result[dateStr] = make(map[string]interface{})
+				}
 			} else {
 				obj := map[string]interface{}{
 					"total": columnValue,
@@ -10294,36 +10308,32 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 			}
 
 			if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
-				// Initialize with business, social, unattended (and their unique keys only when past+current edition is requested)
-				if dateData[columnStr] == nil {
-					initMap := map[string]interface{}{
-						"business":    0,
-						"social":      0,
-						"unattended":  0,
-					}
-					if uniqueIdx != -1 {
-						initMap[makeUniqueKey("business")] = 0
-						initMap[makeUniqueKey("social")] = 0
-						initMap[makeUniqueKey("unattended")] = 0
-					}
-					dateData[columnStr] = initMap
-				}
-				columnData := dateData[columnStr].(map[string]interface{})
 				if groupKey == "business" || groupKey == "social" || groupKey == "unattended" {
-					columnData[groupKey] = columnValue
-					// assign unique per group
+					dateData[groupKey] = columnValue
 					if uniqueIdx != -1 {
-						columnData[makeUniqueKey(groupKey)] = uniqueValue
+						dateData[makeUniqueKey(groupKey)] = uniqueValue
 					}
 				}
 			} else {
-				if dateData[columnStr] == nil {
-					dateData[columnStr] = make(map[string]interface{})
+				// Flat byEventType (same shape as transformTrendsCountByDay): slug -> total, unique{slug} for past/current edition breakdown
+				if dateData[groupKey] == nil {
+					dateData[groupKey] = columnValue
+				} else {
+					if existingVal, ok := dateData[groupKey].(float64); ok {
+						if newVal, ok := columnValue.(float64); ok {
+							dateData[groupKey] = existingVal + newVal
+						}
+					}
 				}
-				columnData := dateData[columnStr].(map[string]interface{})
-				columnData[groupKey] = columnValue
 				if uniqueIdx != -1 {
-					columnData[makeUniqueKey(groupKey)] = uniqueValue
+					uniqueKey := makeUniqueKey(groupKey)
+					if dateData[uniqueKey] == nil {
+						dateData[uniqueKey] = uniqueValue
+					} else {
+						if existingUv, ok := dateData[uniqueKey].(float64); ok {
+							dateData[uniqueKey] = existingUv + uniqueValue
+						}
+					}
 				}
 			}
 		}
