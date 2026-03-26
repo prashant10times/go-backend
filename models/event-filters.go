@@ -218,7 +218,8 @@ type FilterDataDto struct {
 	State          string `json:"state,omitempty" form:"state"`
 	Country        string `json:"country,omitempty" form:"country"`
 	Products       string `json:"products,omitempty" form:"products"`
-	LocationIds    string `json:"locationIds,omitempty" form:"locationIds"`
+	LocationIds        string `json:"locationIds,omitempty" form:"locationIds"`
+	LocationRegions    string `json:"locationRegions,omitempty" form:"locationRegions"`
 
 	CountryIds  string `json:"countryIds,omitempty" form:"countryIds"`
 	StateIds    string `json:"stateIds,omitempty" form:"stateIds"`
@@ -446,6 +447,7 @@ type FilterDataDto struct {
 	ParsedColumns             []string      `json:"-"`
 	ParsedGroupByTrends       *string       `json:"-"`
 	ParsedRegions             []string      `json:"-"`
+	ParsedLocationRegions     []string      `json:"-"`
 	ParsedCountryIds          []string      `json:"-"`
 	ParsedStateIds            []string      `json:"-"`
 	ParsedCityIds             []string      `json:"-"`
@@ -1265,6 +1267,19 @@ func (f *FilterDataDto) Validate() error {
 				region = strings.TrimSpace(region)
 				if region != "" {
 					f.ParsedRegions = append(f.ParsedRegions, region)
+				}
+			}
+			return nil
+		}))),
+
+		validation.Field(&f.LocationRegions, validation.When(f.LocationRegions != "", validation.By(func(value interface{}) error {
+			regionsStr := value.(string)
+			parts := strings.Split(regionsStr, ",")
+			f.ParsedLocationRegions = make([]string, 0, len(parts))
+			for _, region := range parts {
+				region = strings.TrimSpace(region)
+				if region != "" {
+					f.ParsedLocationRegions = append(f.ParsedLocationRegions, region)
 				}
 			}
 			return nil
