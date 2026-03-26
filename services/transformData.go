@@ -1241,9 +1241,9 @@ func (s *TransformDataService) DetermineRankingType(filterFields models.FilterDa
 	hasCategories := len(filterFields.ParsedCategory) > 0
 	hasCountries := len(filterFields.ParsedCountry) > 0
 	hasLocationIds := len(filterFields.ParsedLocationIds) > 0
-	hasLocationRegions := len(filterFields.ParsedLocationRegions) > 0
+	hasRegions := len(filterFields.ParsedRegions) > 0
 
-	hasLocation := hasCountries || hasLocationIds || hasLocationRegions
+	hasLocation := hasCountries || hasLocationIds || hasRegions
 
 	if hasCategories && hasLocation {
 		return RankingTypeCategoryCountry
@@ -1273,7 +1273,7 @@ func (s *TransformDataService) PrioritizeRankings(filterFields models.FilterData
 
 	case RankingTypeCountry:
 		if ranks.Country != nil {
-			matchesFilter := len(filterFields.ParsedCountry) == 0 && len(filterFields.ParsedLocationIds) == 0 && len(filterFields.ParsedLocationRegions) == 0
+			matchesFilter := len(filterFields.ParsedCountry) == 0 && len(filterFields.ParsedLocationIds) == 0
 			if !matchesFilter {
 				for _, countryID := range filterFields.ParsedCountry {
 					if ranks.Country.ID == countryID {
@@ -1282,9 +1282,6 @@ func (s *TransformDataService) PrioritizeRankings(filterFields models.FilterData
 					}
 				}
 				if !matchesFilter && len(filterFields.ParsedLocationIds) > 0 {
-					matchesFilter = true
-				}
-				if !matchesFilter && len(filterFields.ParsedLocationRegions) > 0 {
 					matchesFilter = true
 				}
 			}

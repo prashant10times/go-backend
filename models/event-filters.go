@@ -218,14 +218,12 @@ type FilterDataDto struct {
 	State          string `json:"state,omitempty" form:"state"`
 	Country        string `json:"country,omitempty" form:"country"`
 	Products       string `json:"products,omitempty" form:"products"`
-	LocationIds        string `json:"locationIds,omitempty" form:"locationIds"`
-	LocationRegions    string `json:"locationRegions,omitempty" form:"locationRegions"`
-
-	CountryIds  string `json:"countryIds,omitempty" form:"countryIds"`
-	StateIds    string `json:"stateIds,omitempty" form:"stateIds"`
-	CityIds     string `json:"cityIds,omitempty" form:"cityIds"`
-	VenueIds    string `json:"venueIds,omitempty" form:"venueIds"`
-	CategoryIds string `json:"categoryIds,omitempty" form:"categoryIds"`
+	LocationIds    string `json:"locationIds,omitempty" form:"locationIds"`
+	CountryIds     string `json:"countryIds,omitempty" form:"countryIds"`
+	StateIds       string `json:"stateIds,omitempty" form:"stateIds"`
+	CityIds        string `json:"cityIds,omitempty" form:"cityIds"`
+	VenueIds       string `json:"venueIds,omitempty" form:"venueIds"`
+	CategoryIds    string `json:"categoryIds,omitempty" form:"categoryIds"`
 
 	SearchByEntity  string `json:"searchByEntity,omitempty" form:"searchByEntity"`
 	AdvanceSearchBy string `json:"advanceSearchBy,omitempty" form:"advanceSearchBy"` // Can be set directly or from searchByEntity mapping
@@ -440,37 +438,36 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedAvgRating           []RatingRange `json:"-"`
-	ParsedTrackerDates        []string      `json:"-"`
-	ParsedCalendarType        *string       `json:"-"`
-	ParsedDateView            *string       `json:"-"`
-	ParsedColumns             []string      `json:"-"`
-	ParsedGroupByTrends       *string       `json:"-"`
-	ParsedRegions             []string      `json:"-"`
-	ParsedLocationRegions     []string      `json:"-"`
-	ParsedCountryIds          []string      `json:"-"`
-	ParsedStateIds            []string      `json:"-"`
-	ParsedCityIds             []string      `json:"-"`
-	ParsedVenueIds            []string      `json:"-"`
-	ParsedCategoryIds         []string      `json:"-"`
-	ParsedUserId              []string      `json:"-"`
-	ParsedUserName            []string      `json:"-"`
-	ParsedUserCompanyName     []string      `json:"-"`
-	ParsedCompanyId           []string      `json:"-"`
-	ParsedCompanyName         []string      `json:"-"`
-	ParsedFrequency           []string      `json:"-"`
-	ParsedCompanyWebsite      []string      `json:"-"`
-	ParsedSearchByEntity      []string      `json:"-"`
-	ParsedAdvancedSearchBy    []string      `json:"-"` // Parsed version of AdvanceSearchBy
-	ParsedPrice               []string      `json:"-"`
-	ParsedEstimatedVisitors   []string      `json:"-"`
-	ParsedEstimatedExhibitors []string      `json:"-"`
-	ParsedMaturity            []string      `json:"-"`
-	ParsedWebsiteFull           string `json:"-"`
-	ParsedWebsiteDomain         string `json:"-"`
-	ParsedEventWebsiteExactMatch *int  `json:"-"`
-	ParsedEventDomainMatch      *int  `json:"-"`
-	ParsedCompanyDomainMatch    *int  `json:"-"`
+	ParsedAvgRating              []RatingRange `json:"-"`
+	ParsedTrackerDates           []string      `json:"-"`
+	ParsedCalendarType           *string       `json:"-"`
+	ParsedDateView               *string       `json:"-"`
+	ParsedColumns                []string      `json:"-"`
+	ParsedGroupByTrends          *string       `json:"-"`
+	ParsedRegions                []string      `json:"-"`
+	ParsedCountryIds             []string      `json:"-"`
+	ParsedStateIds               []string      `json:"-"`
+	ParsedCityIds                []string      `json:"-"`
+	ParsedVenueIds               []string      `json:"-"`
+	ParsedCategoryIds            []string      `json:"-"`
+	ParsedUserId                 []string      `json:"-"`
+	ParsedUserName               []string      `json:"-"`
+	ParsedUserCompanyName        []string      `json:"-"`
+	ParsedCompanyId              []string      `json:"-"`
+	ParsedCompanyName            []string      `json:"-"`
+	ParsedFrequency              []string      `json:"-"`
+	ParsedCompanyWebsite         []string      `json:"-"`
+	ParsedSearchByEntity         []string      `json:"-"`
+	ParsedAdvancedSearchBy       []string      `json:"-"` // Parsed version of AdvanceSearchBy
+	ParsedPrice                  []string      `json:"-"`
+	ParsedEstimatedVisitors      []string      `json:"-"`
+	ParsedEstimatedExhibitors    []string      `json:"-"`
+	ParsedMaturity               []string      `json:"-"`
+	ParsedWebsiteFull            string        `json:"-"`
+	ParsedWebsiteDomain          string        `json:"-"`
+	ParsedEventWebsiteExactMatch *int          `json:"-"`
+	ParsedEventDomainMatch       *int          `json:"-"`
+	ParsedCompanyDomainMatch     *int          `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -1267,19 +1264,6 @@ func (f *FilterDataDto) Validate() error {
 				region = strings.TrimSpace(region)
 				if region != "" {
 					f.ParsedRegions = append(f.ParsedRegions, region)
-				}
-			}
-			return nil
-		}))),
-
-		validation.Field(&f.LocationRegions, validation.When(f.LocationRegions != "", validation.By(func(value interface{}) error {
-			regionsStr := value.(string)
-			parts := strings.Split(regionsStr, ",")
-			f.ParsedLocationRegions = make([]string, 0, len(parts))
-			for _, region := range parts {
-				region = strings.TrimSpace(region)
-				if region != "" {
-					f.ParsedLocationRegions = append(f.ParsedLocationRegions, region)
 				}
 			}
 			return nil
