@@ -1247,8 +1247,9 @@ func (s *TransformDataService) DetermineRankingType(filterFields models.FilterDa
 	hasCategories := len(filterFields.ParsedCategory) > 0
 	hasCountries := len(filterFields.ParsedCountry) > 0
 	hasLocationIds := len(filterFields.ParsedLocationIds) > 0
+	hasRegions := len(filterFields.ParsedRegions) > 0
 
-	hasLocation := hasCountries || hasLocationIds
+	hasLocation := hasCountries || hasLocationIds || hasRegions
 
 	if hasCategories && hasLocation {
 		return RankingTypeCategoryCountry

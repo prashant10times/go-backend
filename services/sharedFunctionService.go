@@ -846,7 +846,6 @@ type ClickHouseQueryResult struct {
 	StateIdsWhereConditions       []string
 	CityIdsWhereConditions        []string
 	VenueIdsWhereConditions       []string
-	HasRegionsFilter              bool
 	HasCountryFilter              bool
 	NeedsLocationIdsJoin            bool
 	NeedsCountryIdsJoin             bool
@@ -877,7 +876,6 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		VenueIdsWhereConditions:       make([]string, 0),
 		UserIdWhereConditions:         make([]string, 0),
 		CompanyIdWhereConditions:      make([]string, 0),
-		HasRegionsFilter:              false,
 		HasCountryFilter:              false,
 		NeedsLocationIdsJoin:          false,
 		NeedsCountryIdsJoin:           false,
@@ -1528,12 +1526,16 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	if len(filterFields.ParsedRegions) > 0 {
 		result.NeedsRegionsJoin = true
-		result.HasRegionsFilter = true
-		regions := make([]string, len(filterFields.ParsedRegions))
-		for i, region := range filterFields.ParsedRegions {
-			regions[i] = escapeSqlValue(region)
+		quotedRegions := make([]string, 0, len(filterFields.ParsedRegions))
+		for _, region := range filterFields.ParsedRegions {
+			escaped := strings.ReplaceAll(region, "'", "''")
+			quotedRegions = append(quotedRegions, fmt.Sprintf("'%s'", escaped))
 		}
-		result.RegionsWhereConditions = append(result.RegionsWhereConditions, fmt.Sprintf("regions IS NOT NULL AND length(regions) > 0 AND regions[1] IN (%s)", strings.Join(regions, ",")))
+		regionsArrayLiteral := "[" + strings.Join(quotedRegions, ", ") + "]"
+		result.RegionsWhereConditions = append(
+			result.RegionsWhereConditions,
+			fmt.Sprintf("published = 1 AND location_type = 'COUNTRY' AND hasAny(ifNull(regions, []), %s)", regionsArrayLiteral),
+		)
 	}
 
 	if len(filterFields.ParsedCountry) > 0 {
@@ -1591,9 +1593,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	s.addEstimatedExhibitorsFilter(&whereConditions, filterFields)
 
-	if !result.HasRegionsFilter {
-		s.addInFilter("country", "edition_country", &whereConditions, filterFields)
-	}
+	s.addInFilter("country", "edition_country", &whereConditions, filterFields)
 	s.addInFilter("venue", "venue_name", &whereConditions, filterFields)
 	s.addInFilter("company", "company_name", &whereConditions, filterFields)
 	s.addInFilter("companyCountry", "company_country", &whereConditions, filterFields)
@@ -1985,17 +1985,8 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	result.SearchClause = s.buildSearchClause(filterFields)
 
-	if result.HasRegionsFilter {
-		countryCondition := "ee.edition_country IN (SELECT iso FROM filtered_regions)"
-
-		if result.HasCountryFilter && len(filterFields.ParsedCountry) > 0 {
-			countries := make([]string, len(filterFields.ParsedCountry))
-			for i, country := range filterFields.ParsedCountry {
-				countries[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(country, "'", "''"))
-			}
-			countryCondition = fmt.Sprintf("(ee.edition_country IN (SELECT iso FROM filtered_regions) OR ee.edition_country IN (%s))", strings.Join(countries, ","))
-		}
-		whereConditions = append(whereConditions, countryCondition)
+	if result.NeedsRegionsJoin {
+		whereConditions = append(whereConditions, "ee.edition_country IN (SELECT iso FROM filtered_regions WHERE iso IS NOT NULL)")
 	}
 
 	if result.NeedsLocationIdsJoin {

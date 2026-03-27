@@ -228,12 +228,11 @@ type FilterDataDto struct {
 	Country        string `json:"country,omitempty" form:"country"`
 	Products       string `json:"products,omitempty" form:"products"`
 	LocationIds    string `json:"locationIds,omitempty" form:"locationIds"`
-
-	CountryIds  string `json:"countryIds,omitempty" form:"countryIds"`
-	StateIds    string `json:"stateIds,omitempty" form:"stateIds"`
-	CityIds     string `json:"cityIds,omitempty" form:"cityIds"`
-	VenueIds    string `json:"venueIds,omitempty" form:"venueIds"`
-	CategoryIds string `json:"categoryIds,omitempty" form:"categoryIds"`
+	CountryIds     string `json:"countryIds,omitempty" form:"countryIds"`
+	StateIds       string `json:"stateIds,omitempty" form:"stateIds"`
+	CityIds        string `json:"cityIds,omitempty" form:"cityIds"`
+	VenueIds       string `json:"venueIds,omitempty" form:"venueIds"`
+	CategoryIds    string `json:"categoryIds,omitempty" form:"categoryIds"`
 
 	SearchByEntity  string `json:"searchByEntity,omitempty" form:"searchByEntity"`
 	AdvanceSearchBy string `json:"advanceSearchBy,omitempty" form:"advanceSearchBy"` // Can be set directly or from searchByEntity mapping
@@ -450,36 +449,36 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedAvgRating           []RatingRange `json:"-"`
-	ParsedTrackerDates        []string      `json:"-"`
-	ParsedCalendarType        *string       `json:"-"`
-	ParsedDateView            *string       `json:"-"`
-	ParsedColumns             []string      `json:"-"`
-	ParsedGroupByTrends       *string       `json:"-"`
-	ParsedRegions             []string      `json:"-"`
-	ParsedCountryIds          []string      `json:"-"`
-	ParsedStateIds            []string      `json:"-"`
-	ParsedCityIds             []string      `json:"-"`
-	ParsedVenueIds            []string      `json:"-"`
-	ParsedCategoryIds         []string      `json:"-"`
-	ParsedUserId              []string      `json:"-"`
-	ParsedUserName            []string      `json:"-"`
-	ParsedUserCompanyName     []string      `json:"-"`
-	ParsedCompanyId           []string      `json:"-"`
-	ParsedCompanyName         []string      `json:"-"`
-	ParsedFrequency           []string      `json:"-"`
-	ParsedCompanyWebsite      []string      `json:"-"`
-	ParsedSearchByEntity      []string      `json:"-"`
-	ParsedAdvancedSearchBy    []string      `json:"-"` // Parsed version of AdvanceSearchBy
-	ParsedPrice               []string      `json:"-"`
-	ParsedEstimatedVisitors   []string      `json:"-"`
-	ParsedEstimatedExhibitors []string      `json:"-"`
-	ParsedMaturity            []string      `json:"-"`
-	ParsedWebsiteFull           string `json:"-"`
-	ParsedWebsiteDomain         string `json:"-"`
-	ParsedEventWebsiteExactMatch *int  `json:"-"`
-	ParsedEventDomainMatch      *int  `json:"-"`
-	ParsedCompanyDomainMatch    *int  `json:"-"`
+	ParsedAvgRating              []RatingRange `json:"-"`
+	ParsedTrackerDates           []string      `json:"-"`
+	ParsedCalendarType           *string       `json:"-"`
+	ParsedDateView               *string       `json:"-"`
+	ParsedColumns                []string      `json:"-"`
+	ParsedGroupByTrends          *string       `json:"-"`
+	ParsedRegions                []string      `json:"-"`
+	ParsedCountryIds             []string      `json:"-"`
+	ParsedStateIds               []string      `json:"-"`
+	ParsedCityIds                []string      `json:"-"`
+	ParsedVenueIds               []string      `json:"-"`
+	ParsedCategoryIds            []string      `json:"-"`
+	ParsedUserId                 []string      `json:"-"`
+	ParsedUserName               []string      `json:"-"`
+	ParsedUserCompanyName        []string      `json:"-"`
+	ParsedCompanyId              []string      `json:"-"`
+	ParsedCompanyName            []string      `json:"-"`
+	ParsedFrequency              []string      `json:"-"`
+	ParsedCompanyWebsite         []string      `json:"-"`
+	ParsedSearchByEntity         []string      `json:"-"`
+	ParsedAdvancedSearchBy       []string      `json:"-"` // Parsed version of AdvanceSearchBy
+	ParsedPrice                  []string      `json:"-"`
+	ParsedEstimatedVisitors      []string      `json:"-"`
+	ParsedEstimatedExhibitors    []string      `json:"-"`
+	ParsedMaturity               []string      `json:"-"`
+	ParsedWebsiteFull            string        `json:"-"`
+	ParsedWebsiteDomain          string        `json:"-"`
+	ParsedEventWebsiteExactMatch *int          `json:"-"`
+	ParsedEventDomainMatch       *int          `json:"-"`
+	ParsedCompanyDomainMatch     *int          `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
