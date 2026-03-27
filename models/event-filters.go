@@ -2845,6 +2845,20 @@ func (f *FilterDataDto) Validate() error {
 		return err
 	}
 
+	if f.ActiveGte != "" && f.ActiveLte != "" {
+		activeGteTime, err := time.Parse("2006-01-02", f.ActiveGte)
+		if err != nil {
+			return validation.NewError("invalid_active_gte", "Invalid date format for active.gte")
+		}
+		activeLteTime, err := time.Parse("2006-01-02", f.ActiveLte)
+		if err != nil {
+			return validation.NewError("invalid_active_lte", "Invalid date format for active.lte")
+		}
+		if activeGteTime.After(activeLteTime) {
+			return validation.NewError("invalid_active_range", "active_gte must be less than or equal to active_lte")
+		}
+	}
+
 	if len(f.ParsedUserId) > 0 && len(f.ParsedAdvancedSearchBy) == 0 && f.SearchByEntity == "" {
 		f.AdvanceSearchBy = "speaker,visitor"
 		entities := strings.Split(f.AdvanceSearchBy, ",")
