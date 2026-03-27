@@ -171,7 +171,7 @@ func (s *TransformDataService) getPaginationURL(limit, offset int, paginationTyp
 	return &url
 }
 
-func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx) (interface{}, error) {
+func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx, uniqueEventCount *int) (interface{}, error) {
 	var nextURL *string
 	if pagination.Offset+pagination.Limit < totalCount {
 		nextURL = s.getPaginationURL(pagination.Limit, pagination.Offset, "next", c)
@@ -188,13 +188,19 @@ func (s *TransformDataService) BuildClickhouseListViewResponse(eventData []map[s
 		"previous": previousURL,
 		"data":     eventData,
 	}
+	if uniqueEventCount != nil {
+		response["uniqueEventCount"] = *uniqueEventCount
+	}
 	return response, nil
 }
 
-func (s *TransformDataService) BuildClickhouseMapViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx) (interface{}, error) {
+func (s *TransformDataService) BuildClickhouseMapViewResponse(eventData []map[string]interface{}, pagination models.PaginationDto, totalCount int, c *fiber.Ctx, uniqueEventCount *int) (interface{}, error) {
 	response := fiber.Map{
 		"count": totalCount,
 		"data":  eventData,
+	}
+	if uniqueEventCount != nil {
+		response["uniqueEventCount"] = *uniqueEventCount
 	}
 	return response, nil
 }
@@ -1241,8 +1247,9 @@ func (s *TransformDataService) DetermineRankingType(filterFields models.FilterDa
 	hasCategories := len(filterFields.ParsedCategory) > 0
 	hasCountries := len(filterFields.ParsedCountry) > 0
 	hasLocationIds := len(filterFields.ParsedLocationIds) > 0
+	hasRegions := len(filterFields.ParsedRegions) > 0
 
-	hasLocation := hasCountries || hasLocationIds
+	hasLocation := hasCountries || hasLocationIds || hasRegions
 
 	if hasCategories && hasLocation {
 		return RankingTypeCategoryCountry
@@ -1480,6 +1487,14 @@ func (s *TransformDataService) TransformEventsByWeek(data []map[string]interface
 
 func (t *TransformDataService) TransformEventCountByDay(data []map[string]interface{}) map[string]interface{} {
 	result := make(map[string]interface{})
+	// detect whether query returned unique/past fields
+	hasUnique := false
+	for _, it := range data {
+		if _, ok := it["uniqueEventCount"]; ok {
+			hasUnique = true
+			break
+		}
+	}
 
 	for _, item := range data {
 		date, ok := item["date"].(string)
@@ -1496,6 +1511,44 @@ func (t *TransformDataService) TransformEventCountByDay(data []map[string]interf
 			dateCountMap[groupName] = eventsCount
 			total := dateCountMap["total"].(int) + eventsCount
 			dateCountMap["total"] = total
+			// aggregate unique counts per group and totalUnique only if provided by query
+			if hasUnique {
+				uniqueCount, _ := item["uniqueEventCount"].(int)
+				if _, ok := dateCountMap["uniqueTotal"]; !ok {
+					dateCountMap["uniqueTotal"] = 0
+				}
+				uniqueTotal := dateCountMap["uniqueTotal"].(int) + uniqueCount
+				dateCountMap["uniqueTotal"] = uniqueTotal
+				uniqueKey := "unique" + strings.Title(groupName)
+				dateCountMap[uniqueKey] = uniqueCount
+
+				// accumulate totals needed for de-duplicated unique-event average (past + current)
+				if pastSumVal, ok := item["pastEditionSum"].(int); ok {
+					if _, exists := dateCountMap["pastEditionSumTotal"]; !exists {
+						dateCountMap["pastEditionSumTotal"] = 0
+					}
+					dateCountMap["pastEditionSumTotal"] = dateCountMap["pastEditionSumTotal"].(int) + pastSumVal
+				}
+				if uniquePastVal, ok := item["uniquePastEventCount"].(int); ok {
+					if _, exists := dateCountMap["uniquePastEventCountTotal"]; !exists {
+						dateCountMap["uniquePastEventCountTotal"] = 0
+					}
+					dateCountMap["uniquePastEventCountTotal"] = dateCountMap["uniquePastEventCountTotal"].(int) + uniquePastVal
+				}
+				if currentSumVal, ok := item["currentEditionSum"].(int); ok {
+					if _, exists := dateCountMap["currentEditionSumTotal"]; !exists {
+						dateCountMap["currentEditionSumTotal"] = 0
+					}
+					dateCountMap["currentEditionSumTotal"] = dateCountMap["currentEditionSumTotal"].(int) + currentSumVal
+				}
+				if uniqueCurrentVal, ok := item["uniqueCurrentEventCount"].(int); ok {
+					if _, exists := dateCountMap["uniqueCurrentEventCountTotal"]; !exists {
+						dateCountMap["uniqueCurrentEventCountTotal"] = 0
+					}
+					dateCountMap["uniqueCurrentEventCountTotal"] = dateCountMap["uniqueCurrentEventCountTotal"].(int) + uniqueCurrentVal
+				}
+			}
+
 			totalImpactScore := dateCountMap["totalImpactScore"].(float64) + eventImpactScore
 			dateCountMap["totalImpactScore"] = totalImpactScore
 			if total > 0 {
@@ -1503,6 +1556,7 @@ func (t *TransformDataService) TransformEventCountByDay(data []map[string]interf
 				dateCountMap["averageImpactScore"] = float64(int(avgScore*100)) / 100.0
 			}
 		} else {
+			// build default map; include unique keys only if present in data
 			dateCountMap := map[string]interface{}{
 				"total":              0,
 				"business":           0,
@@ -1511,7 +1565,41 @@ func (t *TransformDataService) TransformEventCountByDay(data []map[string]interf
 				"totalImpactScore":   0.0,
 				"averageImpactScore": 0.0,
 			}
+			if hasUnique {
+				dateCountMap["uniqueTotal"] = 0
+				dateCountMap["uniqueBusiness"] = 0
+				dateCountMap["uniqueSocial"] = 0
+				dateCountMap["uniqueUnattended"] = 0
+			}
 			dateCountMap[groupName] = eventsCount
+			// set unique keys if present
+			if hasUnique {
+				uniqueCount, _ := item["uniqueEventCount"].(int)
+				uniqueKey := "unique" + strings.Title(groupName)
+				dateCountMap[uniqueKey] = uniqueCount
+				dateCountMap["uniqueTotal"] = uniqueCount
+				// initialize totals for de-duplicated unique-event average (past + current)
+				if pastSumVal, ok := item["pastEditionSum"].(int); ok {
+					dateCountMap["pastEditionSumTotal"] = pastSumVal
+				} else {
+					dateCountMap["pastEditionSumTotal"] = 0
+				}
+				if uniquePastVal, ok := item["uniquePastEventCount"].(int); ok {
+					dateCountMap["uniquePastEventCountTotal"] = uniquePastVal
+				} else {
+					dateCountMap["uniquePastEventCountTotal"] = 0
+				}
+				if currentSumVal, ok := item["currentEditionSum"].(int); ok {
+					dateCountMap["currentEditionSumTotal"] = currentSumVal
+				} else {
+					dateCountMap["currentEditionSumTotal"] = 0
+				}
+				if uniqueCurrentVal, ok := item["uniqueCurrentEventCount"].(int); ok {
+					dateCountMap["uniqueCurrentEventCountTotal"] = uniqueCurrentVal
+				} else {
+					dateCountMap["uniqueCurrentEventCountTotal"] = 0
+				}
+			}
 			total := eventsCount
 			dateCountMap["total"] = total
 			totalImpactScore := eventImpactScore
@@ -1527,6 +1615,25 @@ func (t *TransformDataService) TransformEventCountByDay(data []map[string]interf
 	for date, dateCount := range result {
 		dateCountMap := dateCount.(map[string]interface{})
 		delete(dateCountMap, "totalImpactScore")
+		// compute de-duplicated unique-event average impact score for the date (combine past + current if present)
+		if _, ok := dateCountMap["pastEditionSumTotal"]; ok || dateCountMap["currentEditionSumTotal"] != nil {
+			sumPast, _ := dateCountMap["pastEditionSumTotal"].(int)
+			sumCurrent, _ := dateCountMap["currentEditionSumTotal"].(int)
+			sumCountsPast, _ := dateCountMap["uniquePastEventCountTotal"].(int)
+			sumCountsCurrent, _ := dateCountMap["uniqueCurrentEventCountTotal"].(int)
+			totalSum := sumPast + sumCurrent
+			totalCounts := sumCountsPast + sumCountsCurrent
+			if totalCounts > 0 {
+				dateCountMap["uniqueEventAverageImpactScore"] = float64(int((float64(totalSum)/float64(totalCounts))*100)) / 100.0
+			} else {
+				dateCountMap["uniqueEventAverageImpactScore"] = 0.0
+			}
+			// clean up helper totals
+			delete(dateCountMap, "pastEditionSumTotal")
+			delete(dateCountMap, "uniquePastEventCountTotal")
+			delete(dateCountMap, "currentEditionSumTotal")
+			delete(dateCountMap, "uniqueCurrentEventCountTotal")
+		}
 		result[date] = dateCountMap
 	}
 

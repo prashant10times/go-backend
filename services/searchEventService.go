@@ -33,10 +33,11 @@ type SearchEventService struct {
 }
 
 type ListResult struct {
-	Data         interface{}
-	Count        int
-	StatusCode   int
-	ErrorMessage string
+	Data             interface{}
+	Count            int
+	UniqueEventCount *int
+	StatusCode       int
+	ErrorMessage     string
 }
 
 type AggregationResult struct {
@@ -610,7 +611,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			return nil, fmt.Errorf("unexpected data type: %T", eventData)
 		}
 
-		response, err = s.transformDataService.BuildClickhouseListViewResponse(eventDataSlice, pagination, result.Count, c)
+		response, err = s.transformDataService.BuildClickhouseListViewResponse(eventDataSlice, pagination, result.Count, c, result.UniqueEventCount)
 
 		if err != nil {
 			log.Printf("Error building response: %v", err)
@@ -668,7 +669,7 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			return nil, fmt.Errorf("unexpected data type: %T", eventData)
 		}
 
-		response, err = s.transformDataService.BuildClickhouseMapViewResponse(eventDataSlice, pagination, result.Count, c)
+		response, err = s.transformDataService.BuildClickhouseMapViewResponse(eventDataSlice, pagination, result.Count, c, result.UniqueEventCount)
 
 		if err != nil {
 			log.Printf("Error building map response: %v", err)
@@ -676,7 +677,8 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 		}
 
 	case "COUNT":
-		count, err := s.sharedFunctionService.getCountOnly(filterFields)
+		hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+		count, uniqueEvents, err := s.sharedFunctionService.getCountOnly(filterFields, hasPast)
 		if err != nil {
 			log.Printf("Error getting count: %v", err)
 			statusCode = http.StatusInternalServerError
@@ -685,9 +687,13 @@ func (s *SearchEventService) GetEventDataV2(userId, apiId string, filterFields m
 			return nil, middleware.NewInternalServerError("Count query failed", err.Error())
 		}
 
-		response = fiber.Map{
+		countPayload := fiber.Map{
 			"count": count,
 		}
+		if hasPast {
+			countPayload["uniqueEventCount"] = uniqueEvents
+		}
+		response = countPayload
 
 	case "CALENDAR":
 		result, err := s.sharedFunctionService.GetCalendarEvents(filterFields)
@@ -795,7 +801,8 @@ func (s *SearchEventService) getListDataCount(
 	eventFilterGroupByStr string,
 	hasEndDateFilters bool,
 	filterFields models.FilterDataDto,
-) (int, error) {
+	includeUniqueEventCount bool,
+) (total int, unique int, err error) {
 	countQuery := s.sharedFunctionService.buildListDataCountQuery(
 		queryResult,
 		cteAndJoinResult,
@@ -803,6 +810,7 @@ func (s *SearchEventService) getListDataCount(
 		eventFilterGroupByStr,
 		hasEndDateFilters,
 		filterFields,
+		includeUniqueEventCount,
 	)
 
 	log.Printf("Count query: %s", countQuery)
@@ -811,22 +819,29 @@ func (s *SearchEventService) getListDataCount(
 	countResult, err := s.clickhouseService.ExecuteQuery(context.Background(), countQuery)
 	if err != nil {
 		log.Printf("ClickHouse count query error: %v", err)
-		return 0, err
+		return 0, 0, err
 	}
 	defer countResult.Close()
 
 	countQueryDuration := time.Since(countQueryTime)
 	log.Printf("Count query time: %v", countQueryDuration)
 
-	var totalCount uint64
+	var totalCount, uniqueCount uint64
 	if countResult.Next() {
-		if err := countResult.Scan(&totalCount); err != nil {
-			log.Printf("Error scanning count result: %v", err)
-			return 0, err
+		if includeUniqueEventCount {
+			if err := countResult.Scan(&totalCount, &uniqueCount); err != nil {
+				log.Printf("Error scanning count result: %v", err)
+				return 0, 0, err
+			}
+		} else {
+			if err := countResult.Scan(&totalCount); err != nil {
+				log.Printf("Error scanning count result: %v", err)
+				return 0, 0, err
+			}
 		}
 	}
 
-	return int(totalCount), nil
+	return int(totalCount), int(uniqueCount), nil
 }
 
 func (s *SearchEventService) initializeFieldSelection(showValues string, filterFields models.FilterDataDto) (*FieldSelectionContext, error) {
@@ -1121,7 +1136,94 @@ func (s *SearchEventService) buildEventFilterFields(
 	}, conditionalFields
 }
 
+func (s *SearchEventService) buildPastEditionBasicPayload(event map[string]interface{}, pastEventLocationsMap map[string]map[string]interface{}, editionIDStr string) map[string]interface{} {
+	basic := make(map[string]interface{})
+
+	if id, ok := event["id"].(string); ok {
+		basic["id"] = id
+	} else {
+		basic["id"] = nil
+	}
+	if editionUUID, ok := event["edition_uuid"].(string); ok && editionUUID != "" {
+		basic["editionId"] = editionUUID
+	} else {
+		basic["editionId"] = nil
+	}
+
+	if startVal, ok := event["start"].(string); ok {
+		basic["startDateTime"] = startVal
+	} else if t, ok := event["start"].(time.Time); ok {
+		basic["startDateTime"] = t.Format("2006-01-02")
+	} else {
+		basic["startDateTime"] = nil
+	}
+	if endVal, ok := event["end"].(string); ok {
+		basic["endDateTime"] = endVal
+	} else if t, ok := event["end"].(time.Time); ok {
+		basic["endDateTime"] = t.Format("2006-01-02")
+	} else {
+		basic["endDateTime"] = nil
+	}
+
+	if pastEventLocationsMap != nil && editionIDStr != "" {
+		if loc, ok := pastEventLocationsMap[editionIDStr]; ok && loc != nil {
+			basic["eventLocation"] = loc
+		} else {
+			basic["eventLocation"] = nil
+		}
+	} else {
+		basic["eventLocation"] = nil
+	}
+
+	if status, ok := event["status"].(string); ok {
+		basic["status"] = status
+	} else {
+		basic["status"] = nil
+	}
+
+	organizer := make(map[string]interface{})
+	if id, ok := event["organizer_id"].(string); ok && id != "" {
+		organizer["id"] = id
+	}
+	if name, ok := event["organizer_name"].(string); ok {
+		organizer["name"] = name
+	}
+	if website, ok := event["organizer_website"].(string); ok {
+		organizer["website"] = website
+	}
+	if logoUrl, ok := event["organizer_logoUrl"].(string); ok {
+		organizer["logoUrl"] = logoUrl
+	}
+	if companyId, ok := event["organizer_companyId"].(uint32); ok {
+		organizer["prospectId"] = companyId
+	}
+	basic["organizer"] = organizer
+
+	if format, ok := event["format"].(string); ok {
+		basic["format"] = format
+	} else {
+		basic["format"] = nil
+	}
+
+	if t, ok := event["futureExpectedStartDate"].(time.Time); ok && !t.IsZero() {
+		basic["futureExpectedStartDate"] = t.Format("2006-01-02")
+	} else {
+		basic["futureExpectedStartDate"] = nil
+	}
+	if t, ok := event["futureExpectedEndDate"].(time.Time); ok && !t.IsZero() {
+		basic["futureExpectedEndDate"] = t.Format("2006-01-02")
+	} else {
+		basic["futureExpectedEndDate"] = nil
+	}
+
+	basic["isCurrent"] = false
+
+	return basic
+}
+
 func (s *SearchEventService) getListData(pagination models.PaginationDto, sortClause []SortClause, filterFields models.FilterDataDto, showValues string) (*ListResult, error) {
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+
 	fieldCtx, err := s.initializeFieldSelection(showValues, filterFields)
 	if err != nil {
 		return &ListResult{
@@ -1134,7 +1236,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	requestedGroupsSet := fieldCtx.Processor.GetRequestedGroups()
 
 	conditionalFields := s.buildConditionalFields(fieldCtx, sortClause, filterFields)
-	requiredFieldsStatic := append(fieldCtx.BaseFields, conditionalFields...)
 
 	queryResult, err := s.sharedFunctionService.buildClickHouseQuery(filterFields)
 	if err != nil {
@@ -1157,7 +1258,37 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	eventFilterFields, conditionalFields := s.buildEventFilterFields(sortClause, queryResult, fieldCtx.DBToAliasMap, conditionalFields, eventFilterOrderBy)
-	requiredFieldsStatic = append(fieldCtx.BaseFields, conditionalFields...)
+	requiredFieldsStatic := append(fieldCtx.BaseFields, conditionalFields...)
+	if hasPast {
+		requiredFieldsStatic = append(requiredFieldsStatic, PastEditionExtraDBSelects...)
+	}
+	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
+		hasLat := false
+		hasLon := false
+		for _, f := range requiredFieldsStatic {
+			if strings.Contains(f, " as lat") {
+				hasLat = true
+			}
+			if strings.Contains(f, " as lon") {
+				hasLon = true
+			}
+		}
+		if strings.Contains(queryResult.DistanceOrderClause, "COALESCE") {
+			if !hasLat {
+				requiredFieldsStatic = append(requiredFieldsStatic, "COALESCE(ee.venue_lat, ee.edition_city_lat) as lat")
+			}
+			if !hasLon {
+				requiredFieldsStatic = append(requiredFieldsStatic, "COALESCE(ee.venue_long, ee.edition_city_long) as lon")
+			}
+		} else {
+			if !hasLat {
+				requiredFieldsStatic = append(requiredFieldsStatic, "ee.edition_city_lat as lat")
+			}
+			if !hasLon {
+				requiredFieldsStatic = append(requiredFieldsStatic, "ee.edition_city_long as lon")
+			}
+		}
+	}
 
 	eventFilterOrderBy = eventFilterFields.OrderBy
 	eventFilterSelectStr := strings.Join(eventFilterFields.SelectFields, ", ")
@@ -1251,6 +1382,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		queryResult.NeedsCityIdsJoin,
 		queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
+		queryResult.NeedsClassifiedCompanyIdsCTE,
+		queryResult.ClassifiedCompanyIdsCTEs,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -1300,11 +1433,15 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 
 	innerOrderBy := func() string {
 		if finalOrderClause != "" {
-			fixedOrderBy := fieldCtx.FieldsSelector.FixOrderByForFields(finalOrderClause, requiredFieldsStatic)
+			orderClauseForData := finalOrderClause
+			if strings.Contains(finalOrderClause, "greatCircleDistance") {
+				orderClauseForData = convertDistanceOrderForEventFilter(finalOrderClause)
+			}
+			fixedOrderBy := fieldCtx.FieldsSelector.FixOrderByForFields(orderClauseForData, requiredFieldsStatic)
 			if fixedOrderBy != "" {
 				return fixedOrderBy
 			}
-			return s.sharedFunctionService.fixOrderByForCTE(finalOrderClause, true)
+			return s.sharedFunctionService.fixOrderByForCTE(orderClauseForData, true)
 		}
 		return "ORDER BY score ASC"
 	}()
@@ -1389,8 +1526,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	type countResult struct {
-		Count int
-		Err   error
+		Count       int
+		UniqueCount int
+		Err         error
 	}
 
 	dataChan := make(chan dataResult, 1)
@@ -1405,15 +1543,16 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}()
 
 	go func() {
-		count, err := s.getListDataCount(
+		total, unique, err := s.getListDataCount(
 			queryResult,
 			&cteAndJoinResult,
 			eventFilterSelectStr,
 			eventFilterGroupByStr,
 			hasEndDateFilters,
 			filterFields,
+			hasPast,
 		)
-		countChan <- countResult{Count: count, Err: err}
+		countChan <- countResult{Count: total, UniqueCount: unique, Err: err}
 	}()
 
 	dataRes := <-dataChan
@@ -1429,6 +1568,12 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		log.Printf("Warning: Count query failed, continuing without count")
 	}
 	totalCount := countRes.Count
+
+	var uniqueEventCount *int
+	if hasPast {
+		uniqueEventCount = new(int)
+		*uniqueEventCount = countRes.UniqueCount
+	}
 
 	var eventIds []uint32
 	var eventData []map[string]interface{}
@@ -1449,9 +1594,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				values[i] = new(uint8)
 			case "score", "duration", "futurePredictionScore":
 				values[i] = new(int32)
-			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown", "shortName", "format", "entryType", "website", "10timesEventPageUrl", "estimatedVisitorRangeTag", "maturity", "frequency", "organizer_id", "organizer_name", "organizer_website", "organizer_logoUrl", "organizer_address", "organizer_city", "organizer_state", "organizer_country", "audienceZone":
+			case "id", "name", "city", "country", "description", "logo", "economicImpactBreakdown", "shortName", "format", "entryType", "website", "10timesEventPageUrl", "estimatedVisitorRangeTag", "maturity", "frequency", "organizer_id", "organizer_name", "organizer_website", "organizer_logoUrl", "organizer_address", "organizer_city", "organizer_state", "organizer_country", "audienceZone", "edition_type", "edition_uuid", "currentEditionId":
 				values[i] = new(string)
-			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate":
+			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate", "currentEditionStartDate", "currentEditionEndDate":
 				values[i] = new(time.Time)
 			case "isBranded", "isSeries":
 				values[i] = new(string)
@@ -1510,6 +1655,14 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				} else {
 					rowData["id"] = nil
 				}
+			case "edition_type":
+				if s, ok := val.(*string); ok && s != nil {
+					rowData["edition_type"] = *s
+				}
+			case "edition_uuid":
+				if s, ok := val.(*string); ok && s != nil {
+					rowData["edition_uuid"] = *s
+				}
 			case "start", "end", "updated", "createdAt", "start_date", "end_date", "event_created", "event_updated":
 				var fieldName string
 				switch col {
@@ -1538,13 +1691,19 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				} else {
 					rowData[col] = nil
 				}
-			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate":
+			case "futureExpectedStartDate", "futureExpectedEndDate", "rehostDate", "currentEditionStartDate", "currentEditionEndDate":
 				if dateVal, ok := val.(*time.Time); ok && dateVal != nil {
 					if dateVal.IsZero() {
 						rowData[col] = nil
 					} else {
 						rowData[col] = dateVal.Format("2006-01-02")
 					}
+				} else {
+					rowData[col] = nil
+				}
+			case "currentEditionId":
+				if s, ok := val.(*string); ok && s != nil && strings.TrimSpace(*s) != "" {
+					rowData[col] = *s
 				} else {
 					rowData[col] = nil
 				}
@@ -1708,11 +1867,15 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	if len(eventIds) == 0 {
-		return &ListResult{
+		out := &ListResult{
 			StatusCode: 200,
 			Data:       []interface{}{},
 			Count:      totalCount,
-		}, nil
+		}
+		if hasPast {
+			out.UniqueEventCount = uniqueEventCount
+		}
+		return out, nil
 	}
 
 	var eventToDesignationMatchInfo map[string]interface{}
@@ -1786,22 +1949,11 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}()
 
 	go func() {
-		queryStartTime := time.Now()
-		var locations map[string]map[string]interface{}
-		var err error
-
-		if len(eventIds) > 0 {
-			locations, err = s.sharedFunctionService.GetEventLocations(eventIds, filterFields)
-		} else {
-			locations = make(map[string]map[string]interface{})
-		}
-
-		duration := time.Since(queryStartTime)
 
 		locationDataChan <- locationDataResult{
-			Locations: locations,
-			Err:       err,
-			Duration:  duration,
+			Locations: make(map[string]map[string]interface{}),
+			Err:       nil,
+			Duration:  0,
 		}
 	}()
 
@@ -1916,10 +2068,11 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		if relatedDataRes.Rows != nil {
 			relatedDataRes.Rows.Close()
 		}
-		return &ListResult{
-			StatusCode:   500,
-			ErrorMessage: relatedDataRes.Err.Error(),
-		}, nil
+		out := &ListResult{StatusCode: 500, ErrorMessage: relatedDataRes.Err.Error()}
+		if hasPast {
+			out.UniqueEventCount = uniqueEventCount
+		}
+		return out, nil
 	}
 
 	if locationDataRes.Err != nil {
@@ -1927,14 +2080,33 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		if relatedDataRes.Rows != nil {
 			relatedDataRes.Rows.Close()
 		}
-		return &ListResult{
-			StatusCode:   500,
-			ErrorMessage: locationDataRes.Err.Error(),
-		}, nil
+		out := &ListResult{StatusCode: 500, ErrorMessage: locationDataRes.Err.Error()}
+		if hasPast {
+			out.UniqueEventCount = uniqueEventCount
+		}
+		return out, nil
 	}
 
 	relatedDataRows := relatedDataRes.Rows
 	eventLocationsMap := locationDataRes.Locations
+
+	if len(eventData) > 0 {
+		var editionIds []uint32
+		for _, ev := range eventData {
+			if eid, ok := ev["edition_id"].(uint32); ok {
+				editionIds = append(editionIds, eid)
+			}
+		}
+		if len(editionIds) > 0 {
+			loc, err := s.sharedFunctionService.GetEventLocations(editionIds, filterFields, true)
+			if err != nil {
+				log.Printf("Error fetching event locations by edition: %v", err)
+				eventLocationsMap = make(map[string]map[string]interface{})
+			} else {
+				eventLocationsMap = loc
+			}
+		}
+	}
 
 	defer func() {
 		if relatedDataRows != nil {
@@ -2152,8 +2324,9 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 	}
 
-	var combinedData []map[string]interface{}
-	for _, event := range eventData {
+	results := make([]map[string]interface{}, len(eventData))
+
+	for i, event := range eventData {
 		eventID := fmt.Sprintf("%d", event["event_id"])
 
 		grouper := NewFieldGrouper(fieldCtx.Processor)
@@ -2301,7 +2474,11 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 
 		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["eventLocation"] {
-			if eventLocation, ok := eventLocationsMap[eventID]; ok && eventLocation != nil {
+			locationKey := eventID
+			if eid, ok := event["edition_id"].(uint32); ok {
+				locationKey = fmt.Sprintf("%d", eid)
+			}
+			if eventLocation, ok := eventLocationsMap[locationKey]; ok && eventLocation != nil {
 				grouper.AddField("eventLocation", eventLocation)
 			} else {
 				grouper.AddField("eventLocation", nil)
@@ -2497,6 +2674,45 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		combinedEvent = grouper.GetFinalEvent()
 		delete(combinedEvent, "event_id")
 
+		editionTypeStr, _ := event["edition_type"].(string)
+		isPastRow := editionTypeStr == "past_edition"
+
+		if hasPast {
+			var editionId interface{}
+			if editionUUID, ok := event["edition_uuid"].(string); ok && editionUUID != "" {
+				editionId = editionUUID
+			} else {
+				editionId = nil
+			}
+			if fieldCtx.Processor.IsGroupedStructure() {
+				if basicGroup, ok := combinedEvent[string(ResponseGroupBasic)].(map[string]interface{}); ok && basicGroup != nil {
+					basicGroup["isCurrent"] = !isPastRow
+					basicGroup["editionId"] = editionId
+				}
+			} else {
+				combinedEvent["isCurrent"] = !isPastRow
+				combinedEvent["editionId"] = editionId
+			}
+			// currentEdition* only applies to past edition rows, omit for current/future in mixed listings.
+			if !isPastRow {
+				stripNonPastCurrentEditionMeta := func(m map[string]interface{}) {
+					delete(m, "currentEditionId")
+					delete(m, "currentEditionStartDate")
+					delete(m, "currentEditionEndDate")
+				}
+				if fieldCtx.Processor.IsGroupedStructure() {
+					if adv, ok := combinedEvent[string(ResponseGroupAdvance)].(map[string]interface{}); ok && adv != nil {
+						stripNonPastCurrentEditionMeta(adv)
+					}
+					if basicG, ok := combinedEvent[string(ResponseGroupBasic)].(map[string]interface{}); ok && basicG != nil {
+						stripNonPastCurrentEditionMeta(basicG)
+					}
+				} else {
+					stripNonPastCurrentEditionMeta(combinedEvent)
+				}
+			}
+		}
+
 		if len(eventTrackerMatchInfo) > 0 {
 			if eventIDUint, ok := event["event_id"].(uint32); ok {
 				if trackerInfo, exists := eventTrackerMatchInfo[eventIDUint]; exists && trackerInfo != nil && len(trackerInfo) > 0 {
@@ -2505,23 +2721,25 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			}
 		}
 
-		combinedData = append(combinedData, combinedEvent)
+		results[i] = combinedEvent
 	}
+
+	combinedData := results
 
 	viewLower := strings.ToLower(strings.TrimSpace(filterFields.View))
 	if viewLower == "promote" {
 		transformedData := s.getPromoteEventListingResponse(combinedData)
-		return &ListResult{
-			StatusCode: 200,
-			Data:       transformedData,
-			Count:      totalCount,
-		}, nil
+		out := &ListResult{StatusCode: 200, Data: transformedData, Count: totalCount}
+		if hasPast {
+			out.UniqueEventCount = uniqueEventCount
+		}
+		return out, nil
 	}
-	return &ListResult{
-		StatusCode: 200,
-		Data:       combinedData,
-		Count:      totalCount,
-	}, nil
+	out := &ListResult{StatusCode: 200, Data: combinedData, Count: totalCount}
+	if hasPast {
+		out.UniqueEventCount = uniqueEventCount
+	}
+	return out, nil
 }
 
 func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields models.FilterDataDto) (*ListResult, error) {
@@ -2645,6 +2863,8 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		queryResult.NeedsCityIdsJoin,
 		queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
+		queryResult.NeedsClassifiedCompanyIdsCTE,
+		queryResult.ClassifiedCompanyIdsCTEs,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -2674,6 +2894,8 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	hasEndDateFilters := filterFields.EndGte != "" || filterFields.EndLte != "" || filterFields.EndGt != "" || filterFields.EndLt != "" ||
 		filterFields.ActiveGte != "" || filterFields.ActiveLte != "" || filterFields.ActiveGt != "" || filterFields.ActiveLt != "" ||
 		filterFields.CreatedAt != "" || len(filterFields.ParsedEventIds) > 0 || len(filterFields.ParsedNotEventIds) > 0 || len(filterFields.ParsedSourceEventIds) > 0 || len(filterFields.ParsedDates) > 0 || filterFields.ParsedPastBetween != nil || filterFields.ParsedActiveBetween != nil
+
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
 
 	mapFields := []string{
 		"ee.event_uuid as id",
@@ -2765,8 +2987,9 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	}
 
 	type countResult struct {
-		Count int
-		Err   error
+		Count       int
+		UniqueCount int
+		Err         error
 	}
 
 	dataChan := make(chan dataResult, 1)
@@ -2781,15 +3004,16 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 	}()
 
 	go func() {
-		count, err := s.getListDataCount(
+		total, unique, err := s.getListDataCount(
 			queryResult,
 			&cteAndJoinResult,
 			eventFilterSelectStr,
 			eventFilterGroupByStr,
 			hasEndDateFilters,
 			filterFields,
+			hasPast,
 		)
-		countChan <- countResult{Count: count, Err: err}
+		countChan <- countResult{Count: total, UniqueCount: unique, Err: err}
 	}()
 
 	dataRes := <-dataChan
@@ -2805,6 +3029,12 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 		log.Printf("Warning: Count query failed, continuing without count")
 	}
 	totalCount := countRes.Count
+
+	var uniqueEventCount *int
+	if hasPast {
+		uniqueEventCount = new(int)
+		*uniqueEventCount = countRes.UniqueCount
+	}
 
 	var mapData []map[string]interface{}
 
@@ -2910,16 +3140,18 @@ func (s *SearchEventService) getMapData(sortClause []SortClause, filterFields mo
 
 	if len(mapData) == 0 {
 		return &ListResult{
-			StatusCode: 200,
-			Data:       []interface{}{},
-			Count:      totalCount,
+			StatusCode:       200,
+			Data:             []interface{}{},
+			Count:            totalCount,
+			UniqueEventCount: uniqueEventCount,
 		}, nil
 	}
 
 	return &ListResult{
-		StatusCode: 200,
-		Data:       mapData,
-		Count:      totalCount,
+		StatusCode:       200,
+		Data:             mapData,
+		Count:            totalCount,
+		UniqueEventCount: uniqueEventCount,
 	}, nil
 }
 
@@ -3789,6 +4021,8 @@ func (s *SearchEventService) handleGroupByRequest(
 		queryResult.NeedsCityIdsJoin,
 		queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
+		queryResult.NeedsClassifiedCompanyIdsCTE,
+		queryResult.ClassifiedCompanyIdsCTEs,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,

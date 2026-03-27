@@ -207,6 +207,15 @@ type WebsiteMatchFilter struct {
 	CompanyDomainMatch     *int   `json:"companyDomainMatch,omitempty"`
 }
 
+// CompanyCriteria holds optional company/entity filter criteria.
+type CompanyCriteria struct {
+	EntityType     []string `json:"entity_type,omitempty"`
+	CompanyRole    []string `json:"company_role,omitempty"`
+	Specialization []string `json:"specialization,omitempty"`
+	CompanyName    []string `json:"companyName,omitempty"`
+	CompanyWebsite []string `json:"companyWebsite,omitempty"`
+}
+
 type FilterDataDto struct {
 	Q              string `json:"q,omitempty" form:"q"`
 	EventIds       string `json:"eventIds,omitempty" form:"eventIds"`
@@ -219,12 +228,11 @@ type FilterDataDto struct {
 	Country        string `json:"country,omitempty" form:"country"`
 	Products       string `json:"products,omitempty" form:"products"`
 	LocationIds    string `json:"locationIds,omitempty" form:"locationIds"`
-
-	CountryIds  string `json:"countryIds,omitempty" form:"countryIds"`
-	StateIds    string `json:"stateIds,omitempty" form:"stateIds"`
-	CityIds     string `json:"cityIds,omitempty" form:"cityIds"`
-	VenueIds    string `json:"venueIds,omitempty" form:"venueIds"`
-	CategoryIds string `json:"categoryIds,omitempty" form:"categoryIds"`
+	CountryIds     string `json:"countryIds,omitempty" form:"countryIds"`
+	StateIds       string `json:"stateIds,omitempty" form:"stateIds"`
+	CityIds        string `json:"cityIds,omitempty" form:"cityIds"`
+	VenueIds       string `json:"venueIds,omitempty" form:"venueIds"`
+	CategoryIds    string `json:"categoryIds,omitempty" form:"categoryIds"`
 
 	SearchByEntity  string `json:"searchByEntity,omitempty" form:"searchByEntity"`
 	AdvanceSearchBy string `json:"advanceSearchBy,omitempty" form:"advanceSearchBy"` // Can be set directly or from searchByEntity mapping
@@ -333,7 +341,8 @@ type FilterDataDto struct {
 	CompanyName    string `json:"companyName,omitempty" form:"companyName"`
 	CompanyWebsite string `json:"companyWebsite,omitempty" form:"companyWebsite"`
 
-	WebsiteMatch string `json:"websiteMatch,omitempty" form:"websiteMatch"`
+	WebsiteMatch         string `json:"websiteMatch,omitempty" form:"websiteMatch"`
+	CompanyCriteria string `json:"companyCriteria,omitempty" form:"companyCriteria"`
 
 	View                string `json:"view,omitempty" form:"view"`
 	CalendarType        string `json:"calendar_type,omitempty" form:"calendar_type"`
@@ -411,8 +420,9 @@ type FilterDataDto struct {
 	ParsedSponsorState       []string            `json:"-"`
 	ParsedVisitorState       []string            `json:"-"`
 	ParsedJobComposite       []string            `json:"-"`
-	ParsedJobCompositeFilter *JobCompositeFilter `json:"-"`
-	ParsedEventRanking       []string            `json:"-"`
+	ParsedJobCompositeFilter     *JobCompositeFilter     `json:"-"`
+	ParsedCompanyCriteria []CompanyCriteria `json:"-"`
+	ParsedEventRanking          []string               `json:"-"`
 	ParsedAudienceZone       []string            `json:"-"`
 	ParsedAudienceSpread     []string            `json:"-"`
 	ParsedEventAudience      []int               `json:"-"`
@@ -439,36 +449,36 @@ type FilterDataDto struct {
 		Start string `json:"start"`
 		End   string `json:"end"`
 	} `json:"-"`
-	ParsedAvgRating           []RatingRange `json:"-"`
-	ParsedTrackerDates        []string      `json:"-"`
-	ParsedCalendarType        *string       `json:"-"`
-	ParsedDateView            *string       `json:"-"`
-	ParsedColumns             []string      `json:"-"`
-	ParsedGroupByTrends       *string       `json:"-"`
-	ParsedRegions             []string      `json:"-"`
-	ParsedCountryIds          []string      `json:"-"`
-	ParsedStateIds            []string      `json:"-"`
-	ParsedCityIds             []string      `json:"-"`
-	ParsedVenueIds            []string      `json:"-"`
-	ParsedCategoryIds         []string      `json:"-"`
-	ParsedUserId              []string      `json:"-"`
-	ParsedUserName            []string      `json:"-"`
-	ParsedUserCompanyName     []string      `json:"-"`
-	ParsedCompanyId           []string      `json:"-"`
-	ParsedCompanyName         []string      `json:"-"`
-	ParsedFrequency           []string      `json:"-"`
-	ParsedCompanyWebsite      []string      `json:"-"`
-	ParsedSearchByEntity      []string      `json:"-"`
-	ParsedAdvancedSearchBy    []string      `json:"-"` // Parsed version of AdvanceSearchBy
-	ParsedPrice               []string      `json:"-"`
-	ParsedEstimatedVisitors   []string      `json:"-"`
-	ParsedEstimatedExhibitors []string      `json:"-"`
-	ParsedMaturity            []string      `json:"-"`
-	ParsedWebsiteFull           string `json:"-"`
-	ParsedWebsiteDomain         string `json:"-"`
-	ParsedEventWebsiteExactMatch *int  `json:"-"`
-	ParsedEventDomainMatch      *int  `json:"-"`
-	ParsedCompanyDomainMatch    *int  `json:"-"`
+	ParsedAvgRating              []RatingRange `json:"-"`
+	ParsedTrackerDates           []string      `json:"-"`
+	ParsedCalendarType           *string       `json:"-"`
+	ParsedDateView               *string       `json:"-"`
+	ParsedColumns                []string      `json:"-"`
+	ParsedGroupByTrends          *string       `json:"-"`
+	ParsedRegions                []string      `json:"-"`
+	ParsedCountryIds             []string      `json:"-"`
+	ParsedStateIds               []string      `json:"-"`
+	ParsedCityIds                []string      `json:"-"`
+	ParsedVenueIds               []string      `json:"-"`
+	ParsedCategoryIds            []string      `json:"-"`
+	ParsedUserId                 []string      `json:"-"`
+	ParsedUserName               []string      `json:"-"`
+	ParsedUserCompanyName        []string      `json:"-"`
+	ParsedCompanyId              []string      `json:"-"`
+	ParsedCompanyName            []string      `json:"-"`
+	ParsedFrequency              []string      `json:"-"`
+	ParsedCompanyWebsite         []string      `json:"-"`
+	ParsedSearchByEntity         []string      `json:"-"`
+	ParsedAdvancedSearchBy       []string      `json:"-"` // Parsed version of AdvanceSearchBy
+	ParsedPrice                  []string      `json:"-"`
+	ParsedEstimatedVisitors      []string      `json:"-"`
+	ParsedEstimatedExhibitors    []string      `json:"-"`
+	ParsedMaturity               []string      `json:"-"`
+	ParsedWebsiteFull            string        `json:"-"`
+	ParsedWebsiteDomain          string        `json:"-"`
+	ParsedEventWebsiteExactMatch *int          `json:"-"`
+	ParsedEventDomainMatch       *int          `json:"-"`
+	ParsedCompanyDomainMatch     *int          `json:"-"`
 }
 
 func (f *FilterDataDto) SetDefaultValues() {
@@ -522,6 +532,59 @@ func NormalizeWebsiteInput(website string) (inputFull, inputDomain string) {
 		inputFull = host
 	}
 	return inputFull, host
+}
+
+var ValidEditionTypes = map[string][]string{
+	"all":     {"current_edition", "past_edition", "future_edition"},
+	"current": {"current_edition"},
+	"past":    {"past_edition"},
+	"future":  {"future_edition"},
+}
+
+func ParseEditionType(editionTypeStr string, defaultIfEmpty string) ([]string, error) {
+	if editionTypeStr == "" {
+		editionTypeStr = defaultIfEmpty
+	}
+	editionTypes := strings.Split(editionTypeStr, ",")
+	parsed := make([]string, 0, len(editionTypes))
+	seenDbValues := make(map[string]bool)
+	for _, et := range editionTypes {
+		et = strings.TrimSpace(strings.ToLower(et))
+		if et == "" {
+			continue
+		}
+		if dbValues, exists := ValidEditionTypes[et]; exists {
+			for _, dbValue := range dbValues {
+				if !seenDbValues[dbValue] {
+					parsed = append(parsed, dbValue)
+					seenDbValues[dbValue] = true
+				}
+			}
+		} else {
+			return nil, validation.NewError("invalid_edition_type", "Invalid editionType value: "+et+". Valid values are: all, current, past, future")
+		}
+	}
+	if len(parsed) == 0 {
+		if db, ok := ValidEditionTypes[defaultIfEmpty]; ok && len(db) > 0 {
+			parsed = []string{db[0]}
+		} else {
+			parsed = []string{"current_edition"}
+		}
+	}
+	return parsed, nil
+}
+
+func HasPastInEditionType(parsed []string) bool {
+	for _, et := range parsed {
+		if et == "past_edition" {
+			return true
+		}
+	}
+	return false
+}
+
+func IsPastOnly(parsed []string) bool {
+	return len(parsed) == 1 && parsed[0] == "past_edition"
 }
 
 func validateAndNormalizeDate(dateStr *string, fieldName string) validation.Rule {
@@ -2074,6 +2137,92 @@ func (f *FilterDataDto) Validate() error {
 			return nil
 		}))),
 
+		validation.Field(&f.CompanyCriteria, validation.When(f.CompanyCriteria != "", validation.By(func(value interface{}) error {
+			companyCriteriaStr := value.(string)
+			companyCriteriaStr = strings.TrimSpace(companyCriteriaStr)
+			if companyCriteriaStr == "" {
+				return nil
+			}
+			if !strings.HasPrefix(companyCriteriaStr, "[") {
+				return validation.NewError("invalid_company_criteria_filter", "companyCriteria must be a JSON array of objects")
+			}
+			var criteriaList []CompanyCriteria
+			if err := json.Unmarshal([]byte(companyCriteriaStr), &criteriaList); err != nil {
+				return validation.NewError("invalid_company_criteria_filter_json", "Invalid companyCriteria JSON format: "+err.Error())
+			}
+			if len(criteriaList) == 0 {
+				return validation.NewError("empty_company_criteria_filter", "companyCriteria array must contain at least one object")
+			}
+			parsed := make([]CompanyCriteria, 0, len(criteriaList))
+			for i, criteria := range criteriaList {
+				var trimmed []string
+				for _, s := range criteria.EntityType {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
+				}
+				criteria.EntityType = trimmed
+				trimmed = nil
+				for _, s := range criteria.CompanyRole {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
+				}
+				criteria.CompanyRole = trimmed
+				trimmed = nil
+				for _, s := range criteria.Specialization {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
+				}
+				criteria.Specialization = trimmed
+				trimmed = nil
+				for _, s := range criteria.CompanyName {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
+				}
+				criteria.CompanyName = trimmed
+				trimmed = nil
+				for _, s := range criteria.CompanyWebsite {
+					if t := strings.TrimSpace(s); t != "" {
+						trimmed = append(trimmed, t)
+					}
+				}
+				criteria.CompanyWebsite = trimmed
+				hasAny := len(criteria.EntityType) > 0 || len(criteria.CompanyRole) > 0 || len(criteria.Specialization) > 0 ||
+					len(criteria.CompanyName) > 0 || len(criteria.CompanyWebsite) > 0
+				if !hasAny {
+					return validation.NewError("empty_company_criteria_row", fmt.Sprintf("companyCriteria row %d must contain at least one of: entity_type, company_role, specialization, companyName, companyWebsite", i+1))
+				}
+				parsed = append(parsed, criteria)
+			}
+			f.ParsedCompanyCriteria = parsed
+			hasCompanyEntity := false
+			advanceStr := strings.ToLower(strings.TrimSpace(f.AdvanceSearchBy))
+			for _, entity := range strings.Split(advanceStr, ",") {
+				entity = strings.TrimSpace(entity)
+				if entity == "exhibitor" || entity == "sponsor" || entity == "organizer" {
+					hasCompanyEntity = true
+					break
+				}
+			}
+			if !hasCompanyEntity {
+				searchByEntityStr := strings.ToLower(strings.TrimSpace(f.SearchByEntity))
+				for _, entity := range strings.Split(searchByEntityStr, ",") {
+					if strings.TrimSpace(entity) == "company" {
+						hasCompanyEntity = true
+						break
+					}
+				}
+			}
+			if !hasCompanyEntity {
+				return validation.NewError("company_criteria_requires_advance_search_by",
+					"advanceSearchBy or searchByEntity is required when companyCriteria is provided. Provide advanceSearchBy with at least one of: exhibitor, sponsor, organizer. Alternatively, provide searchByEntity=company")
+			}
+			return nil
+		}))),
+
 		validation.Field(&f.Published, validation.When(f.Published != "", validation.By(func(value interface{}) error {
 			publishedStr := value.(string)
 			publishedStr = strings.ReplaceAll(publishedStr, "&", ",")
@@ -2097,37 +2246,11 @@ func (f *FilterDataDto) Validate() error {
 		}))),
 
 		validation.Field(&f.EditionType, validation.By(func(value interface{}) error {
-			editionTypeStr := value.(string)
-			if editionTypeStr == "" {
-				editionTypeStr = "current"
+			parsed, err := ParseEditionType(f.EditionType, "current")
+			if err != nil {
+				return err
 			}
-			editionTypes := strings.Split(editionTypeStr, ",")
-			f.ParsedEditionType = make([]string, 0, len(editionTypes))
-			validEditionTypes := map[string][]string{
-				"all":     {"current_edition", "past_edition", "future_edition"},
-				"current": {"current_edition"},
-				"past":    {"past_edition"},
-				"future":  {"future_edition"},
-			}
-			seenDbValues := make(map[string]bool)
-			for _, editionType := range editionTypes {
-				editionType = strings.TrimSpace(strings.ToLower(editionType))
-				if editionType != "" {
-					if dbValues, exists := validEditionTypes[editionType]; exists {
-						for _, dbValue := range dbValues {
-							if !seenDbValues[dbValue] {
-								f.ParsedEditionType = append(f.ParsedEditionType, dbValue)
-								seenDbValues[dbValue] = true
-							}
-						}
-					} else {
-						return validation.NewError("invalid_edition_type", "Invalid editionType value: "+editionType+". Valid values are: all, current, past, future")
-					}
-				}
-			}
-			if len(f.ParsedEditionType) == 0 {
-				f.ParsedEditionType = []string{"current_edition"}
-			}
+			f.ParsedEditionType = parsed
 			return nil
 		})),
 

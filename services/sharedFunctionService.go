@@ -338,6 +338,172 @@ func (s *SharedFunctionService) matchWebsiteConverter(fieldName string, searchTe
 	return fmt.Sprintf("lower(%s) LIKE '%%%s%%'", fieldName, strings.ToLower(escapedValue))
 }
 
+func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.CompanyCriteria, cteIndex int) string {
+	if criteria == nil {
+		return ""
+	}
+	escapeVal := func(v string) string {
+		v = strings.TrimSpace(v)
+		v = strings.ReplaceAll(v, "'", "''")
+		return fmt.Sprintf("'%s'", strings.ToLower(v))
+	}
+	var orClauses []string
+	numDimensions := 0
+
+	if len(criteria.EntityType) > 0 {
+		vals := make([]string, 0, len(criteria.EntityType))
+		for _, v := range criteria.EntityType {
+			if t := strings.TrimSpace(v); t != "" {
+				vals = append(vals, escapeVal(t))
+			}
+		}
+		if len(vals) > 0 {
+			orClauses = append(orClauses, fmt.Sprintf("(classification_type = 'entity_type' AND lower(classification_name) IN (%s))", strings.Join(vals, ",")))
+			numDimensions++
+		}
+	}
+	if len(criteria.CompanyRole) > 0 {
+		vals := make([]string, 0, len(criteria.CompanyRole))
+		for _, v := range criteria.CompanyRole {
+			if t := strings.TrimSpace(v); t != "" {
+				vals = append(vals, escapeVal(t))
+			}
+		}
+		if len(vals) > 0 {
+			orClauses = append(orClauses, fmt.Sprintf("(classification_type = 'company_role' AND lower(classification_name) IN (%s))", strings.Join(vals, ",")))
+			numDimensions++
+		}
+	}
+	if len(criteria.Specialization) > 0 {
+		vals := make([]string, 0, len(criteria.Specialization))
+		for _, v := range criteria.Specialization {
+			if t := strings.TrimSpace(v); t != "" {
+				vals = append(vals, escapeVal(t))
+			}
+		}
+		if len(vals) > 0 {
+			orClauses = append(orClauses, fmt.Sprintf("(classification_type = 'specialization' AND lower(classification_name) IN (%s))", strings.Join(vals, ",")))
+			numDimensions++
+		}
+	}
+	if len(orClauses) == 0 {
+		return ""
+	}
+	cteName := fmt.Sprintf("classified_company_ids_%d", cteIndex)
+	whereClause := strings.Join(orClauses, " OR ")
+	havingClause := fmt.Sprintf("count(DISTINCT classification_type) = %d", numDimensions)
+	return fmt.Sprintf(`%s AS (
+		SELECT company_id
+		FROM testing_db.company_classification_ch
+		WHERE %s
+		GROUP BY company_id
+		HAVING %s
+	)`, cteName, whereClause, havingClause)
+}
+
+func (s *SharedFunctionService) buildMultiRowCompanyCriteriaCTEsAndCondition(criteriaList []models.CompanyCriteria, nameField string) (ctes []string, cteNamesByRow []string, condition string) {
+	if len(criteriaList) == 0 {
+		return nil, nil, ""
+	}
+	cteNamesByRow = make([]string, len(criteriaList))
+	cteIndex := 1
+	var rowConditions []string
+	for i := range criteriaList {
+		criteria := &criteriaList[i]
+		hasClassFilters := len(criteria.EntityType) > 0 || len(criteria.CompanyRole) > 0 || len(criteria.Specialization) > 0
+		cteName := ""
+		if hasClassFilters {
+			cte := s.buildClassifiedCompanyIdsCTE(criteria, cteIndex)
+			if cte != "" {
+				ctes = append(ctes, cte)
+				cteName = fmt.Sprintf("classified_company_ids_%d", cteIndex)
+				cteNamesByRow[i] = cteName
+				cteIndex++
+			}
+		}
+		rowCond := s.buildCompanyCriteriaCondition(criteria, cteName, nameField)
+		if rowCond != "" {
+			rowConditions = append(rowConditions, rowCond)
+		}
+	}
+	if len(rowConditions) == 0 {
+		return ctes, cteNamesByRow, ""
+	}
+	condition = fmt.Sprintf("(%s)", strings.Join(rowConditions, " OR "))
+	return ctes, cteNamesByRow, condition
+}
+
+func (s *SharedFunctionService) buildMultiRowCompanyCriteriaConditionOnly(criteriaList []models.CompanyCriteria, cteNamesByRow []string, nameField string) string {
+	if len(criteriaList) == 0 {
+		return ""
+	}
+	var rowConditions []string
+	for i := range criteriaList {
+		cteName := ""
+		if i < len(cteNamesByRow) {
+			cteName = cteNamesByRow[i]
+		}
+		rowCond := s.buildCompanyCriteriaCondition(&criteriaList[i], cteName, nameField)
+		if rowCond != "" {
+			rowConditions = append(rowConditions, rowCond)
+		}
+	}
+	if len(rowConditions) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("(%s)", strings.Join(rowConditions, " OR "))
+}
+
+func (s *SharedFunctionService) buildCompanyCriteriaCondition(criteria *models.CompanyCriteria, cteName string, nameField string) string {
+	if criteria == nil {
+		return ""
+	}
+	if nameField == "" {
+		nameField = "company_id_name"
+	}
+	var parts []string
+	if len(criteria.CompanyName) > 0 {
+		var nameConds []string
+		for _, name := range criteria.CompanyName {
+			if c := s.matchPhraseConverter(nameField, name); c != "" {
+				nameConds = append(nameConds, c)
+			}
+		}
+		if len(nameConds) > 0 {
+			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(nameConds, " OR ")))
+		}
+	}
+	if len(criteria.CompanyWebsite) > 0 {
+		var webConds []string
+		for _, web := range criteria.CompanyWebsite {
+			if c := s.matchWebsiteConverter("company_website", web); c != "" {
+				webConds = append(webConds, c)
+			}
+		}
+		if len(webConds) > 0 {
+			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(webConds, " OR ")))
+		}
+	}
+	nameOrWebPart := ""
+	if len(parts) > 0 {
+		nameOrWebPart = fmt.Sprintf("(%s)", strings.Join(parts, " OR "))
+	}
+	classificationPart := ""
+	if cteName != "" {
+		classificationPart = fmt.Sprintf("company_id IN (SELECT company_id FROM %s)", cteName)
+	}
+	if nameOrWebPart != "" && classificationPart != "" {
+		return fmt.Sprintf("(%s AND %s)", nameOrWebPart, classificationPart)
+	}
+	if classificationPart != "" {
+		return classificationPart
+	}
+	if nameOrWebPart != "" {
+		return nameOrWebPart
+	}
+	return ""
+}
+
 func (s *SharedFunctionService) extractDomain(website string) string {
 	website = strings.TrimSpace(website)
 	if website == "" {
@@ -680,13 +846,14 @@ type ClickHouseQueryResult struct {
 	StateIdsWhereConditions       []string
 	CityIdsWhereConditions        []string
 	VenueIdsWhereConditions       []string
-	HasRegionsFilter              bool
 	HasCountryFilter              bool
-	NeedsLocationIdsJoin          bool
-	NeedsCountryIdsJoin           bool
-	NeedsStateIdsJoin             bool
-	NeedsCityIdsJoin              bool
-	NeedsVenueIdsJoin             bool
+	NeedsLocationIdsJoin            bool
+	NeedsCountryIdsJoin             bool
+	NeedsStateIdsJoin               bool
+	NeedsCityIdsJoin                bool
+	NeedsVenueIdsJoin               bool
+	NeedsClassifiedCompanyIdsCTE bool
+	ClassifiedCompanyIdsCTEs    []string 
 }
 
 func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterDataDto) (*ClickHouseQueryResult, error) {
@@ -709,13 +876,14 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		VenueIdsWhereConditions:       make([]string, 0),
 		UserIdWhereConditions:         make([]string, 0),
 		CompanyIdWhereConditions:      make([]string, 0),
-		HasRegionsFilter:              false,
 		HasCountryFilter:              false,
 		NeedsLocationIdsJoin:          false,
 		NeedsCountryIdsJoin:           false,
 		NeedsStateIdsJoin:             false,
 		NeedsCityIdsJoin:              false,
 		NeedsVenueIdsJoin:             false,
+		NeedsClassifiedCompanyIdsCTE: false,
+		ClassifiedCompanyIdsCTEs:     nil,
 	}
 
 	whereConditions := make([]string, 0)
@@ -1115,6 +1283,32 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		}
 	}
 
+	if len(filterFields.ParsedCompanyCriteria) > 0 && len(filterFields.ParsedAdvancedSearchBy) > 0 {
+		criteriaList := filterFields.ParsedCompanyCriteria
+		_, _, hasExhibitor, hasSponsor, hasOrganizer := getEntityTypes()
+		ctes, cteNamesByRow, condition := s.buildMultiRowCompanyCriteriaCTEsAndCondition(criteriaList, "company_id_name")
+		if len(ctes) > 0 {
+			result.NeedsClassifiedCompanyIdsCTE = true
+			result.ClassifiedCompanyIdsCTEs = ctes
+		}
+		if condition != "" {
+			if hasExhibitor {
+				result.NeedsExhibitorJoin = true
+				result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, condition)
+			}
+			if hasSponsor {
+				result.NeedsSponsorJoin = true
+				result.SponsorWhereConditions = append(result.SponsorWhereConditions, condition)
+			}
+			if hasOrganizer {
+				organizerCond := s.buildMultiRowCompanyCriteriaConditionOnly(criteriaList, cteNamesByRow, "company_name")
+				if organizerCond != "" {
+					result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, organizerCond)
+				}
+			}
+		}
+	}
+
 	exhibitorFilters := []string{"ExhibitorName", "ExhibitorWebsite", "ExhibitorDomain", "ExhibitorCountry", "ExhibitorCity", "ExhibitorFacebook", "ExhibitorTwitter", "ExhibitorLinkedin", "ExhibitorState"}
 	hasExhibitorFilters := false
 	for _, filter := range exhibitorFilters {
@@ -1332,12 +1526,16 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	if len(filterFields.ParsedRegions) > 0 {
 		result.NeedsRegionsJoin = true
-		result.HasRegionsFilter = true
-		regions := make([]string, len(filterFields.ParsedRegions))
-		for i, region := range filterFields.ParsedRegions {
-			regions[i] = escapeSqlValue(region)
+		quotedRegions := make([]string, 0, len(filterFields.ParsedRegions))
+		for _, region := range filterFields.ParsedRegions {
+			escaped := strings.ReplaceAll(region, "'", "''")
+			quotedRegions = append(quotedRegions, fmt.Sprintf("'%s'", escaped))
 		}
-		result.RegionsWhereConditions = append(result.RegionsWhereConditions, fmt.Sprintf("regions IS NOT NULL AND length(regions) > 0 AND regions[1] IN (%s)", strings.Join(regions, ",")))
+		regionsArrayLiteral := "[" + strings.Join(quotedRegions, ", ") + "]"
+		result.RegionsWhereConditions = append(
+			result.RegionsWhereConditions,
+			fmt.Sprintf("published = 1 AND location_type = 'COUNTRY' AND hasAny(ifNull(regions, []), %s)", regionsArrayLiteral),
+		)
 	}
 
 	if len(filterFields.ParsedCountry) > 0 {
@@ -1395,9 +1593,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	s.addEstimatedExhibitorsFilter(&whereConditions, filterFields)
 
-	if !result.HasRegionsFilter {
-		s.addInFilter("country", "edition_country", &whereConditions, filterFields)
-	}
+	s.addInFilter("country", "edition_country", &whereConditions, filterFields)
 	s.addInFilter("venue", "venue_name", &whereConditions, filterFields)
 	s.addInFilter("company", "company_name", &whereConditions, filterFields)
 	s.addInFilter("companyCountry", "company_country", &whereConditions, filterFields)
@@ -1470,7 +1666,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			lonField := "COALESCE(ee.venue_long, ee.edition_city_long)"
 			coordinateExistsCondition := "(ee.venue_lat IS NOT NULL AND ee.venue_long IS NOT NULL) OR (ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL)"
 			distanceCondition := fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
-				geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters)
+				geoCoords.Longitude, geoCoords.Latitude, lonField, latField, radiusInMeters)
 			whereConditions = append(whereConditions, fmt.Sprintf("(%s) AND %s", coordinateExistsCondition, distanceCondition))
 
 			if filterFields.EventDistanceOrder != "" {
@@ -1480,7 +1676,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 				}
 				log.Printf("viewBound distance sorting: EventDistanceOrder=%s, orderDirection=%s", filterFields.EventDistanceOrder, orderDirection)
 				result.DistanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, %s, %s) %s",
-					geoCoords.Latitude, geoCoords.Longitude, latField, lonField, orderDirection)
+					geoCoords.Longitude, geoCoords.Latitude, lonField, latField, orderDirection)
 			}
 		}
 	}
@@ -1509,7 +1705,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 					lonField := "COALESCE(ee.venue_long, ee.edition_city_long)"
 					coordinateExistsCondition := "(ee.venue_lat IS NOT NULL AND ee.venue_long IS NOT NULL) OR (ee.edition_city_lat IS NOT NULL AND ee.edition_city_long IS NOT NULL)"
 					distanceCondition := fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f",
-						geoCoords.Latitude, geoCoords.Longitude, latField, lonField, radiusInMeters)
+						geoCoords.Longitude, geoCoords.Latitude, lonField, latField, radiusInMeters)
 					whereConditions = append(whereConditions, fmt.Sprintf("(%s) AND %s", coordinateExistsCondition, distanceCondition))
 				}
 				// case models.BoundTypeBox:
@@ -1789,17 +1985,8 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 	result.SearchClause = s.buildSearchClause(filterFields)
 
-	if result.HasRegionsFilter {
-		countryCondition := "ee.edition_country IN (SELECT iso FROM filtered_regions)"
-
-		if result.HasCountryFilter && len(filterFields.ParsedCountry) > 0 {
-			countries := make([]string, len(filterFields.ParsedCountry))
-			for i, country := range filterFields.ParsedCountry {
-				countries[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(country, "'", "''"))
-			}
-			countryCondition = fmt.Sprintf("(ee.edition_country IN (SELECT iso FROM filtered_regions) OR ee.edition_country IN (%s))", strings.Join(countries, ","))
-		}
-		whereConditions = append(whereConditions, countryCondition)
+	if result.NeedsRegionsJoin {
+		whereConditions = append(whereConditions, "ee.edition_country IN (SELECT iso FROM filtered_regions WHERE iso IS NOT NULL)")
 	}
 
 	if result.NeedsLocationIdsJoin {
@@ -1939,6 +2126,8 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	needsCityIdsJoin bool,
 	needsVenueIdsJoin bool,
 	needsUserIdUnionCTE bool,
+	needsClassifiedCompanyIdsCTE bool,
+	classifiedCompanyIdsCTEs []string,
 	visitorWhereConditions []string,
 	speakerWhereConditions []string,
 	exhibitorWhereConditions []string,
@@ -1971,6 +2160,10 @@ func (s *SharedFunctionService) buildFilterCTEsAndJoins(
 	}
 
 	previousCTE := ""
+
+	if needsClassifiedCompanyIdsCTE && len(classifiedCompanyIdsCTEs) > 0 {
+		result.CTEClauses = append(result.CTEClauses, classifiedCompanyIdsCTEs...)
+	}
 
 	addJoinClause := func(joinClause string) {
 		if result.JoinClausesStr == "" {
@@ -2783,24 +2976,26 @@ func (s *SharedFunctionService) fixOrderByForCTE(orderByClause string, useAliase
 	}
 
 	fieldMappings := map[string]string{
-		"event_uuid":        "id",
-		"start_date":        "start",
-		"end_date":          "end",
-		"event_followers":   "followers",
-		"event_avgRating":   "avgRating",
-		"event_exhibitor":   "exhibitors",
-		"event_speaker":     "speakers",
-		"event_sponsor":     "sponsors",
-		"event_created":     "created",
-		"exhibitors_mean":   "estimatedExhibitors",
-		"edition_city_lat":  "lat",
-		"edition_city_long": "lon",
-		"venue_lat":         "venueLat",
-		"venue_long":        "venueLon",
-		"impact_score":      "impactScore",
-		"event_score":       "score",
-		"event_name":        "name",
-		"event_updated":     "updated",
+		"event_uuid":         "id",
+		"start_date":         "start",
+		"end_date":           "end",
+		"event_followers":    "followers",
+		"event_avgRating":    "avgRating",
+		"event_exhibitor":    "exhibitors",
+		"event_speaker":      "speakers",
+		"event_sponsor":      "sponsors",
+		"event_created":      "created",
+		"exhibitors_mean":    "estimatedExhibitors",
+		"edition_city_lat":   "lat",
+		"edition_city_long":  "lon",
+		"venue_lat":          "venueLat",
+		"venue_long":         "venueLon",
+		"impact_score":       "impactScore",
+		"event_score":        "score",
+		"event_name":         "name",
+		"event_updated":      "updated",
+		"internationalScore": "internationalScore",
+		"inboundScore":       "inboundScore",
 	}
 
 	if !useAliases {
@@ -3260,25 +3455,25 @@ func (s *SharedFunctionService) addGeographicFilters(whereConditions *[]string, 
 
 	if filterFields.Lat != "" && filterFields.Lon != "" && filterFields.Radius != "" && filterFields.Unit != "" {
 		lat, lon, radiusInMeters := s.transformDataService.parseCoordinates(filterFields.Lat, filterFields.Lon, filterFields.Radius, filterFields.Unit)
-		*whereConditions = append(*whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f", lat, lon, addTableAlias("edition_city_lat"), addTableAlias("edition_city_long"), radiusInMeters))
+		*whereConditions = append(*whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f", lon, lat, addTableAlias("edition_city_long"), addTableAlias("edition_city_lat"), radiusInMeters))
 		if filterFields.EventDistanceOrder != "" {
 			orderDirection := "ASC"
 			if filterFields.EventDistanceOrder == "farthest" {
 				orderDirection = "DESC"
 			}
-			distanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, lat, lon) %s", lat, lon, orderDirection)
+			distanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, lon, lat) %s", lon, lat, orderDirection)
 		}
 	}
 
 	if filterFields.VenueLatitude != "" && filterFields.VenueLongitude != "" && filterFields.Radius != "" && filterFields.Unit != "" {
 		lat, lon, radiusInMeters := s.transformDataService.parseCoordinates(filterFields.VenueLatitude, filterFields.VenueLongitude, filterFields.Radius, filterFields.Unit)
-		*whereConditions = append(*whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f", lat, lon, addTableAlias("venue_lat"), addTableAlias("venue_long"), radiusInMeters))
+		*whereConditions = append(*whereConditions, fmt.Sprintf("greatCircleDistance(%f, %f, %s, %s) <= %f", lon, lat, addTableAlias("venue_long"), addTableAlias("venue_lat"), radiusInMeters))
 		if distanceOrderClause == "" && filterFields.EventDistanceOrder != "" {
 			orderDirection := "ASC"
 			if filterFields.EventDistanceOrder == "farthest" {
 				orderDirection = "DESC"
 			}
-			distanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, venueLat, venueLon) %s", lat, lon, orderDirection)
+			distanceOrderClause = fmt.Sprintf("ORDER BY greatCircleDistance(%f, %f, venueLon, venueLat) %s", lon, lat, orderDirection)
 		}
 	}
 
@@ -3340,6 +3535,7 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 	eventFilterGroupByStr string,
 	hasEndDateFilters bool,
 	filterFields models.FilterDataDto,
+	includeUniqueEventCount bool,
 ) string {
 	today := time.Now().Format("2006-01-02")
 
@@ -3378,6 +3574,11 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 
 	whereClause := strings.Join(whereConditions, "\n\t\t\tAND ")
 
+	selectClause := "count(DISTINCT edition_id) AS total_count"
+	if includeUniqueEventCount {
+		selectClause = "count(DISTINCT edition_id) AS total_count, count(DISTINCT event_id) AS unique_event_count"
+	}
+
 	countQuery := fmt.Sprintf(`
 		WITH %sevent_filter AS (
 			SELECT %s
@@ -3385,15 +3586,9 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 			%s
 			WHERE %s
 			GROUP BY %s
-		),
-		event_data AS (
-			SELECT edition_id
-			FROM testing_db.allevent_ch AS ee
-			WHERE ee.edition_id in (SELECT edition_id from event_filter)
-			GROUP BY edition_id
 		)
-		SELECT count(*) as total_count
-		FROM event_data
+		SELECT %s
+		FROM event_filter
 	`,
 		cteClausesStr,
 		eventFilterSelectStr,
@@ -3404,21 +3599,15 @@ func (s *SharedFunctionService) buildListDataCountQuery(
 			return ""
 		}(),
 		whereClause,
-		eventFilterGroupByStr)
+		eventFilterGroupByStr,
+		selectClause)
 
 	return countQuery
 }
 
-func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) (int, error) {
-	queryResult, err := s.buildClickHouseQuery(filterFields)
-	if err != nil {
-		log.Printf("Error building ClickHouse query: %v", err)
-		return 0, err
-	}
-
+func (s *SharedFunctionService) buildMinimalEventFilterForUniqueCount(queryResult *ClickHouseQueryResult) (eventFilterSelectStr, eventFilterGroupByStr string) {
 	eventFilterSelectFields := []string{"ee.event_id as event_id", "ee.edition_id as edition_id"}
 	eventFilterGroupByFields := []string{"ee.event_id", "ee.edition_id"}
-
 	if queryResult.DistanceOrderClause != "" && strings.Contains(queryResult.DistanceOrderClause, "greatCircleDistance") {
 		if strings.Contains(queryResult.DistanceOrderClause, "lat") && strings.Contains(queryResult.DistanceOrderClause, "lon") {
 			eventFilterSelectFields = append(eventFilterSelectFields, "ee.edition_city_lat as lat")
@@ -3433,9 +3622,17 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 			eventFilterGroupByFields = append(eventFilterGroupByFields, "venueLon")
 		}
 	}
+	return strings.Join(eventFilterSelectFields, ", "), strings.Join(eventFilterGroupByFields, ", ")
+}
 
-	eventFilterSelectStr := strings.Join(eventFilterSelectFields, ", ")
-	eventFilterGroupByStr := strings.Join(eventFilterGroupByFields, ", ")
+func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto, includeUniqueEventCount bool) (total int, unique int, err error) {
+	queryResult, err := s.buildClickHouseQuery(filterFields)
+	if err != nil {
+		log.Printf("Error building ClickHouse query: %v", err)
+		return 0, 0, err
+	}
+
+	eventFilterSelectStr, eventFilterGroupByStr := s.buildMinimalEventFilterForUniqueCount(queryResult)
 
 	var resolvedCountryIsos, resolvedCategoryNames []string
 	if queryResult.NeedsEventRankingJoin {
@@ -3459,6 +3656,8 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 		queryResult.NeedsCityIdsJoin,
 		queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
+		queryResult.NeedsClassifiedCompanyIdsCTE,
+		queryResult.ClassifiedCompanyIdsCTEs,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -3496,6 +3695,7 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 		eventFilterGroupByStr,
 		hasEndDateFilters,
 		filterFields,
+		includeUniqueEventCount,
 	)
 
 	log.Printf("Count query: %s", countQuery)
@@ -3504,22 +3704,29 @@ func (s *SharedFunctionService) getCountOnly(filterFields models.FilterDataDto) 
 	countResult, err := s.clickhouseService.ExecuteQuery(context.Background(), countQuery)
 	if err != nil {
 		log.Printf("ClickHouse count query error: %v", err)
-		return 0, err
+		return 0, 0, err
 	}
 	defer countResult.Close()
 
 	countQueryDuration := time.Since(countQueryTime)
 	log.Printf("Count query time: %v", countQueryDuration)
 
-	var totalCount uint64
+	var totalCount, uniqueCount uint64
 	if countResult.Next() {
-		if err := countResult.Scan(&totalCount); err != nil {
-			log.Printf("Error scanning count result: %v", err)
-			return 0, err
+		if includeUniqueEventCount {
+			if err := countResult.Scan(&totalCount, &uniqueCount); err != nil {
+				log.Printf("Error scanning count result: %v", err)
+				return 0, 0, err
+			}
+		} else {
+			if err := countResult.Scan(&totalCount); err != nil {
+				log.Printf("Error scanning count result: %v", err)
+				return 0, 0, err
+			}
 		}
 	}
 
-	return int(totalCount), nil
+	return int(totalCount), int(uniqueCount), nil
 }
 
 func (s *SharedFunctionService) buildMultiDayDateSelect() string {
@@ -3825,6 +4032,10 @@ func (s *SharedFunctionService) buildNestedAggregationQuery(parentField string, 
 			WHERE %s
 		)`, venueIdsWhereClause)
 		cteClauses = append(cteClauses, venueIdsCTE)
+	}
+
+	if queryResult.NeedsClassifiedCompanyIdsCTE && len(queryResult.ClassifiedCompanyIdsCTEs) > 0 {
+		cteClauses = append(cteClauses, queryResult.ClassifiedCompanyIdsCTEs...)
 	}
 
 	if queryResult.NeedsVisitorJoin {
@@ -4853,20 +5064,34 @@ type EventLocationData struct {
 	EditionCountry     *string
 }
 
-func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32, filterFields models.FilterDataDto) (map[uint32]*EventLocationData, error) {
-	if len(eventIds) == 0 {
+func (s *SharedFunctionService) FetchEventLocationData(ids []uint32, filterFields models.FilterDataDto, byEdition bool) (map[uint32]*EventLocationData, error) {
+	if len(ids) == 0 {
 		return make(map[uint32]*EventLocationData), nil
 	}
 
-	var eventIdsStr []string
-	for _, id := range eventIds {
-		eventIdsStr = append(eventIdsStr, fmt.Sprintf("%d", id))
+	var idsStr []string
+	for _, id := range ids {
+		idsStr = append(idsStr, fmt.Sprintf("%d", id))
 	}
-	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
+	idsStrJoined := strings.Join(idsStr, ",")
 
-	editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
-
-	query := fmt.Sprintf(`
+	var query string
+	if byEdition {
+		query = fmt.Sprintf(`
+		SELECT 
+			edition_id,
+			venue_id,
+			venue_city,
+			edition_city,
+			edition_city_state_id,
+			edition_country
+		FROM testing_db.allevent_ch
+		WHERE edition_id IN (%s)
+		GROUP BY edition_id, venue_id, venue_city, edition_city, edition_city_state_id, edition_country
+	`, idsStrJoined)
+	} else {
+		editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
+		query = fmt.Sprintf(`
 		SELECT 
 			event_id,
 			venue_id,
@@ -4878,7 +5103,8 @@ func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32, filter
 		WHERE event_id IN (%s)
 		AND %s
 		GROUP BY event_id, venue_id, venue_city, edition_city, edition_city_state_id, edition_country
-	`, eventIdsStrJoined, editionTypeCondition)
+	`, idsStrJoined, editionTypeCondition)
+	}
 
 	log.Printf("Event location data query: %s", query)
 
@@ -4892,16 +5118,19 @@ func (s *SharedFunctionService) FetchEventLocationData(eventIds []uint32, filter
 	locationDataMap := make(map[uint32]*EventLocationData)
 
 	for rows.Next() {
-		var eventID uint32
+		var rowID uint32
 		var venueID, venueCity, editionCity, editionCityStateID *uint32
 		var editionCountry *string
 
-		if err := rows.Scan(&eventID, &venueID, &venueCity, &editionCity, &editionCityStateID, &editionCountry); err != nil {
+		if err := rows.Scan(&rowID, &venueID, &venueCity, &editionCity, &editionCityStateID, &editionCountry); err != nil {
 			log.Printf("Error scanning event location data row: %v", err)
 			continue
 		}
-
-		locationDataMap[eventID] = &EventLocationData{
+		// Keep first row per id; skip later rows so we don't override
+		if _, exists := locationDataMap[rowID]; exists {
+			continue
+		}
+		locationDataMap[rowID] = &EventLocationData{
 			VenueID:            venueID,
 			VenueCity:          venueCity,
 			EditionCity:        editionCity,
@@ -5405,8 +5634,8 @@ func (s *SharedFunctionService) transformLocationData(locations map[string]map[s
 	return nil
 }
 
-func (s *SharedFunctionService) GetEventLocations(eventIds []uint32, filterFields models.FilterDataDto) (map[string]map[string]interface{}, error) {
-	locationDataMap, err := s.FetchEventLocationData(eventIds, filterFields)
+func (s *SharedFunctionService) GetEventLocations(ids []uint32, filterFields models.FilterDataDto, byEdition bool) (map[string]map[string]interface{}, error) {
+	locationDataMap, err := s.FetchEventLocationData(ids, filterFields, byEdition)
 	if err != nil {
 		return nil, err
 	}
@@ -6452,6 +6681,13 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 		return nil, fmt.Errorf("unsupported location groupBy: %s", groupBy)
 	}
 
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+
+	countSelect := "COUNT(DISTINCT e.event_id) AS count"
+	if hasPast {
+		countSelect = "COUNT(e.event_id) AS count, COUNT(DISTINCT e.event_id) AS uniqueEventCount"
+	}
+
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
 			SELECT
@@ -6464,7 +6700,7 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 				e.edition_id
 		)
 		SELECT
-			COUNT(DISTINCT e.event_id) AS count,
+			%s,
 			toUUIDOrNull(toString(loc.id_uuid)) AS id,
 			loc.name AS name,
 			loc.latitude AS latitude,
@@ -6485,6 +6721,7 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 			return ""
 		}(),
 		whereClause,
+		countSelect,
 		locationJoinCondition,
 		locationWhereCondition,
 	)
@@ -6500,48 +6737,95 @@ func (s *SharedFunctionService) GetEventCountByLocation(
 
 	var result []map[string]interface{}
 	for rows.Next() {
-		var count uint64
-		var idUUID uuid.UUID
-		var name, code *string
-		var latitude, longitude *float64
+		item := map[string]interface{}{}
 
-		if err := rows.Scan(&count, &idUUID, &name, &latitude, &longitude, &code); err != nil {
-			log.Printf("Error scanning result: %v", err)
-			continue
-		}
+		if hasPast {
+			var totalCount uint64
+			var uniqueCount uint64
+			var idUUID uuid.UUID
+			var name, code *string
+			var latitude, longitude *float64
 
-		item := map[string]interface{}{
-			"count": int(count),
-		}
+			if err := rows.Scan(&totalCount, &uniqueCount, &idUUID, &name, &latitude, &longitude, &code); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				continue
+			}
 
-		if idUUID != uuid.Nil {
-			item["id"] = idUUID.String()
+			item["count"] = int(totalCount)
+			item["uniqueEventCount"] = int(uniqueCount)
+
+			if idUUID != uuid.Nil {
+				item["id"] = idUUID.String()
+			} else {
+				item["id"] = nil
+			}
+
+			if name != nil {
+				item["name"] = *name
+			} else {
+				item["name"] = nil
+			}
+
+			if latitude != nil {
+				item["latitude"] = *latitude
+			} else {
+				item["latitude"] = nil
+			}
+
+			if longitude != nil {
+				item["longitude"] = *longitude
+			} else {
+				item["longitude"] = nil
+			}
+
+			if code != nil {
+				item["code"] = *code
+			} else {
+				item["code"] = nil
+			}
+
 		} else {
-			item["id"] = nil
-		}
+			var count uint64
+			var idUUID uuid.UUID
+			var name, code *string
+			var latitude, longitude *float64
 
-		if name != nil {
-			item["name"] = *name
-		} else {
-			item["name"] = nil
-		}
+			if err := rows.Scan(&count, &idUUID, &name, &latitude, &longitude, &code); err != nil {
+				log.Printf("Error scanning result: %v", err)
+				continue
+			}
 
-		if latitude != nil {
-			item["latitude"] = *latitude
-		} else {
-			item["latitude"] = nil
-		}
+			item["count"] = int(count)
 
-		if longitude != nil {
-			item["longitude"] = *longitude
-		} else {
-			item["longitude"] = nil
-		}
+			if idUUID != uuid.Nil {
+				item["id"] = idUUID.String()
+			} else {
+				item["id"] = nil
+			}
 
-		if code != nil {
-			item["code"] = *code
-		} else {
-			item["code"] = nil
+			if name != nil {
+				item["name"] = *name
+			} else {
+				item["name"] = nil
+			}
+
+			if latitude != nil {
+				item["latitude"] = *latitude
+			} else {
+				item["latitude"] = nil
+			}
+
+			if longitude != nil {
+				item["longitude"] = *longitude
+			} else {
+				item["longitude"] = nil
+			}
+
+			if code != nil {
+				item["code"] = *code
+			} else {
+				item["code"] = nil
+			}
 		}
 
 		result = append(result, item)
@@ -6610,8 +6894,16 @@ func (s *SharedFunctionService) GetEventCountByDate(
 		return nil, fmt.Errorf("unsupported date groupBy: %s", groupBy)
 	}
 
-	preFilterSelect := "e.event_id"
+	preFilterSelect := "e.event_id, e.edition_type"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+
+	var selectExpr string
+	if hasPast {
+		selectExpr = fmt.Sprintf("%s AS date_key, COUNT(e.event_id) AS count, COUNT(DISTINCT e.event_id) AS uniqueEventCount", dateGroupByExpr)
+	} else {
+		selectExpr = fmt.Sprintf("%s AS date_key, uniq(e.event_id) AS count", dateGroupByExpr)
+	}
 
 	query := fmt.Sprintf(`
 		WITH %spreFilterEvent AS (
@@ -6622,8 +6914,7 @@ func (s *SharedFunctionService) GetEventCountByDate(
 			WHERE %s
 		)
 		SELECT
-			%s AS date_key,
-			uniq(e.event_id) AS count
+			%s
 		FROM preFilterEvent e
 		GROUP BY date_key
 		ORDER BY date_key ASC
@@ -6637,7 +6928,7 @@ func (s *SharedFunctionService) GetEventCountByDate(
 			return ""
 		}(),
 		whereClause,
-		dateGroupByExpr,
+		selectExpr,
 	)
 
 	log.Printf("Event count by %s query: %s", groupBy, query)
@@ -6656,26 +6947,46 @@ func (s *SharedFunctionService) GetEventCountByDate(
 
 	for rows.Next() {
 		var dateKey string
-		var count uint64
 
-		if err := rows.Scan(&dateKey, &count); err != nil {
-			log.Printf("Error scanning row: %v", err)
-			continue
-		}
-
-		item := map[string]interface{}{
-			"date":  dateKey,
-			"count": int(count),
-		}
-
-		dayCount = append(dayCount, item)
-
-		if groupBy == "month" || groupBy == "year" {
-			switch groupBy {
-			case "month":
-				monthCount = append(monthCount, item)
-			case "year":
-				yearCount = append(yearCount, item)
+		if hasPast {
+			var totalCount uint64
+			var uniqueCount uint64
+			if err := rows.Scan(&dateKey, &totalCount, &uniqueCount); err != nil {
+				log.Printf("Error scanning row: %v", err)
+				continue
+			}
+			item := map[string]interface{}{
+				"date":             dateKey,
+				"count":            int(totalCount),
+				"uniqueEventCount": int(uniqueCount),
+			}
+			dayCount = append(dayCount, item)
+			if groupBy == "month" || groupBy == "year" {
+				switch groupBy {
+				case "month":
+					monthCount = append(monthCount, item)
+				case "year":
+					yearCount = append(yearCount, item)
+				}
+			}
+		} else {
+			var count uint64
+			if err := rows.Scan(&dateKey, &count); err != nil {
+				log.Printf("Error scanning row: %v", err)
+				continue
+			}
+			item := map[string]interface{}{
+				"date":  dateKey,
+				"count": int(count),
+			}
+			dayCount = append(dayCount, item)
+			if groupBy == "month" || groupBy == "year" {
+				switch groupBy {
+				case "month":
+					monthCount = append(monthCount, item)
+				case "year":
+					yearCount = append(yearCount, item)
+				}
 			}
 		}
 	}
@@ -6774,7 +7085,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 		)
 	}
 
-	preFilterSelect := "e.event_id, e.impactScore"
+	preFilterSelect := "e.event_id, e.edition_id, e.impactScore, e.edition_type"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
 
 	if (filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords")) ||
@@ -6783,6 +7094,17 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	}
 
 	eventTypePublishedCondForGrouped := GetEventTypePublishedConditionForJoin(filterFields.ParsedEventTypes, "et")
+
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
+	eventsCountSelect := "uniq(e.event_id) AS eventsCount"
+	if hasPast {
+		eventsCountSelect = `COUNT(DISTINCT e.edition_id) AS eventsCount,
+            COUNT(DISTINCT e.event_id) AS uniqueEventCount,
+            sum(CASE WHEN e.edition_type = 'past_edition' THEN e.impactScore ELSE 0 END) AS pastEditionSum,
+            sum(CASE WHEN e.edition_type = 'current_edition' THEN e.impactScore ELSE 0 END) AS currentEditionSum,
+            COUNT(DISTINCT CASE WHEN e.edition_type = 'past_edition' THEN e.edition_id ELSE NULL END) AS uniquePastEventCount,
+            COUNT(DISTINCT CASE WHEN e.edition_type = 'current_edition' THEN e.edition_id ELSE NULL END) AS uniqueCurrentEventCount`
+	}
 
 	query := fmt.Sprintf(`
 		WITH %sdate_series AS (
@@ -6800,7 +7122,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 			SELECT
 				ds.date,
 				group_name,
-				uniq(e.event_id) AS eventsCount,
+				%s,
 				sum(e.impactScore) AS eventImpactScore
 			FROM preFilterEvent e
 			INNER JOIN date_series ds ON true
@@ -6826,6 +7148,7 @@ func (s *SharedFunctionService) GetEventCountByDay(
 			return ""
 		}(),
 		preFilterWhereClause,
+		eventsCountSelect,
 		eventTypePublishedCondForGrouped,
 		func() string {
 			conditions := []string{}
@@ -6862,20 +7185,43 @@ func (s *SharedFunctionService) GetEventCountByDay(
 	for rows.Next() {
 		var date time.Time
 		var groupName string
-		var eventsCount uint64
 		var eventImpactScore uint64
 
-		if err := rows.Scan(&date, &groupName, &eventsCount, &eventImpactScore); err != nil {
-			log.Printf("Error scanning row: %v", err)
-			continue
+		if hasPast {
+			var totalCount uint64
+			var uniqueCount uint64
+			var pastSum uint64
+			var currentSum uint64
+			var uniquePast uint64
+			var uniqueCurrent uint64
+			if err := rows.Scan(&date, &groupName, &totalCount, &uniqueCount, &pastSum, &currentSum, &uniquePast, &uniqueCurrent, &eventImpactScore); err != nil {
+				log.Printf("Error scanning row: %v", err)
+				continue
+			}
+			rowsData = append(rowsData, map[string]interface{}{
+				"date":                    date.Format("2006-01-02"),
+				"group_name":              groupName,
+				"eventsCount":             int(totalCount),
+				"uniqueEventCount":        int(uniqueCount),
+				"pastEditionSum":          int(pastSum),
+				"currentEditionSum":       int(currentSum),
+				"uniquePastEventCount":    int(uniquePast),
+				"uniqueCurrentEventCount": int(uniqueCurrent),
+				"eventImpactScore":        float64(eventImpactScore),
+			})
+		} else {
+			var eventsCount uint64
+			if err := rows.Scan(&date, &groupName, &eventsCount, &eventImpactScore); err != nil {
+				log.Printf("Error scanning row: %v", err)
+				continue
+			}
+			rowsData = append(rowsData, map[string]interface{}{
+				"date":             date.Format("2006-01-02"),
+				"group_name":       groupName,
+				"eventsCount":      int(eventsCount),
+				"eventImpactScore": float64(eventImpactScore),
+			})
 		}
-
-		rowsData = append(rowsData, map[string]interface{}{
-			"date":             date.Format("2006-01-02"),
-			"group_name":       groupName,
-			"eventsCount":      int(eventsCount),
-			"eventImpactScore": float64(eventImpactScore),
-		})
 	}
 
 	return rowsData, nil
@@ -6906,31 +7252,112 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 
 	switch column {
 	case "eventCount":
-		selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors, "COUNT(e.event_id) AS eventCount", "COUNT(DISTINCT e.event_id) AS uniqueEventCount")
+		} else {
+			selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+		}
 	case "predictedAttendance":
-		selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.estimatedVisitorsMean ELSE 0 END) AS predictedAttendance",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS uniquePredictedAttendance",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
+		}
 	case "inboundEstimate":
-		selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.inboundAttendance ELSE 0 END) AS inboundEstimate",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.inboundAttendance ELSE 0 END) AS uniqueInboundEstimate",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+		}
 	case "internationalEstimate":
-		selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.internationalAttendance ELSE 0 END) AS internationalEstimate",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.internationalAttendance ELSE 0 END) AS uniqueInternationalEstimate",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+		}
 	case "impactScore":
-		selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.impactScore ELSE 0 END) AS impactScore",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.impactScore ELSE 0 END) AS uniqueImpactScore",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+		}
 	case "economicImpact":
-		selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.event_economic_value ELSE 0 END) AS economicImpact",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.event_economic_value ELSE 0 END) AS uniqueEconomicImpact",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
+		}
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
 		switch column {
 		case "hotel":
-			selectors = append(selectors, "sum(ed.value) AS hotel")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS hotel",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueHotel",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS hotel")
+			}
 		case "food":
-			selectors = append(selectors, "sum(ed.value) AS food")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS food",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueFood",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS food")
+			}
 		case "entertainment":
-			selectors = append(selectors, "sum(ed.value) AS entertainment")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS entertainment",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueEntertainment",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS entertainment")
+			}
 		case "airline":
-			selectors = append(selectors, "sum(ed.value) AS airline")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS airline",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueAirline",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS airline")
+			}
 		case "transport":
-			selectors = append(selectors, "sum(ed.value) AS transport")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS transport",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueTransport",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS transport")
+			}
 		case "utilitie":
-			selectors = append(selectors, "sum(ed.value) AS utilitie")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS utilitie",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueUtilitie",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS utilitie")
+			}
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -6998,7 +7425,7 @@ func (s *SharedFunctionService) getTrendsCountByDayInternal(
 		joinStr = strings.Join(joinClauses, "\n            ")
 	}
 
-	preFilterSelect := "e.event_id"
+	preFilterSelect := "e.event_id, e.edition_type"
 	if columnStr != "eventCount" {
 		switch columnStr {
 		case "predictedAttendance":
@@ -7268,32 +7695,113 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 
 	switch column {
 	case "eventCount":
-		selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors, "COUNT(e.event_id) AS eventCount", "COUNT(DISTINCT e.event_id) AS uniqueEventCount")
+		} else {
+			selectors = append(selectors, "uniq(e.event_id) AS eventCount")
+		}
 	case "predictedAttendance":
-		selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.estimatedVisitorsMean ELSE 0 END) AS predictedAttendance",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.estimatedVisitorsMean ELSE 0 END) AS uniquePredictedAttendance",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.estimatedVisitorsMean) AS predictedAttendance")
+		}
 	case "inboundEstimate":
-		selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.inboundAttendance ELSE 0 END) AS inboundEstimate",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.inboundAttendance ELSE 0 END) AS uniqueInboundEstimate",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.inboundAttendance) AS inboundEstimate")
+		}
 	case "internationalEstimate":
-		selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.internationalAttendance ELSE 0 END) AS internationalEstimate",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.internationalAttendance ELSE 0 END) AS uniqueInternationalEstimate",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.internationalAttendance) AS internationalEstimate")
+		}
 	case "impactScore":
-		selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.impactScore ELSE 0 END) AS impactScore",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.impactScore ELSE 0 END) AS uniqueImpactScore",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.impactScore) AS impactScore")
+		}
 	case "economicImpact":
-		selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
+		if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+			selectors = append(selectors,
+				"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN e.event_economic_value ELSE 0 END) AS economicImpact",
+				"sum(CASE WHEN e.edition_type = 'current_edition' THEN e.event_economic_value ELSE 0 END) AS uniqueEconomicImpact",
+			)
+		} else {
+			selectors = append(selectors, "sum(e.event_economic_value) AS economicImpact")
+		}
 	case "hotel", "food", "entertainment", "airline", "transport", "utilitie":
 		isDayWiseEconomicColumn = true
 		switch column {
 		case "hotel":
-			selectors = append(selectors, "sum(ed.value) AS hotel")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS hotel",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueHotel",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS hotel")
+			}
 		case "food":
-			selectors = append(selectors, "sum(ed.value) AS food")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS food",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueFood",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS food")
+			}
 		case "entertainment":
-			selectors = append(selectors, "sum(ed.value) AS entertainment")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS entertainment",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueEntertainment",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS entertainment")
+			}
 		case "airline":
-			selectors = append(selectors, "sum(ed.value) AS airline")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS airline",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueAirline",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS airline")
+			}
 		case "transport":
-			selectors = append(selectors, "sum(ed.value) AS transport")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS transport",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueTransport",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS transport")
+			}
 		case "utilitie":
-			selectors = append(selectors, "sum(ed.value) AS utilitie")
+			if models.HasPastInEditionType(filterFields.ParsedEditionType) {
+				selectors = append(selectors,
+					"sum(CASE WHEN e.edition_type IN ('past_edition', 'current_edition') THEN ed.value ELSE 0 END) AS utilitie",
+					"sum(CASE WHEN e.edition_type = 'current_edition' THEN ed.value ELSE 0 END) AS uniqueUtilitie",
+				)
+			} else {
+				selectors = append(selectors, "sum(ed.value) AS utilitie")
+			}
 		}
 	default:
 		return nil, fmt.Errorf("unsupported column: %s", column)
@@ -7361,7 +7869,7 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		joinStr = strings.Join(joinClauses, "\n            ")
 	}
 
-	preFilterSelect := "e.event_id"
+	preFilterSelect := "e.event_id, e.edition_type"
 	if columnStr != "eventCount" {
 		switch columnStr {
 		case "predictedAttendance":
@@ -7433,6 +7941,9 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		)
 		SELECT
 			%s
+		FROM preFilterEvent e
+		INNER JOIN testing_db.event_daywiseEconomicImpact_ch ed ON e.event_id = ed.event_id
+		INNER JOIN final_dates fd ON ed.date >= fd.start_date AND ed.date <= fd.end_date
 		FROM preFilterEvent e
 		INNER JOIN testing_db.event_daywiseEconomicImpact_ch ed ON e.event_id = ed.event_id
 		INNER JOIN final_dates fd ON ed.date >= fd.start_date AND ed.date <= fd.end_date
@@ -7615,7 +8126,7 @@ func (s *SharedFunctionService) GetEventCountByLongDurations(
 		return nil, fmt.Errorf("unsupported duration: %s. Valid options are: month, year, week", duration)
 	}
 
-	preFilterSelect := "e.event_id"
+	preFilterSelect := "e.event_id, e.edition_type"
 	preFilterSelect = s.buildPreFilterSelectDates(preFilterSelect, forecasted)
 
 	if (filterWhereClause != "" && strings.Contains(filterWhereClause, "keywords")) ||
@@ -8236,21 +8747,17 @@ func (s *SharedFunctionService) BuildCoordinatesAlertQuery(params models.AlertSe
 	if dateSeriesCTE != "" {
 		cteParts = append(cteParts, strings.TrimSpace(dateSeriesCTE))
 	}
-	cteParts = append(cteParts, fmt.Sprintf(`nearby_cities AS (
-			SELECT id
-			FROM testing_db.location_ch
-			WHERE location_type = 'CITY'
-				AND greatCircleDistance(longitude, latitude, %f, %f) <= %f
-		)`, lon, lat, radiusMeters))
 	defaultFilterFields := models.FilterDataDto{}
 	defaultFilterFields.SetDefaultValues()
 	editionTypeCondition := s.buildEditionTypeCondition(defaultFilterFields, "ee")
 	cteParts = append(cteParts, fmt.Sprintf(`filtered_events AS (
 			SELECT DISTINCT ee.event_id
 			FROM testing_db.allevent_ch AS ee
-			WHERE ee.venue_city IN (SELECT id FROM nearby_cities)
+			WHERE ee.edition_city_lat IS NOT NULL
+				AND ee.edition_city_long IS NOT NULL
+				AND greatCircleDistance(%f, %f, ee.edition_city_long, ee.edition_city_lat) <= %f
 				AND %s
-		)`, editionTypeCondition))
+		)`, lon, lat, radiusMeters, editionTypeCondition))
 	withClause := "WITH " + strings.Join(cteParts, ",\n\t\t")
 
 	if params.Required == "count" {
@@ -8317,6 +8824,7 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 	}
 
 	calendarType := *filterFields.ParsedCalendarType
+	hasPast := models.HasPastInEditionType(filterFields.ParsedEditionType)
 
 	switch calendarType {
 	case "day":
@@ -8351,6 +8859,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
 			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 			queryResult.NeedsUserIdUnionCTE,
+			queryResult.NeedsClassifiedCompanyIdsCTE,
+			queryResult.ClassifiedCompanyIdsCTEs,
 			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
 			queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
@@ -8375,8 +8885,9 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			err  error
 		}
 		type totalCountResult struct {
-			count int
-			err   error
+			count        int
+			uniqueEvents int
+			err          error
 		}
 
 		dayCountChan := make(chan dayCountResult, 1)
@@ -8396,12 +8907,18 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		}()
 
 		go func() {
-			count, err := s.getCountOnly(filterFields)
-			totalCountChan <- totalCountResult{count: count, err: err}
+			count, uniqueEv, err := s.getCountOnly(filterFields, hasPast)
+			totalCountChan <- totalCountResult{count: count, uniqueEvents: uniqueEv, err: err}
 		}()
 
 		dayResult := <-dayCountChan
 		countRes := <-totalCountChan
+
+		var uniqueEventCount *int
+		if hasPast {
+			uniqueEventCount = new(int)
+			*uniqueEventCount = countRes.uniqueEvents
+		}
 
 		if dayResult.err != nil {
 			return &ListResult{
@@ -8425,12 +8942,16 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		transformedDayCount := s.transformDataService.TransformEventCountByDay(dayCountMap)
 
+		data := fiber.Map{
+			"count": countRes.count,
+			"data":  transformedDayCount,
+		}
+		if uniqueEventCount != nil {
+			data["uniqueEventCount"] = *uniqueEventCount
+		}
 		return &ListResult{
 			StatusCode: 200,
-			Data: fiber.Map{
-				"count": countRes.count,
-				"data":  transformedDayCount,
-			},
+			Data:      data,
 		}, nil
 
 	case "week":
@@ -8454,8 +8975,9 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			err  error
 		}
 		type totalCountResult struct {
-			count int
-			err   error
+			count        int
+			uniqueEvents int
+			err          error
 		}
 
 		weekEventsChan := make(chan weekEventsResult, 1)
@@ -8467,12 +8989,18 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		}()
 
 		go func() {
-			count, err := s.getCountOnly(filterFields)
-			totalCountChan <- totalCountResult{count: count, err: err}
+			count, uniqueEv, err := s.getCountOnly(filterFields, hasPast)
+			totalCountChan <- totalCountResult{count: count, uniqueEvents: uniqueEv, err: err}
 		}()
 
 		weekResult := <-weekEventsChan
 		countRes := <-totalCountChan
+
+		var uniqueEventCount *int
+		if hasPast {
+			uniqueEventCount = new(int)
+			*uniqueEventCount = countRes.uniqueEvents
+		}
 
 		if weekResult.err != nil {
 			return &ListResult{
@@ -8493,6 +9021,9 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			result = fiber.Map{}
 		}
 		result["count"] = countRes.count
+		if uniqueEventCount != nil {
+			result["uniqueEventCount"] = *uniqueEventCount
+		}
 
 		return &ListResult{
 			StatusCode: 200,
@@ -8530,6 +9061,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
 			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 			queryResult.NeedsUserIdUnionCTE,
+			queryResult.NeedsClassifiedCompanyIdsCTE,
+			queryResult.ClassifiedCompanyIdsCTEs,
 			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
 			queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
@@ -8558,8 +9091,9 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			err  error
 		}
 		type totalCountResult struct {
-			count int
-			err   error
+			count        int
+			uniqueEvents int
+			err          error
 		}
 
 		dayCountChan := make(chan dayCountResult, 1)
@@ -8592,13 +9126,19 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		}()
 
 		go func() {
-			count, err := s.getCountOnly(filterFields)
-			totalCountChan <- totalCountResult{count: count, err: err}
+			count, uniqueEv, err := s.getCountOnly(filterFields, hasPast)
+			totalCountChan <- totalCountResult{count: count, uniqueEvents: uniqueEv, err: err}
 		}()
 
 		dayResult := <-dayCountChan
 		monthResult := <-monthCountChan
 		countRes := <-totalCountChan
+
+		var uniqueEventCount *int
+		if hasPast {
+			uniqueEventCount = new(int)
+			*uniqueEventCount = countRes.uniqueEvents
+		}
 
 		if dayResult.err != nil {
 			return &ListResult{
@@ -8638,13 +9178,17 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		transformedMonthCount := s.transformDataService.TransformEventCountByLongDurations(monthCountRows, "month")
 
+		data := fiber.Map{
+			"count":        countRes.count,
+			"data":         transformedDayCount,
+			"countByMonth": transformedMonthCount,
+		}
+		if uniqueEventCount != nil {
+			data["uniqueEventCount"] = *uniqueEventCount
+		}
 		return &ListResult{
 			StatusCode: 200,
-			Data: fiber.Map{
-				"count":        countRes.count,
-				"data":         transformedDayCount,
-				"countByMonth": transformedMonthCount,
-			},
+			Data:      data,
 		}, nil
 
 	case "year":
@@ -8678,6 +9222,8 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
 			queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 			queryResult.NeedsUserIdUnionCTE,
+			queryResult.NeedsClassifiedCompanyIdsCTE,
+			queryResult.ClassifiedCompanyIdsCTEs,
 			queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
 			queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 			queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
@@ -8710,8 +9256,9 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 			err  error
 		}
 		type totalCountResult struct {
-			count int
-			err   error
+			count        int
+			uniqueEvents int
+			err          error
 		}
 
 		dayCountChan := make(chan dayCountResult, 1)
@@ -8757,14 +9304,20 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 		}()
 
 		go func() {
-			count, err := s.getCountOnly(filterFields)
-			totalCountChan <- totalCountResult{count: count, err: err}
+			count, uniqueEv, err := s.getCountOnly(filterFields, hasPast)
+			totalCountChan <- totalCountResult{count: count, uniqueEvents: uniqueEv, err: err}
 		}()
 
 		dayResult := <-dayCountChan
 		monthResult := <-monthCountChan
 		yearResult := <-yearCountChan
 		countRes := <-totalCountChan
+
+		var uniqueEventCount *int
+		if hasPast {
+			uniqueEventCount = new(int)
+			*uniqueEventCount = countRes.uniqueEvents
+		}
 
 		if dayResult.err != nil {
 			return &ListResult{
@@ -8819,14 +9372,18 @@ func (s *SharedFunctionService) GetCalendarEvents(filterFields models.FilterData
 
 		transformedYearCount := s.transformDataService.TransformEventCountByLongDurations(yearCountRows, "year")
 
+		data := fiber.Map{
+			"count":        countRes.count,
+			"data":         transformedDayCount,
+			"countByMonth": transformedMonthCount,
+			"countByYear":  transformedYearCount,
+		}
+		if uniqueEventCount != nil {
+			data["uniqueEventCount"] = *uniqueEventCount
+		}
 		return &ListResult{
 			StatusCode: 200,
-			Data: fiber.Map{
-				"count":        countRes.count,
-				"data":         transformedDayCount,
-				"countByMonth": transformedMonthCount,
-				"countByYear":  transformedYearCount,
-			},
+			Data:      data,
 		}, nil
 	default:
 		return &ListResult{
@@ -8859,6 +9416,8 @@ func (s *SharedFunctionService) getEventsByWeek(filterFields models.FilterDataDt
 		queryResult.NeedsCityIdsJoin,
 		queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
+		queryResult.NeedsClassifiedCompanyIdsCTE,
+		queryResult.ClassifiedCompanyIdsCTEs,
 		queryResult.VisitorWhereConditions,
 		queryResult.SpeakerWhereConditions,
 		queryResult.ExhibitorWhereConditions,
@@ -9130,6 +9689,8 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 		queryResult.NeedsRegionsJoin, queryResult.NeedsLocationIdsJoin, queryResult.NeedsCountryIdsJoin,
 		queryResult.NeedsStateIdsJoin, queryResult.NeedsCityIdsJoin, queryResult.NeedsVenueIdsJoin,
 		queryResult.NeedsUserIdUnionCTE,
+		queryResult.NeedsClassifiedCompanyIdsCTE,
+		queryResult.ClassifiedCompanyIdsCTEs,
 		queryResult.VisitorWhereConditions, queryResult.SpeakerWhereConditions, queryResult.ExhibitorWhereConditions,
 		queryResult.SponsorWhereConditions, queryResult.OrganizerWhereConditions, queryResult.CategoryWhereConditions, queryResult.TypeWhereConditions,
 		queryResult.EventRankingWhereConditions, queryResult.JobCompositeWhereConditions, queryResult.AudienceSpreadWhereConditions,
@@ -9340,6 +9901,12 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 				if totalVal, ok := dateData.(map[string]interface{})["total"]; ok {
 					columnData["total"] = totalVal
 				}
+				uniqueKeySpecific := "unique" + strings.Title(result.column)
+				if uniqueVal, ok := dateData.(map[string]interface{})[uniqueKeySpecific]; ok {
+					columnData["uniqueTotal"] = uniqueVal
+				} else if uniqueVal, ok := dateData.(map[string]interface{})["uniqueEventCount"]; ok {
+					columnData["uniqueTotal"] = uniqueVal
+				}
 			case "byEventType":
 				columnData["byEventType"] = dateData
 			case "byEventTypeGroup":
@@ -9353,6 +9920,7 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 	for _, col := range filterFields.ParsedColumns {
 		defaultGroupedValues[col] = map[string]interface{}{
 			"total":            0,
+			"uniqueTotal":      0,
 			"byEventType":      make(map[string]interface{}),
 			"byEventTypeGroup": make(map[string]interface{}),
 		}
@@ -9377,6 +9945,13 @@ func (s *SharedFunctionService) GetTrendsEvents(filterFields models.FilterDataDt
 	}, nil
 }
 
+func makeUniqueKey(eventType string) string {
+	if eventType == "" {
+		return "unique"
+	}
+	return "unique" + eventType
+}
+
 func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, groupBy []models.CountGroup) (map[string]interface{}, error) {
 	if len(groupBy) < 2 {
 		return nil, fmt.Errorf("groupBy must have at least 2 elements")
@@ -9388,7 +9963,7 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 	result := make(map[string]interface{})
 
 	var columns []string
-	var dateIdx, columnIdx, groupByIdx int = -1, -1, -1
+	var dateIdx, columnIdx, groupByIdx, uniqueIdx int = -1, -1, -1, -1
 	columnStr := string(column)
 	firstRow := true
 
@@ -9406,6 +9981,8 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 					dateIdx = i
 				} else if col == columnStr {
 					columnIdx = i
+				} else if col == "unique"+strings.Title(columnStr) || col == "uniqueEventCount" {
+					uniqueIdx = i
 				} else if len(secondaryGroupBy) > 0 {
 					if secondaryGroupBy[0] == models.CountGroupEventType && col == "eventType" {
 						groupByIdx = i
@@ -9437,6 +10014,13 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 			if col == "date" {
 				scanArgs[i] = new(time.Time)
 			} else if col == columnStr {
+				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
+					scanArgs[i] = new(uint64)
+				} else {
+					scanArgs[i] = new(float64)
+				}
+			} else if i == uniqueIdx {
+				// unique counts should use same type as main column
 				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
 					scanArgs[i] = new(uint64)
 				} else {
@@ -9476,14 +10060,33 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 				columnValue = 0
 			}
 		}
+		// extract unique value if present (support uint64 or float64)
+		var uniqueValue float64 = 0
+		if uniqueIdx != -1 {
+			switch v := scanArgs[uniqueIdx].(type) {
+			case *uint64:
+				if v != nil {
+					uniqueValue = float64(*v)
+				}
+			case *float64:
+				if v != nil {
+					uniqueValue = *v
+				}
+			}
+		}
 
 		if result[dateStr] == nil {
 			if len(secondaryGroupBy) > 0 {
 				result[dateStr] = make(map[string]interface{})
 			} else {
-				result[dateStr] = map[string]interface{}{
+				obj := map[string]interface{}{
 					"total": columnValue,
 				}
+				// add unique total if available
+				if uniqueIdx != -1 {
+					obj["uniqueEventCount"] = uniqueValue
+				}
+				result[dateStr] = obj
 			}
 		}
 
@@ -9496,12 +10099,24 @@ func (s *SharedFunctionService) transformTrendsCountByDay(rows driver.Rows, grou
 				continue
 			}
 
+			// total per group
 			if dateData[groupKey] == nil {
 				dateData[groupKey] = columnValue
 			} else {
 				if existingVal, ok := dateData[groupKey].(float64); ok {
 					if newVal, ok := columnValue.(float64); ok {
 						dateData[groupKey] = existingVal + newVal
+					}
+				}
+			}
+			// unique per group (flat key like uniqueConference)
+			if uniqueIdx != -1 {
+				uniqueKey := makeUniqueKey(groupKey)
+				if dateData[uniqueKey] == nil {
+					dateData[uniqueKey] = uniqueValue
+				} else {
+					if existingUv, ok := dateData[uniqueKey].(float64); ok {
+						dateData[uniqueKey] = existingUv + uniqueValue
 					}
 				}
 			}
@@ -9522,7 +10137,7 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 	result := make(map[string]interface{})
 
 	var columns []string
-	var dateIdx, columnIdx, groupByIdx int = -1, -1, -1
+	var dateIdx, columnIdx, groupByIdx, uniqueIdx int = -1, -1, -1, -1
 	columnStr := string(column)
 	firstRow := true
 
@@ -9540,6 +10155,8 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 					dateIdx = i
 				} else if col == columnStr {
 					columnIdx = i
+				} else if col == "unique"+strings.Title(columnStr) || col == "uniqueEventCount" {
+					uniqueIdx = i
 				} else if len(secondaryGroupBy) > 0 {
 					if secondaryGroupBy[0] == models.CountGroupEventType && col == "eventType" {
 						groupByIdx = i
@@ -9571,6 +10188,13 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 			if col == "start_date" {
 				scanArgs[i] = new(string)
 			} else if col == columnStr {
+				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
+					scanArgs[i] = new(uint64)
+				} else {
+					scanArgs[i] = new(float64)
+				}
+			} else if i == uniqueIdx {
+				// unique counts should use same type as main column
 				if columnStr == "eventCount" || columnStr == "inboundEstimate" || columnStr == "internationalEstimate" || columnStr == "impactScore" || columnStr == "predictedAttendance" {
 					scanArgs[i] = new(uint64)
 				} else {
@@ -9622,22 +10246,46 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 				columnValue = 0
 			}
 		}
+		// extract unique value if present (support uint64 or float64)
+		var uniqueValue float64 = 0
+		if uniqueIdx != -1 {
+			switch v := scanArgs[uniqueIdx].(type) {
+			case *uint64:
+				if v != nil {
+					uniqueValue = float64(*v)
+				}
+			case *float64:
+				if v != nil {
+					uniqueValue = *v
+				}
+			}
+		}
 
 		if result[dateStr] == nil {
 			if len(secondaryGroupBy) > 0 {
 				if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
-					result[dateStr] = map[string]interface{}{
+					initMap := map[string]interface{}{
 						"business":   0,
 						"social":     0,
 						"unattended": 0,
 					}
+					if uniqueIdx != -1 {
+						initMap[makeUniqueKey("business")] = 0
+						initMap[makeUniqueKey("social")] = 0
+						initMap[makeUniqueKey("unattended")] = 0
+					}
+					result[dateStr] = initMap
 				} else {
 					result[dateStr] = make(map[string]interface{})
 				}
 			} else {
-				result[dateStr] = map[string]interface{}{
+				obj := map[string]interface{}{
 					"total": columnValue,
 				}
+				if uniqueIdx != -1 {
+					obj["uniqueEventCount"] = uniqueValue
+				}
+				result[dateStr] = obj
 			}
 		}
 
@@ -9653,17 +10301,31 @@ func (s *SharedFunctionService) transformTrendsCountByLongDurations(rows driver.
 			if secondaryGroupBy[0] == models.CountGroupEventTypeGroup {
 				if groupKey == "business" || groupKey == "social" || groupKey == "unattended" {
 					dateData[groupKey] = columnValue
+					if uniqueIdx != -1 {
+						dateData[makeUniqueKey(groupKey)] = uniqueValue
+					}
 				}
 			} else {
-				if existing, ok := dateData[groupKey]; ok {
-					if ev, ok := existing.(float64); ok {
-						if nv, ok := columnValue.(float64); ok {
-							dateData[groupKey] = ev + nv
-							continue
+				// Flat byEventType for week/month/year (matches transformTrendsCountByDay): slug -> total, unique{slug} when past/current edition metrics exist
+				if dateData[groupKey] == nil {
+					dateData[groupKey] = columnValue
+				} else {
+					if existingVal, ok := dateData[groupKey].(float64); ok {
+						if newVal, ok := columnValue.(float64); ok {
+							dateData[groupKey] = existingVal + newVal
 						}
 					}
 				}
-				dateData[groupKey] = columnValue
+				if uniqueIdx != -1 {
+					uniqueKey := makeUniqueKey(groupKey)
+					if dateData[uniqueKey] == nil {
+						dateData[uniqueKey] = uniqueValue
+					} else {
+						if existingUv, ok := dateData[uniqueKey].(float64); ok {
+							dateData[uniqueKey] = existingUv + uniqueValue
+						}
+					}
+				}
 			}
 		}
 	}

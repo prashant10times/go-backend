@@ -15,6 +15,7 @@ const (
 	LocationTypeState   LocationType = "STATE"
 	LocationTypeCountry LocationType = "COUNTRY"
 	LocationTypeVenue   LocationType = "VENUE"
+	LocationTypeRegion  LocationType = "REGION"
 )
 
 type LocationQueryDto struct {
@@ -73,11 +74,11 @@ func (l *LocationQueryDto) Validate() error {
 			locationTypeStr := value.(string)
 			locationType := LocationType(locationTypeStr)
 			switch locationType {
-			case LocationTypeCity, LocationTypeState, LocationTypeCountry, LocationTypeVenue:
+			case LocationTypeCity, LocationTypeState, LocationTypeCountry, LocationTypeVenue, LocationTypeRegion:
 				l.ParsedLocationType = &locationType
 				return nil
 			default:
-				return validation.NewError("invalid_locationType", fmt.Sprintf("Invalid locationType value: %s. Must be one of: CITY, STATE, COUNTRY, VENUE", locationTypeStr))
+				return validation.NewError("invalid_locationType", fmt.Sprintf("Invalid locationType value: %s. Must be one of: CITY, STATE, COUNTRY, VENUE, REGION", locationTypeStr))
 			}
 		}))),
 
