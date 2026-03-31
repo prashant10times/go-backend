@@ -342,11 +342,12 @@ func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields m
 // }
 
 func (s *SharedFunctionService) matchCompanyDomainExactILIKE(searchTerm string) string {
-	term := strings.TrimSpace(searchTerm)
+	// term := strings.TrimSpace(searchTerm)
+	term := s.extractDomain(searchTerm)
 	if term == "" {
 		return ""
 	}
-	// Backslashes first so later escapes are literal in the pattern.
+
 	term = strings.ReplaceAll(term, `\`, `\\`)
 	term = strings.ReplaceAll(term, `%`, `\%`)
 	term = strings.ReplaceAll(term, `_`, `\_`)
