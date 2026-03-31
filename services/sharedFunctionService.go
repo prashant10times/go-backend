@@ -3270,6 +3270,24 @@ func (s *SharedFunctionService) getEndDateFieldForPastActive(forecasted string, 
 	return s.getDateFieldName(forecasted, "end", tableAlias)
 }
 
+func (s *SharedFunctionService) buildPastActivePredicatesForStatusCount(
+	forecasted string,
+	filterFields models.FilterDataDto,
+	tableAlias string,
+	today string,
+) (pastExpr string, activeExpr string) {
+	endField := s.getEndDateFieldForPastActive(forecasted, filterFields, tableAlias)
+	if forecasted != "included" {
+		return fmt.Sprintf("%s < '%s'", endField, today),
+			fmt.Sprintf("%s >= '%s'", endField, today)
+	}
+	ed := fmt.Sprintf("%s.end_date", tableAlias)
+	fe := fmt.Sprintf("%s.futureExpexctedEndDate", tableAlias)
+	activeExpr = fmt.Sprintf("((%s >= '%s') OR (%s >= '%s'))", ed, today, fe, today)
+	pastExpr = fmt.Sprintf("(%s < '%s')", ed, today)
+	return pastExpr, activeExpr
+}
+
 func (s *SharedFunctionService) buildTrendsDateCondition(forecasted string, tableAlias string, conditionType string, startDate string, endDate string) string {
 	switch conditionType {
 	case "preFilterRange":
@@ -5667,6 +5685,7 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 
 	forecasted := filterFields.Forecasted
 	endDateField := s.getEndDateFieldForPastActive(forecasted, filterFields, "ee")
+	pastExpr, activeExpr := s.buildPastActivePredicatesForStatusCount(forecasted, filterFields, "ee", today)
 
 	getNew := filterFields.ParsedGetNew
 	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
@@ -5732,12 +5751,10 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 			)
 		}
 		selectClauses = append(selectClauses,
-			// Counts
-			fmt.Sprintf("uniqIf(ee.event_id, %s < '%s') AS past", endDateField, today),
-			fmt.Sprintf("uniqIf(ee.event_id, %s >= '%s') AS active", endDateField, today),
-			// IDs
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN %s < '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS past_ids", endDateField, today),
-			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN %s >= '%s' THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS active_ids", endDateField, today),
+			fmt.Sprintf("uniqIf(ee.event_id, %s) AS past", pastExpr),
+			fmt.Sprintf("uniqIf(ee.event_id, %s) AS active", activeExpr),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN %s THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS past_ids", pastExpr),
+			fmt.Sprintf("arrayStringConcat(groupArray(DISTINCT CASE WHEN %s THEN toString(ee.event_uuid) || '#' || toString(ee.event_id) END), ',') AS active_ids", activeExpr),
 		)
 	} else {
 		// Normal behavior: return only counts (no IDs)
@@ -5749,15 +5766,15 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 
 		if getNew == nil || !*getNew {
 			selectClauses = append(selectClauses,
-				fmt.Sprintf("uniqIf(ee.event_id, %s < '%s') AS past", endDateField, today),
-				fmt.Sprintf("uniqIf(ee.event_id, %s >= '%s') AS active", endDateField, today),
+				fmt.Sprintf("uniqIf(ee.event_id, %s) AS past", pastExpr),
+				fmt.Sprintf("uniqIf(ee.event_id, %s) AS active", activeExpr),
 			)
 		}
 
 		if len(selectClauses) == 0 {
 			selectClauses = []string{
-				fmt.Sprintf("uniqIf(ee.event_id, %s < '%s') AS past", endDateField, today),
-				fmt.Sprintf("uniqIf(ee.event_id, %s >= '%s') AS active", endDateField, today),
+				fmt.Sprintf("uniqIf(ee.event_id, %s) AS past", pastExpr),
+				fmt.Sprintf("uniqIf(ee.event_id, %s) AS active", activeExpr),
 				fmt.Sprintf("uniqIf(ee.event_id, ee.event_created >= '%s') AS new", createdAt),
 			}
 		}
