@@ -321,21 +321,37 @@ func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields m
 	return finalCondition
 }
 
-func (s *SharedFunctionService) matchWebsiteConverter(fieldName string, searchTerm string) string {
-	escapedTerm := strings.TrimSpace(searchTerm)
-	if escapedTerm == "" {
+// matchWebsiteConverter matched company_website with lower(column) LIKE '%term%' (substring).
+// Replaced by matchCompanyDomainExactILIKE: company_domain ILIKE 'term' (exact, case-insensitive).
+//
+// func (s *SharedFunctionService) matchWebsiteConverter(fieldName string, searchTerm string) string {
+// 	escapedTerm := strings.TrimSpace(searchTerm)
+// 	if escapedTerm == "" {
+// 		return ""
+// 	}
+//
+// 	escapeSqlValue := func(value string) string {
+// 		value = strings.ReplaceAll(value, "'", "''")
+// 		value = strings.ReplaceAll(value, "%", "\\%")
+// 		value = strings.ReplaceAll(value, "_", "\\_")
+// 		return value
+// 	}
+//
+// 	escapedValue := escapeSqlValue(escapedTerm)
+// 	return fmt.Sprintf("lower(%s) LIKE '%%%s%%'", fieldName, strings.ToLower(escapedValue))
+// }
+
+func (s *SharedFunctionService) matchCompanyDomainExactILIKE(searchTerm string) string {
+	term := strings.TrimSpace(searchTerm)
+	if term == "" {
 		return ""
 	}
-
-	escapeSqlValue := func(value string) string {
-		value = strings.ReplaceAll(value, "'", "''")
-		value = strings.ReplaceAll(value, "%", "\\%")
-		value = strings.ReplaceAll(value, "_", "\\_")
-		return value
-	}
-
-	escapedValue := escapeSqlValue(escapedTerm)
-	return fmt.Sprintf("lower(%s) LIKE '%%%s%%'", fieldName, strings.ToLower(escapedValue))
+	// Backslashes first so later escapes are literal in the pattern.
+	term = strings.ReplaceAll(term, `\`, `\\`)
+	term = strings.ReplaceAll(term, `%`, `\%`)
+	term = strings.ReplaceAll(term, `_`, `\_`)
+	term = strings.ReplaceAll(term, `'`, `''`)
+	return fmt.Sprintf("company_domain ILIKE '%s'", term)
 }
 
 func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.CompanyCriteria, cteIndex int) string {
@@ -476,7 +492,7 @@ func (s *SharedFunctionService) buildCompanyCriteriaCondition(criteria *models.C
 	if len(criteria.CompanyWebsite) > 0 {
 		var webConds []string
 		for _, web := range criteria.CompanyWebsite {
-			if c := s.matchWebsiteConverter("company_website", web); c != "" {
+			if c := s.matchCompanyDomainExactILIKE(web); c != "" {
 				webConds = append(webConds, c)
 			}
 		}
@@ -1247,7 +1263,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			result.NeedsExhibitorJoin = true
 			var exhibitorConditions []string
 			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				exhibitorCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+				exhibitorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
 				if exhibitorCondition != "" {
 					exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
 				}
@@ -1260,7 +1276,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			result.NeedsSponsorJoin = true
 			var sponsorConditions []string
 			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				sponsorCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+				sponsorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
 				if sponsorCondition != "" {
 					sponsorConditions = append(sponsorConditions, sponsorCondition)
 				}
@@ -1272,7 +1288,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 		if hasOrganizer {
 			var organizerConditions []string
 			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				organizerCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+				organizerCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
 				if organizerCondition != "" {
 					organizerConditions = append(organizerConditions, organizerCondition)
 				}
@@ -10740,19 +10756,19 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 
 	for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
 		if hasExhibitor {
-			exhibitorCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+			exhibitorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
 			if exhibitorCondition != "" {
 				exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
 			}
 		}
 		if hasSponsor {
-			sponsorCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+			sponsorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
 			if sponsorCondition != "" {
 				sponsorConditions = append(sponsorConditions, sponsorCondition)
 			}
 		}
 		if hasOrganizer {
-			organizerCondition := s.matchWebsiteConverter("company_website", companyWebsite)
+			organizerCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
 			if organizerCondition != "" {
 				organizerConditions = append(organizerConditions, organizerCondition)
 			}
