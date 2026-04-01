@@ -5977,6 +5977,22 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 	return result, nil
 }
 
+// buildHasEventTypeGroupsSQL builds OR of has(et.groups, '…') for ClickHouse; values come from validated enums only.
+func buildHasEventTypeGroupsSQL(groups []models.Groups) string {
+	if len(groups) == 0 {
+		return "1=1"
+	}
+	parts := make([]string, 0, len(groups))
+	for _, g := range groups {
+		gv := strings.ReplaceAll(string(g), "'", "''")
+		parts = append(parts, fmt.Sprintf("has(et.groups, '%s')", gv))
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return "(" + strings.Join(parts, " OR ") + ")"
+}
+
 func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	queryResult *ClickHouseQueryResult,
 	cteAndJoinResult *CTEAndJoinResult,
@@ -5992,7 +6008,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	eventGroupCount := filterFields.ParsedEventGroupCount
 	searchByEntity := strings.ToLower(strings.TrimSpace(filterFields.SearchByEntity))
 	isEventEntity := searchByEntity == "event"
-	eventTypeGroup := filterFields.ParsedEventTypeGroup
+	eventTypeGroups := filterFields.ParsedEventTypeGroups
 
 	cteClausesStr := ""
 	if len(cteAndJoinResult.CTEClauses) > 0 {
@@ -6058,8 +6074,8 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 	}
 	whereClause := strings.Join(baseWhereConditions, " AND ")
 
-	// !eventTypeGroup && !eventGroupCount - Group by all groups using arrayJoin
-	if eventTypeGroup == nil && (eventGroupCount == nil || !*eventGroupCount) && searchByEntity != "eventestimatecount" && searchByEntity != "economicimpactbreakdowncount" {
+	// !eventTypeGroup filter && !eventGroupCount - Group by all groups using arrayJoin
+	if len(eventTypeGroups) == 0 && (eventGroupCount == nil || !*eventGroupCount) && searchByEntity != "eventestimatecount" && searchByEntity != "economicimpactbreakdowncount" {
 		// preFilterEvent - only select required columns
 		preFilterSelectFields := []string{"ee.event_id", "ee.event_uuid"}
 		if createdAt != "" && (getNew == nil || *getNew) {
@@ -6515,8 +6531,8 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		return result, nil
 	}
 
-	// eventTypeGroup is provided - Filter to specific group
-	groupValue := string(*eventTypeGroup)
+	// eventTypeGroup filter is provided - restrict join rows to any selected group
+	groupHasSQL := buildHasEventTypeGroupsSQL(eventTypeGroups)
 	// preFilterEvent - only select required columns
 	preFilterSelectFields := []string{"ee.event_id"}
 	if isEventEntity {
@@ -6545,7 +6561,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		SELECT %s
 		FROM preFilterEvent e
 		INNER JOIN testing_db.event_type_ch et ON e.event_id = et.event_id and %s
-		WHERE has(et.groups, '%s')
+		WHERE %s
 		`,
 		cteClausesStr,
 		preFilterSelectStr,
@@ -6558,7 +6574,7 @@ func (s *SharedFunctionService) GetEventCountByEventTypeGroup(
 		whereClause,
 		finalSelectStr,
 		eventTypePublishedCondForGrouped,
-		groupValue,
+		groupHasSQL,
 	)
 
 	log.Printf("Event count by event type group query (scenario 3): %s", query)
