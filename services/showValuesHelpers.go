@@ -598,6 +598,10 @@ func (b *RelatedDataQueryBuilder) shouldIncludeRankings() bool {
 	return false
 }
 
+func (b *RelatedDataQueryBuilder) eventRankingCategoryDictGetSQL() string {
+	return "dictGetOrDefault('testing_db.dict_event_category', 'category_uuid', (er.event_id, toString(er.category_name)), toUUID('00000000-0000-0000-0000-000000000000'))"
+}
+
 func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 	whereClause := "er.event_id IN (" + b.eventIdsStr + ")"
 	if strings.TrimSpace(b.rankingScopeConditions) != "" {
@@ -607,6 +611,10 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 	if uuidConditions := b.buildRankingUuidConditions(); uuidConditions != "" {
 		whereClause += " AND " + uuidConditions
 	}
+
+	dictCat := b.eventRankingCategoryDictGetSQL()
+	categoryUUIDSegment := fmt.Sprintf("if(%s = toUUID('00000000-0000-0000-0000-000000000000'), 'null', toString(%s))", dictCat, dictCat)
+
 	return `
 		UNION ALL
 
@@ -617,7 +625,8 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 				groupUniqArray(
 					concat(
 						if(empty(toString(country_loc.id_uuid)), 'null', toString(country_loc.id_uuid)), '<val-sep>',
-						if(empty(toString(cat.category_uuid)), 'null', toString(cat.category_uuid)), '<val-sep>',
+						` + categoryUUIDSegment + `,
+						'<val-sep>',
 						toString(ifNull(er.event_rank, 0))
 					)
 				),
@@ -632,12 +641,6 @@ func (b *RelatedDataQueryBuilder) buildRankingsQuery() string {
 			FROM testing_db.location_ch 
 			WHERE location_type = 'COUNTRY' AND published = 1
 		) AS country_loc ON er.country = country_loc.iso
-		LEFT JOIN (
-			SELECT category, any(category_uuid) AS category_uuid 
-			FROM testing_db.event_category_ch 
-			WHERE is_group = 1 
-			GROUP BY category
-		) AS cat ON er.category = cat.category
 		WHERE ` + whereClause + `
 		GROUP BY er.event_id
 		`
@@ -660,7 +663,7 @@ func (b *RelatedDataQueryBuilder) buildRankingUuidConditions() string {
 		conditions = append(conditions, fmt.Sprintf("country_loc.id_uuid IN (%s)", strings.Join(countryUUIDs, ",")))
 	}
 	if hasCategoryFilter {
-		conditions = append(conditions, fmt.Sprintf("cat.category_uuid IN (%s)", strings.Join(b.filterFields.ParsedCategoryIds, ",")))
+		conditions = append(conditions, fmt.Sprintf("%s IN (%s)", b.eventRankingCategoryDictGetSQL(), strings.Join(b.filterFields.ParsedCategoryIds, ",")))
 	}
 	return strings.Join(conditions, " AND ")
 }
