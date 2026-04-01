@@ -3,7 +3,6 @@ package models
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/url"
 	"regexp"
 	"strconv"
@@ -429,7 +428,7 @@ type FilterDataDto struct {
 	ParsedPublished          []string            `json:"-"`
 	ParsedEditionType        []string            `json:"-"`
 	ParsedVisibility         []string            `json:"-"`
-	ParsedEventTypeGroup     *Groups             `json:"-"`
+	ParsedEventTypeGroups    []Groups            `json:"-"`
 	ParsedDesignationId      []string            `json:"-"`
 	ParsedSeniorityId        []string            `json:"-"`
 	ParsedViewBound          *ViewBound          `json:"-"`
@@ -665,6 +664,23 @@ func GetAllEventTypeIDsByGroup(eventTypeGroup Groups) []string {
 	return eventTypeIDs
 }
 
+func GetAllEventTypeIDsByGroups(groups []Groups) []string {
+	if len(groups) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]bool)
+	out := make([]string, 0)
+	for _, g := range groups {
+		for _, id := range GetAllEventTypeIDsByGroup(g) {
+			if !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+	}
+	return out
+}
+
 func filterEventTypesByGroup(eventTypeIDs []string, eventTypeGroup Groups) []string {
 	if len(eventTypeIDs) == 0 {
 		return []string{}
@@ -681,6 +697,23 @@ func filterEventTypesByGroup(eventTypeIDs []string, eventTypeGroup Groups) []str
 	}
 
 	return filteredEventTypes
+}
+
+func filterEventTypesByGroups(eventTypeIDs []string, groups []Groups) []string {
+	if len(eventTypeIDs) == 0 || len(groups) == 0 {
+		return []string{}
+	}
+	seen := make(map[string]bool)
+	out := make([]string, 0)
+	for _, g := range groups {
+		for _, id := range filterEventTypesByGroup(eventTypeIDs, g) {
+			if !seen[id] {
+				seen[id] = true
+				out = append(out, id)
+			}
+		}
+	}
+	return out
 }
 
 func (f *FilterDataDto) applyEventTypeBasedMappings(wasPublishedExplicitlyProvided, wasEventAudienceExplicitlyProvided bool) {
@@ -2256,21 +2289,40 @@ func (f *FilterDataDto) Validate() error {
 
 		validation.Field(&f.EventTypeGroup, validation.When(f.EventTypeGroup != "", validation.By(func(value interface{}) error {
 			eventTypeGroupStr := value.(string)
-			eventTypeGroupLower := strings.ToLower(strings.TrimSpace(eventTypeGroupStr))
-			log.Println("eventTypeGroupLower", eventTypeGroupLower)
 			validGroups := map[string]Groups{
 				"social":     GroupSocial,
 				"business":   GroupBusiness,
 				"unattended": GroupUnattended,
 			}
 
-			if group, exists := validGroups[eventTypeGroupLower]; exists {
-				f.ParsedEventTypeGroup = &group
-				f.EventTypeGroup = eventTypeGroupLower
-			} else {
-				validOptions := []string{"social", "business", "unattended"}
-				return validation.NewError("invalid_event_type_group", "Invalid event type group: "+eventTypeGroupStr+". Valid options are: "+strings.Join(validOptions, ", "))
+			parts := strings.Split(eventTypeGroupStr, ",")
+			seen := make(map[Groups]bool)
+			parsed := make([]Groups, 0, len(parts))
+			normalizedTokens := make([]string, 0, len(parts))
+
+			for _, part := range parts {
+				token := strings.ToLower(strings.TrimSpace(part))
+				if token == "" {
+					continue
+				}
+				group, exists := validGroups[token]
+				if !exists {
+					validOptions := []string{"social", "business", "unattended"}
+					return validation.NewError("invalid_event_type_group", "Invalid event type group: "+strings.TrimSpace(part)+". Valid options are: "+strings.Join(validOptions, ", "))
+				}
+				if !seen[group] {
+					seen[group] = true
+					parsed = append(parsed, group)
+					normalizedTokens = append(normalizedTokens, token)
+				}
 			}
+
+			if len(parsed) == 0 {
+				return validation.NewError("invalid_event_type_group", "eventTypeGroup has no valid values after parsing")
+			}
+
+			f.ParsedEventTypeGroups = parsed
+			f.EventTypeGroup = strings.Join(normalizedTokens, ",")
 			return nil
 		}))),
 
@@ -3024,9 +3076,9 @@ func (f *FilterDataDto) Validate() error {
 		}
 	}
 
-	if f.ParsedEventTypeGroup != nil {
+	if len(f.ParsedEventTypeGroups) > 0 {
 		if len(f.ParsedEventTypes) > 0 {
-			filteredEventTypes := filterEventTypesByGroup(f.ParsedEventTypes, *f.ParsedEventTypeGroup)
+			filteredEventTypes := filterEventTypesByGroups(f.ParsedEventTypes, f.ParsedEventTypeGroups)
 			if len(filteredEventTypes) == 0 {
 				f.ParsedEventTypes = nil
 				f.ParsedEventIds = []string{"'" + NilEventUUID + "'"}
@@ -3034,9 +3086,9 @@ func (f *FilterDataDto) Validate() error {
 				f.ParsedEventTypes = filteredEventTypes
 			}
 		} else {
-			allEventTypes := GetAllEventTypeIDsByGroup(*f.ParsedEventTypeGroup)
+			allEventTypes := GetAllEventTypeIDsByGroups(f.ParsedEventTypeGroups)
 			if len(allEventTypes) == 0 {
-				return validation.NewError("no_event_types_for_group", "No event types found for the specified event type group")
+				return validation.NewError("no_event_types_for_group", "No event types found for the specified event type group(s)")
 			}
 			f.ParsedEventTypes = allEventTypes
 		}
