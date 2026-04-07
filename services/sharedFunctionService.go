@@ -322,7 +322,7 @@ func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields m
 }
 
 // matchWebsiteConverter matched company_website with lower(column) LIKE '%term%' (substring).
-// Replaced by matchCompanyDomainExactILIKE: company_domain ILIKE 'term' (exact, case-insensitive).
+// Company website / domain filters use buildLowerColumnDomainInCondition (lower(column) IN (...)).
 //
 // func (s *SharedFunctionService) matchWebsiteConverter(fieldName string, searchTerm string) string {
 // 	escapedTerm := strings.TrimSpace(searchTerm)
@@ -341,18 +341,25 @@ func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields m
 // 	return fmt.Sprintf("lower(%s) LIKE '%%%s%%'", fieldName, strings.ToLower(escapedValue))
 // }
 
-func (s *SharedFunctionService) matchCompanyDomainExactILIKE(searchTerm string) string {
-	// term := strings.TrimSpace(searchTerm)
-	term := s.extractDomain(searchTerm)
-	if term == "" {
+func (s *SharedFunctionService) buildLowerColumnDomainInCondition(column string, websites []string) string {
+	if column == "" || len(websites) == 0 {
 		return ""
 	}
-
-	term = strings.ReplaceAll(term, `\`, `\\`)
-	term = strings.ReplaceAll(term, `%`, `\%`)
-	term = strings.ReplaceAll(term, `_`, `\_`)
-	term = strings.ReplaceAll(term, `'`, `''`)
-	return fmt.Sprintf("company_domain ILIKE '%s'", term)
+	seen := make(map[string]bool)
+	var literals []string
+	for _, w := range websites {
+		d := s.extractDomain(w)
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		d = strings.ReplaceAll(d, "'", "''")
+		literals = append(literals, fmt.Sprintf("'%s'", d))
+	}
+	if len(literals) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("lower(%s) IN (%s)", column, strings.Join(literals, ", "))
 }
 
 func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.CompanyCriteria, cteIndex int) string {
@@ -491,14 +498,12 @@ func (s *SharedFunctionService) buildCompanyCriteriaCondition(criteria *models.C
 		}
 	}
 	if len(criteria.CompanyWebsite) > 0 {
-		var webConds []string
-		for _, web := range criteria.CompanyWebsite {
-			if c := s.matchCompanyDomainExactILIKE(web); c != "" {
-				webConds = append(webConds, c)
-			}
+		webCol := "company_domain"
+		if nameField == "company_name" {
+			webCol = "website_lc"
 		}
-		if len(webConds) > 0 {
-			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(webConds, " OR ")))
+		if c := s.buildLowerColumnDomainInCondition(webCol, criteria.CompanyWebsite); c != "" {
+			parts = append(parts, c)
 		}
 	}
 	nameOrWebPart := ""
@@ -1262,40 +1267,19 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 		if hasExhibitor {
 			result.NeedsExhibitorJoin = true
-			var exhibitorConditions []string
-			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				exhibitorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-				if exhibitorCondition != "" {
-					exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
-				}
-			}
-			if len(exhibitorConditions) > 0 {
-				result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, fmt.Sprintf("(%s)", strings.Join(exhibitorConditions, " OR ")))
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, c)
 			}
 		}
 		if hasSponsor {
 			result.NeedsSponsorJoin = true
-			var sponsorConditions []string
-			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				sponsorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-				if sponsorCondition != "" {
-					sponsorConditions = append(sponsorConditions, sponsorCondition)
-				}
-			}
-			if len(sponsorConditions) > 0 {
-				result.SponsorWhereConditions = append(result.SponsorWhereConditions, fmt.Sprintf("(%s)", strings.Join(sponsorConditions, " OR ")))
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				result.SponsorWhereConditions = append(result.SponsorWhereConditions, c)
 			}
 		}
 		if hasOrganizer {
-			var organizerConditions []string
-			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				organizerCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-				if organizerCondition != "" {
-					organizerConditions = append(organizerConditions, organizerCondition)
-				}
-			}
-			if len(organizerConditions) > 0 {
-				result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR ")))
+			if c := s.buildLowerColumnDomainInCondition("website_lc", filterFields.ParsedCompanyWebsite); c != "" {
+				result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, c)
 			}
 		}
 	}
@@ -10755,23 +10739,20 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		}
 	}
 
-	for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
+	if len(filterFields.ParsedCompanyWebsite) > 0 {
 		if hasExhibitor {
-			exhibitorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-			if exhibitorCondition != "" {
-				exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				exhibitorConditions = append(exhibitorConditions, c)
 			}
 		}
 		if hasSponsor {
-			sponsorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-			if sponsorCondition != "" {
-				sponsorConditions = append(sponsorConditions, sponsorCondition)
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				sponsorConditions = append(sponsorConditions, c)
 			}
 		}
 		if hasOrganizer {
-			organizerCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-			if organizerCondition != "" {
-				organizerConditions = append(organizerConditions, organizerCondition)
+			if c := s.buildLowerColumnDomainInCondition("website_lc", filterFields.ParsedCompanyWebsite); c != "" {
+				organizerConditions = append(organizerConditions, c)
 			}
 		}
 	}
