@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"regexp"
 	"search-event-go/config"
+	"strconv"
 	"search-event-go/models"
 	"strings"
 	"time"
@@ -5053,602 +5054,310 @@ func isUUID(s string) bool {
 	return len(parts) == 5 && len(parts[0]) == 8 && len(parts[1]) == 4 && len(parts[2]) == 4 && len(parts[3]) == 4 && len(parts[4]) == 12
 }
 
-type EventLocationData struct {
-	VenueID            *uint32
-	VenueCity          *uint32
-	EditionCity        *uint32
-	EditionCityStateID *uint32
-	EditionCountry     *string
+var alleventLocationDenormalizedSelectExprs = []string{
+	"ee.venue_id as loc_venue_id",
+	"ifNull(toString(ee.venue_uuid), '') as loc_venue_uuid",
+	"ifNull(ee.venue_name, '') as loc_venue_name",
+	"ifNull(ee.venue_address, '') as loc_venue_address",
+	"ifNull(ee.venue_city, 0) as loc_venue_city",
+	"ifNull(ee.venue_city_name, '') as loc_venue_city_name",
+	"ee.venue_lat as loc_venue_lat",
+	"ee.venue_long as loc_venue_long",
+	"ee.edition_city as loc_edition_city",
+	"ifNull(toString(ee.edition_city_uuid), '') as loc_edition_city_uuid",
+	"ifNull(ee.edition_city_name, '') as loc_edition_city_name",
+	"ee.edition_city_state_id as loc_edition_city_state_id",
+	"ifNull(toString(ee.edition_state_uuid), '') as loc_edition_state_uuid",
+	"ifNull(ee.edition_city_state, '') as loc_edition_city_state",
+	"ee.edition_city_state_latitude as loc_edition_city_state_latitude",
+	"ee.edition_city_state_longitude as loc_edition_city_state_longitude",
+	"ee.edition_city_lat as loc_edition_city_lat",
+	"ee.edition_city_long as loc_edition_city_long",
+	"toString(ee.edition_country) as loc_edition_country",
+	"ifNull(ee.edition_country_name, '') as loc_edition_country_name",
+	"ifNull(toString(ee.edition_country_uuid), '') as loc_edition_country_uuid",
+	"ee.edition_country_latitude as loc_edition_country_latitude",
+	"ee.edition_country_longitude as loc_edition_country_longitude",
+	"ee.region as loc_region",
 }
 
-func (s *SharedFunctionService) FetchEventLocationData(ids []uint32, filterFields models.FilterDataDto, byEdition bool) (map[uint32]*EventLocationData, error) {
-	if len(ids) == 0 {
-		return make(map[uint32]*EventLocationData), nil
-	}
-
-	var idsStr []string
-	for _, id := range ids {
-		idsStr = append(idsStr, fmt.Sprintf("%d", id))
-	}
-	idsStrJoined := strings.Join(idsStr, ",")
-
-	var query string
-	if byEdition {
-		query = fmt.Sprintf(`
-		SELECT 
-			edition_id,
-			venue_id,
-			venue_city,
-			edition_city,
-			edition_city_state_id,
-			edition_country
-		FROM testing_db.allevent_ch
-		WHERE edition_id IN (%s)
-		GROUP BY edition_id, venue_id, venue_city, edition_city, edition_city_state_id, edition_country
-	`, idsStrJoined)
-	} else {
-		editionTypeCondition := s.buildEditionTypeCondition(filterFields, "")
-		query = fmt.Sprintf(`
-		SELECT 
-			event_id,
-			venue_id,
-			venue_city,
-			edition_city,
-			edition_city_state_id,
-			edition_country
-		FROM testing_db.allevent_ch
-		WHERE event_id IN (%s)
-		AND %s
-		GROUP BY event_id, venue_id, venue_city, edition_city, edition_city_state_id, edition_country
-	`, idsStrJoined, editionTypeCondition)
-	}
-
-	log.Printf("Event location data query: %s", query)
-
-	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
-	if err != nil {
-		log.Printf("Error fetching event location data: %v", err)
-		return nil, err
-	}
-	defer rows.Close()
-
-	locationDataMap := make(map[uint32]*EventLocationData)
-
-	for rows.Next() {
-		var rowID uint32
-		var venueID, venueCity, editionCity, editionCityStateID *uint32
-		var editionCountry *string
-
-		if err := rows.Scan(&rowID, &venueID, &venueCity, &editionCity, &editionCityStateID, &editionCountry); err != nil {
-			log.Printf("Error scanning event location data row: %v", err)
-			continue
-		}
-		// Keep first row per id; skip later rows so we don't override
-		if _, exists := locationDataMap[rowID]; exists {
-			continue
-		}
-		locationDataMap[rowID] = &EventLocationData{
-			VenueID:            venueID,
-			VenueCity:          venueCity,
-			EditionCity:        editionCity,
-			EditionCityStateID: editionCityStateID,
-			EditionCountry:     editionCountry,
-		}
-	}
-
-	return locationDataMap, nil
+func (s *SharedFunctionService) AlleventLocationDenormalizedSelectExprs() []string {
+	return alleventLocationDenormalizedSelectExprs
 }
 
-func (s *SharedFunctionService) FetchLocations(locationDataMap map[uint32]*EventLocationData) (map[uint32]map[string]interface{}, error) {
-	if len(locationDataMap) == 0 {
-		return make(map[uint32]map[string]interface{}), nil
-	}
-
-	venueIDSet := make(map[uint32]bool)
-	cityIDSet := make(map[uint32]bool)
-	stateIDSet := make(map[uint32]bool)
-	countryISOSet := make(map[string]bool)
-
-	for _, data := range locationDataMap {
-		if data.VenueID != nil {
-			venueIDSet[*data.VenueID] = true
-		}
-		if data.EditionCity != nil {
-			cityIDSet[*data.EditionCity] = true
-		}
-		if data.VenueCity != nil {
-			cityIDSet[*data.VenueCity] = true
-		}
-		if data.EditionCityStateID != nil {
-			stateIDSet[*data.EditionCityStateID] = true
-		}
-		if data.EditionCountry != nil && *data.EditionCountry != "" {
-			countryISOSet[*data.EditionCountry] = true
+// AlleventLocationDenormalizedColumnAliases returns result column names for alleventLocationDenormalizedSelectExprs.
+func (s *SharedFunctionService) AlleventLocationDenormalizedColumnAliases() []string {
+	out := make([]string, 0, len(alleventLocationDenormalizedSelectExprs))
+	for _, e := range alleventLocationDenormalizedSelectExprs {
+		if idx := strings.LastIndex(e, " as "); idx >= 0 {
+			out = append(out, strings.TrimSpace(e[idx+4:]))
 		}
 	}
-
-	log.Printf("Location query stats - Venues: %d, Cities: %d, States: %d, Countries: %d, Total events: %d",
-		len(venueIDSet), len(cityIDSet), len(stateIDSet), len(countryISOSet), len(locationDataMap))
-
-	var whereConditions []string
-
-	if len(venueIDSet) > 0 {
-		var venueIDs []string
-		for id := range venueIDSet {
-			venueIDs = append(venueIDs, fmt.Sprintf("%d", id))
-		}
-		venueIDsStr := strings.Join(venueIDs, ",")
-		whereConditions = append(whereConditions, fmt.Sprintf("(location_type = 'VENUE' AND id IN (%s))", venueIDsStr))
-	}
-
-	if len(cityIDSet) > 0 {
-		var cityIDs []string
-		for id := range cityIDSet {
-			cityIDs = append(cityIDs, fmt.Sprintf("%d", id))
-		}
-		cityIDsStr := strings.Join(cityIDs, ",")
-		whereConditions = append(whereConditions, fmt.Sprintf("(location_type = 'CITY' AND id IN (%s))", cityIDsStr))
-	}
-
-	if len(stateIDSet) > 0 {
-		var stateIDs []string
-		for id := range stateIDSet {
-			stateIDs = append(stateIDs, fmt.Sprintf("%d", id))
-		}
-		stateIDsStr := strings.Join(stateIDs, ",")
-		whereConditions = append(whereConditions, fmt.Sprintf("(location_type = 'STATE' AND id IN (%s))", stateIDsStr))
-	}
-
-	if len(countryISOSet) > 0 {
-		var countryISOs []string
-		for iso := range countryISOSet {
-			countryISOs = append(countryISOs, fmt.Sprintf("'%s'", iso))
-		}
-		countryISOsStr := strings.Join(countryISOs, ",")
-		whereConditions = append(whereConditions, fmt.Sprintf("(location_type = 'COUNTRY' AND iso IN (%s))", countryISOsStr))
-	}
-
-	if len(whereConditions) == 0 {
-		return make(map[uint32]map[string]interface{}), nil
-	}
-
-	query := fmt.Sprintf(`
-		SELECT 
-			CASE 
-				WHEN location_type = 'VENUE' THEN toUInt32(grouping_id_num)
-				WHEN location_type = 'CITY' THEN toUInt32(grouping_id_num)
-				WHEN location_type = 'STATE' THEN toUInt32(grouping_id_num)
-				WHEN location_type = 'COUNTRY' THEN toUInt32(0)
-				ELSE toUInt32(0)
-			END AS lookup_id,
-			location_type,
-			toString(id_uuid) AS id,
-			name,
-			toString(city_uuid) AS cityId,
-			city_name AS cityName,
-			toString(state_uuid) AS stateId,
-			state_name AS stateName,
-			toString(country_uuid) AS countryId,
-			country_name AS countryName,
-			toString(latitude) AS latitude,
-			toString(longitude) AS longitude,
-			address,
-			regions,
-			toString(iso) AS countryIso
-		FROM (
-			SELECT 
-				location_type,
-				grouping_key,
-				argMax(id_uuid, last_updated_at) AS id_uuid,
-				argMax(name, last_updated_at) AS name,
-				argMax(city_uuid, last_updated_at) AS city_uuid,
-				argMax(city_name, last_updated_at) AS city_name,
-				argMax(state_uuid, last_updated_at) AS state_uuid,
-				argMax(state_name, last_updated_at) AS state_name,
-				argMax(country_uuid, last_updated_at) AS country_uuid,
-				argMax(country_name, last_updated_at) AS country_name,
-				argMax(latitude, last_updated_at) AS latitude,
-				argMax(longitude, last_updated_at) AS longitude,
-				argMax(address, last_updated_at) AS address,
-				argMax(regions, last_updated_at) AS regions,
-				argMax(iso, last_updated_at) AS iso,
-				argMax(grouping_id_num, last_updated_at) AS grouping_id_num
-			FROM (
-				SELECT 
-					location_type,
-					CASE 
-						WHEN location_type = 'VENUE' THEN toString(id)
-						WHEN location_type = 'CITY' THEN toString(id)
-						WHEN location_type = 'STATE' THEN toString(id)
-						WHEN location_type = 'COUNTRY' THEN toString(iso)
-						ELSE ''
-					END AS grouping_key,
-					CASE 
-						WHEN location_type = 'VENUE' THEN id
-						WHEN location_type = 'CITY' THEN id
-						WHEN location_type = 'STATE' THEN id
-						WHEN location_type = 'COUNTRY' THEN 0
-						ELSE 0
-					END AS grouping_id_num,
-					id_uuid,
-					name,
-					city_uuid,
-					city_name,
-					state_uuid,
-					state_name,
-					country_uuid,
-					country_name,
-					latitude,
-					longitude,
-					address,
-					regions,
-					iso,
-					last_updated_at
-				FROM testing_db.location_ch
-				WHERE %s
-			)
-			GROUP BY location_type, grouping_key
-		)
-	`, strings.Join(whereConditions, " OR "))
-
-	log.Printf("Locations query: %s", query)
-
-	rows, err := s.clickhouseService.ExecuteQuery(context.Background(), query)
-	if err != nil {
-		log.Printf("Error fetching locations: %v", err)
-		return nil, err
-	}
-	defer rows.Close()
-
-	locationLookup := make(map[string]map[string]interface{})
-	rowCount := 0
-	stateKeys := make([]string, 0)
-
-	for rows.Next() {
-		rowCount++
-		var lookupID uint32
-		var locationType, id, name, cityID, cityName, stateID, stateName, countryID, countryName, latitude, longitude, address, countryIso *string
-		var regions []string
-
-		if err := rows.Scan(&lookupID, &locationType, &id, &name, &cityID, &cityName, &stateID, &stateName, &countryID, &countryName, &latitude, &longitude, &address, &regions, &countryIso); err != nil {
-			log.Printf("Error scanning location row: %v", err)
-			continue
-		}
-
-		var lookupKey string
-		if locationType != nil {
-			if *locationType == "COUNTRY" && countryIso != nil {
-				lookupKey = fmt.Sprintf("%s:%s", *locationType, *countryIso)
-			} else {
-				lookupKey = fmt.Sprintf("%s:%d", *locationType, lookupID)
-			}
-		}
-
-		if lookupKey != "" {
-			locationLookup[lookupKey] = s.buildLocationMap(id, name, cityID, cityName, stateID, stateName, countryID, countryName, latitude, longitude, address, locationType, countryIso, regions)
-			if locationType != nil && *locationType == "STATE" {
-				stateKeys = append(stateKeys, lookupKey)
-			}
-		}
-	}
-
-	locationsByEvent := make(map[uint32]map[string]map[string]interface{})
-
-	for eventID, data := range locationDataMap {
-		locations := make(map[string]map[string]interface{})
-
-		if data.VenueID != nil {
-			lookupKey := fmt.Sprintf("VENUE:%d", *data.VenueID)
-			if loc, ok := locationLookup[lookupKey]; ok {
-				locations["venue"] = loc
-			}
-		}
-
-		if data.EditionCity != nil {
-			lookupKey := fmt.Sprintf("CITY:%d", *data.EditionCity)
-			if loc, ok := locationLookup[lookupKey]; ok {
-				locations["city"] = loc
-			}
-		}
-
-		if data.VenueCity != nil {
-			lookupKey := fmt.Sprintf("CITY:%d", *data.VenueCity)
-			if loc, ok := locationLookup[lookupKey]; ok {
-				locations["venueCity"] = loc
-			}
-		}
-
-		if data.EditionCityStateID != nil {
-			lookupKey := fmt.Sprintf("STATE:%d", *data.EditionCityStateID)
-			if loc, ok := locationLookup[lookupKey]; ok {
-				locations["state"] = loc
-			}
-		}
-
-		if data.EditionCountry != nil && *data.EditionCountry != "" {
-			lookupKey := fmt.Sprintf("COUNTRY:%s", *data.EditionCountry)
-			if loc, ok := locationLookup[lookupKey]; ok {
-				locations["country"] = loc
-			}
-		}
-
-		if len(locations) > 0 {
-			locationsByEvent[eventID] = locations
-		}
-	}
-
-	result := make(map[uint32]map[string]interface{})
-	for eventID, locations := range locationsByEvent {
-		transformed := s.transformLocationData(locations)
-		result[eventID] = transformed
-	}
-
-	return result, nil
+	return out
 }
 
-func (s *SharedFunctionService) buildLocationMap(id, name, cityID, cityName, stateID, stateName, countryID, countryName, latitude, longitude, address, locationType, countryIso *string, regions []string) map[string]interface{} {
-	location := make(map[string]interface{})
-
-	if id != nil {
-		location["id"] = *id
+func coordToAPIString(v interface{}) string {
+	if v == nil {
+		return ""
 	}
-	if name != nil {
-		location["name"] = *name
+	switch x := v.(type) {
+	case float64:
+		if x == 0 {
+			return "0"
+		}
+		return strconv.FormatFloat(x, 'f', -1, 64)
+	case float32:
+		return strconv.FormatFloat(float64(x), 'f', -1, 64)
+	case string:
+		if strings.TrimSpace(x) == "" || x == "null" {
+			return ""
+		}
+		return x
+	default:
+		return ""
 	}
-	if locationType != nil {
-		location["locationType"] = *locationType
-	}
-	if latitude != nil && *latitude != "null" && *latitude != "" {
-		location["latitude"] = *latitude
-	} else {
-		location["latitude"] = nil
-	}
-	if longitude != nil && *longitude != "null" && *longitude != "" {
-		location["longitude"] = *longitude
-	} else {
-		location["longitude"] = nil
-	}
-	if countryIso != nil && *countryIso != "null" && *countryIso != "" {
-		location["countryIso"] = *countryIso
-	} else {
-		location["countryIso"] = nil
-	}
-
-	locType := ""
-	if locationType != nil {
-		locType = *locationType
-	}
-
-	switch locType {
-	case "VENUE":
-		if address != nil && *address != "null" && *address != "" {
-			location["address"] = *address
-		}
-		if cityID != nil && *cityID != "null" && *cityID != "" {
-			location["cityId"] = *cityID
-		} else {
-			location["cityId"] = nil
-		}
-		if cityName != nil && *cityName != "null" && *cityName != "" {
-			location["cityName"] = *cityName
-		} else {
-			location["cityName"] = nil
-		}
-		if stateID != nil && *stateID != "null" && *stateID != "" {
-			location["stateId"] = *stateID
-		} else {
-			location["stateId"] = nil
-		}
-		if stateName != nil && *stateName != "null" && *stateName != "" {
-			location["stateName"] = *stateName
-		} else {
-			location["stateName"] = nil
-		}
-		if countryID != nil && *countryID != "null" && *countryID != "" {
-			location["countryId"] = *countryID
-		} else {
-			location["countryId"] = nil
-		}
-		if countryName != nil && *countryName != "null" && *countryName != "" {
-			location["countryName"] = *countryName
-		} else {
-			location["countryName"] = nil
-		}
-	case "CITY":
-		if stateID != nil && *stateID != "null" && *stateID != "" {
-			location["stateId"] = *stateID
-		} else {
-			location["stateId"] = nil
-		}
-		if stateName != nil && *stateName != "null" && *stateName != "" {
-			location["stateName"] = *stateName
-		} else {
-			location["stateName"] = nil
-		}
-		if countryID != nil && *countryID != "null" && *countryID != "" {
-			location["countryId"] = *countryID
-		} else {
-			location["countryId"] = nil
-		}
-		if countryName != nil && *countryName != "null" && *countryName != "" {
-			location["countryName"] = *countryName
-		} else {
-			location["countryName"] = nil
-		}
-	case "STATE":
-		if countryID != nil && *countryID != "null" && *countryID != "" {
-			location["countryId"] = *countryID
-		} else {
-			location["countryId"] = nil
-		}
-		if countryName != nil && *countryName != "null" && *countryName != "" {
-			location["countryName"] = *countryName
-		} else {
-			location["countryName"] = nil
-		}
-	case "COUNTRY":
-		if len(regions) > 0 {
-			location["region"] = regions
-		} else {
-			location["region"] = nil
-		}
-		if countryIso != nil && *countryIso != "null" && *countryIso != "" {
-			location["iso"] = *countryIso
-		} else {
-			location["iso"] = nil
-		}
-	}
-
-	displayNameParts := []string{}
-	if name != nil && *name != "" {
-		displayNameParts = append(displayNameParts, *name)
-	}
-	if cityName, ok := location["cityName"].(string); ok && cityName != "" {
-		displayNameParts = append(displayNameParts, cityName)
-	}
-	if stateName, ok := location["stateName"].(string); ok && stateName != "" {
-		displayNameParts = append(displayNameParts, stateName)
-	}
-	if countryName, ok := location["countryName"].(string); ok && countryName != "" {
-		displayNameParts = append(displayNameParts, countryName)
-	}
-	if len(displayNameParts) > 0 {
-		location["displayName"] = strings.Join(displayNameParts, ", ")
-	} else {
-		location["displayName"] = ""
-	}
-
-	return location
 }
 
-func (s *SharedFunctionService) transformLocationData(locations map[string]map[string]interface{}) map[string]interface{} {
-	if venue, ok := locations["venue"]; ok {
-		venueCopy := make(map[string]interface{})
-		for k, v := range venue {
-			venueCopy[k] = v
+func stringFromRowVal(v interface{}) string {
+	if v == nil {
+		return ""
+	}
+	switch x := v.(type) {
+	case string:
+		return strings.TrimSpace(x)
+	case *string:
+		if x == nil || *x == "" {
+			return ""
 		}
+		return strings.TrimSpace(*x)
+	default:
+		return strings.TrimSpace(fmt.Sprint(x))
+	}
+}
 
-		if state, ok := locations["state"]; ok {
-			if stateID, ok := state["id"].(string); ok && stateID != "" {
-				venueCopy["stateId"] = stateID
-			}
-		} else if city, ok := locations["city"]; ok {
-			if stateID, ok := city["stateId"].(string); ok && stateID != "" {
-				venueCopy["stateId"] = stateID
-			}
+func uint32FromRowVal(v interface{}) (uint32, bool) {
+	if v == nil {
+		return 0, false
+	}
+	switch x := v.(type) {
+	case uint32:
+		return x, true
+	case uint64:
+		return uint32(x), true
+	case int:
+		if x < 0 {
+			return 0, false
 		}
+		return uint32(x), true
+	case int32:
+		if x < 0 {
+			return 0, false
+		}
+		return uint32(x), true
+	case int64:
+		if x < 0 {
+			return 0, false
+		}
+		return uint32(x), true
+	default:
+		return 0, false
+	}
+}
 
-		var cityForEnrichment map[string]interface{}
-		if venueCity, ok := locations["venueCity"]; ok {
-			cityForEnrichment = venueCity
-		} else if city, ok := locations["city"]; ok {
-			cityForEnrichment = city
-		}
+func regionSliceFromRow(v interface{}) []string {
+	if v == nil {
+		return nil
+	}
+	if s, ok := v.([]string); ok {
+		return s
+	}
+	if s, ok := v.(*[]string); ok && s != nil {
+		return *s
+	}
+	return nil
+}
 
-		if cityForEnrichment != nil {
-			if cityLat, ok := cityForEnrichment["latitude"].(string); ok && cityLat != "" {
-				venueCopy["cityLatitude"] = cityLat
-			} else {
-				venueCopy["cityLatitude"] = nil
-			}
-			if cityLon, ok := cityForEnrichment["longitude"].(string); ok && cityLon != "" {
-				venueCopy["cityLongitude"] = cityLon
-			} else {
-				venueCopy["cityLongitude"] = nil
-			}
-		} else {
-			venueCopy["cityLatitude"] = nil
-			venueCopy["cityLongitude"] = nil
-		}
-
-		if country, ok := locations["country"]; ok {
-			if iso, ok := country["iso"].(string); ok && iso != "" {
-				venueCopy["countryIso"] = iso
-			}
-			if region, ok := country["region"].([]string); ok && len(region) > 0 {
-				venueCopy["region"] = region
-			} else {
-				venueCopy["region"] = nil
-			}
-		}
-		return venueCopy
+func (s *SharedFunctionService) BuildEventLocationFromAlleventRow(row map[string]interface{}) map[string]interface{} {
+	if row == nil {
+		return nil
 	}
 
-	if city, ok := locations["city"]; ok {
-		cityCopy := make(map[string]interface{})
-		for k, v := range city {
-			cityCopy[k] = v
+	venueID, hasVenueID := uint32FromRowVal(row["loc_venue_id"])
+	if hasVenueID && venueID > 0 {
+		out := map[string]interface{}{
+			"locationType": "VENUE",
+			"id":           nilIfEmpty(stringFromRowVal(row["loc_venue_uuid"])),
+			"name":         nilIfEmpty(stringFromRowVal(row["loc_venue_name"])),
+			"address":      nil,
+			"cityId":       nilIfEmpty(stringFromRowVal(row["loc_edition_city_uuid"])),
+			"cityName":     nil,
+			"stateId":      nilIfEmpty(stringFromRowVal(row["loc_edition_state_uuid"])),
+			"stateName":    nilIfEmpty(stringFromRowVal(row["loc_edition_city_state"])),
+			"countryId":    nilIfEmpty(stringFromRowVal(row["loc_edition_country_uuid"])),
+			"countryName":  nilIfEmpty(stringFromRowVal(row["loc_edition_country_name"])),
+			"countryIso":   nilIfEmpty(stringFromRowVal(row["loc_edition_country"])),
+			"latitude":     nil,
+			"longitude":    nil,
+			"cityLatitude": nil,
+			"cityLongitude": nil,
+			"region":       nil,
+			"displayName":  "",
 		}
 
-		if country, ok := locations["country"]; ok {
-			if iso, ok := country["iso"].(string); ok && iso != "" {
-				cityCopy["countryIso"] = iso
-			}
-			if region, ok := country["region"].([]string); ok && len(region) > 0 {
-				cityCopy["region"] = region
-			} else {
-				cityCopy["region"] = nil
-			}
+		addr := stringFromRowVal(row["loc_venue_address"])
+		if addr != "" {
+			out["address"] = addr
 		}
-		return cityCopy
+		vcn := stringFromRowVal(row["loc_venue_city_name"])
+		ecn := stringFromRowVal(row["loc_edition_city_name"])
+		if vcn != "" {
+			out["cityName"] = vcn
+		} else if ecn != "" {
+			out["cityName"] = ecn
+		}
+
+		flatLat := coordToAPIString(row["loc_venue_lat"])
+		flatLon := coordToAPIString(row["loc_venue_long"])
+		if flatLat != "" {
+			out["latitude"] = flatLat
+		}
+		if flatLon != "" {
+			out["longitude"] = flatLon
+		}
+
+		cLat := coordToAPIString(row["loc_edition_city_lat"])
+		cLon := coordToAPIString(row["loc_edition_city_long"])
+		if cLat != "" {
+			out["cityLatitude"] = cLat
+		}
+		if cLon != "" {
+			out["cityLongitude"] = cLon
+		}
+
+		if r := regionSliceFromRow(row["loc_region"]); len(r) > 0 {
+			out["region"] = r
+		}
+
+		out["displayName"] = joinDisplayNameParts(out["name"], out["cityName"], out["stateName"], out["countryName"])
+		return out
 	}
 
-	if state, ok := locations["state"]; ok {
-		stateCopy := make(map[string]interface{})
-		for k, v := range state {
-			stateCopy[k] = v
+	editionCity, okCity := uint32FromRowVal(row["loc_edition_city"])
+	if okCity && editionCity > 0 {
+		out := map[string]interface{}{
+			"locationType": "CITY",
+			"id":           nilIfEmpty(stringFromRowVal(row["loc_edition_city_uuid"])),
+			"name":         nilIfEmpty(stringFromRowVal(row["loc_edition_city_name"])),
+			"stateId":      nilIfEmpty(stringFromRowVal(row["loc_edition_state_uuid"])),
+			"stateName":    nilIfEmpty(stringFromRowVal(row["loc_edition_city_state"])),
+			"countryId":    nilIfEmpty(stringFromRowVal(row["loc_edition_country_uuid"])),
+			"countryName":  nilIfEmpty(stringFromRowVal(row["loc_edition_country_name"])),
+			"countryIso":   nilIfEmpty(stringFromRowVal(row["loc_edition_country"])),
+			"latitude":     nil,
+			"longitude":    nil,
+			"region":       nil,
+			"displayName":  "",
 		}
-
-		if country, ok := locations["country"]; ok {
-			if iso, ok := country["iso"].(string); ok && iso != "" {
-				stateCopy["countryIso"] = iso
-			}
-			if region, ok := country["region"].([]string); ok && len(region) > 0 {
-				stateCopy["region"] = region
-			} else {
-				stateCopy["region"] = nil
-			}
+		flatLat := coordToAPIString(row["loc_edition_city_lat"])
+		flatLon := coordToAPIString(row["loc_edition_city_long"])
+		if flatLat != "" {
+			out["latitude"] = flatLat
 		}
-		return stateCopy
+		if flatLon != "" {
+			out["longitude"] = flatLon
+		}
+		if r := regionSliceFromRow(row["loc_region"]); len(r) > 0 {
+			out["region"] = r
+		}
+		out["iso"] = out["countryIso"]
+		out["displayName"] = joinDisplayNameParts(out["name"], out["stateName"], out["countryName"])
+		return out
 	}
 
-	if country, ok := locations["country"]; ok {
-		countryCopy := make(map[string]interface{})
-		for k, v := range country {
-			countryCopy[k] = v
+	stateID, okState := uint32FromRowVal(row["loc_edition_city_state_id"])
+	if okState && stateID > 0 {
+		out := map[string]interface{}{
+			"locationType": "STATE",
+			"id":           nilIfEmpty(stringFromRowVal(row["loc_edition_state_uuid"])),
+			"name":         nilIfEmpty(stringFromRowVal(row["loc_edition_city_state"])),
+			"countryId":    nilIfEmpty(stringFromRowVal(row["loc_edition_country_uuid"])),
+			"countryName":  nilIfEmpty(stringFromRowVal(row["loc_edition_country_name"])),
+			"countryIso":   nilIfEmpty(stringFromRowVal(row["loc_edition_country"])),
+			"latitude":     nil,
+			"longitude":    nil,
+			"region":       nil,
+			"displayName":  "",
 		}
-		return countryCopy
+		sLat := coordToAPIString(row["loc_edition_city_state_latitude"])
+		sLon := coordToAPIString(row["loc_edition_city_state_longitude"])
+		if sLat != "" {
+			out["latitude"] = sLat
+		}
+		if sLon != "" {
+			out["longitude"] = sLon
+		}
+		if r := regionSliceFromRow(row["loc_region"]); len(r) > 0 {
+			out["region"] = r
+		}
+		out["iso"] = out["countryIso"]
+		out["displayName"] = joinDisplayNameParts(out["name"], out["countryName"])
+		return out
 	}
 
-	for _, location := range locations {
-		locationCopy := make(map[string]interface{})
-		for k, v := range location {
-			locationCopy[k] = v
+	countryIso := stringFromRowVal(row["loc_edition_country"])
+	if countryIso != "" {
+		out := map[string]interface{}{
+			"locationType": "COUNTRY",
+			"id":           nilIfEmpty(stringFromRowVal(row["loc_edition_country_uuid"])),
+			"name":         nilIfEmpty(stringFromRowVal(row["loc_edition_country_name"])),
+			"countryIso":   nilIfEmpty(countryIso),
+			"iso":          nil,
+			"latitude":     nil,
+			"longitude":    nil,
+			"region":       nil,
+			"displayName":  "",
 		}
-		return locationCopy
+		lat := coordToAPIString(row["loc_edition_country_latitude"])
+		lon := coordToAPIString(row["loc_edition_country_longitude"])
+		if lat != "" {
+			out["latitude"] = lat
+		}
+		if lon != "" {
+			out["longitude"] = lon
+		}
+		if out["countryIso"] != nil {
+			out["iso"] = out["countryIso"]
+		}
+		if r := regionSliceFromRow(row["loc_region"]); len(r) > 0 {
+			out["region"] = r
+		}
+		if n, ok := out["name"].(string); ok {
+			out["displayName"] = n
+		}
+		return out
 	}
 
 	return nil
 }
 
-func (s *SharedFunctionService) GetEventLocations(ids []uint32, filterFields models.FilterDataDto, byEdition bool) (map[string]map[string]interface{}, error) {
-	locationDataMap, err := s.FetchEventLocationData(ids, filterFields, byEdition)
-	if err != nil {
-		return nil, err
+func nilIfEmpty(s string) interface{} {
+	if s == "" {
+		return nil
 	}
+	return s
+}
 
-	locationsMap, err := s.FetchLocations(locationDataMap)
-	if err != nil {
-		return nil, err
+func joinDisplayNameParts(parts ...interface{}) string {
+	var ss []string
+	for _, p := range parts {
+		if p == nil {
+			continue
+		}
+		if s, ok := p.(string); ok && s != "" {
+			ss = append(ss, s)
+		}
 	}
-
-	result := make(map[string]map[string]interface{})
-	for eventID, location := range locationsMap {
-		eventIDStr := fmt.Sprintf("%d", eventID)
-		result[eventIDStr] = location
-	}
-
-	return result, nil
+	return strings.Join(ss, ", ")
 }
 
 func (s *SharedFunctionService) GetEventCountByStatus(
@@ -5794,7 +5503,6 @@ func (s *SharedFunctionService) GetEventCountByStatus(
 		whereConditions = append(whereConditions, queryResult.SearchClause)
 	}
 
-	// Add join conditions - this was missing!
 	if len(cteAndJoinResult.JoinConditions) > 0 {
 		whereConditions = append(whereConditions, cteAndJoinResult.JoinConditions...)
 	}

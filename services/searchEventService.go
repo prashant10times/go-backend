@@ -1428,6 +1428,10 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 	}
 
+	if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["eventLocation"] {
+		requiredFieldsStatic = append(requiredFieldsStatic, s.sharedFunctionService.AlleventLocationDenormalizedSelectExprs()...)
+	}
+
 	fieldsString := strings.Join(requiredFieldsStatic, ", ")
 	finalGroupByClause := s.buildGroupByClause(requiredFieldsStatic)
 
@@ -1588,7 +1592,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		values := make([]interface{}, len(columns))
 		for i, col := range columns {
 			switch col {
-			case "event_id", "edition_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors", "inboundScore", "internationalScore", "inboundAttendance", "internationalAttendance", "exhibitorsCount", "speakersCount", "sponsorsCount", "editions", "estimatedAttendanceMean", "estimatedVisitorsMean", "organizer_companyId", "trustScore":
+			case "event_id", "edition_id", "followers", "impactScore", "exhibitors", "speakers", "sponsors", "exhibitors_lower_bound", "exhibitors_upper_bound", "estimatedExhibitors", "inboundScore", "internationalScore", "inboundAttendance", "internationalAttendance", "exhibitorsCount", "speakersCount", "sponsorsCount", "editions", "estimatedAttendanceMean", "estimatedVisitorsMean", "organizer_companyId", "trustScore", "loc_venue_id", "loc_venue_city", "loc_edition_city", "loc_edition_city_state_id":
 				values[i] = new(uint32)
 			case "match_priority":
 				values[i] = new(uint8)
@@ -1608,11 +1612,13 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 				values[i] = new(*decimal.Decimal)
 			case "lat", "lon", "venueLat", "venueLon", "economicImpact", "trustChangePercentage", "reputationChangePercentage", "edition_city_lat", "edition_city_long", "venue_lat", "venue_long", "event_economic_value":
 				values[i] = new(float64)
+			case "loc_venue_lat", "loc_venue_long", "loc_edition_city_lat", "loc_edition_city_long", "loc_edition_country_latitude", "loc_edition_country_longitude", "loc_edition_city_state_latitude", "loc_edition_city_state_longitude":
+				values[i] = new(*float64)
 			case "yoyGrowth":
 				values[i] = new(uint32)
 			case "keywords":
 				values[i] = new(string)
-			case "tickets", "timings":
+			case "tickets", "timings", "loc_region":
 				values[i] = new([]string)
 			case "isNew":
 				values[i] = new(bool)
@@ -1844,6 +1850,18 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 					rowData[col] = nil
 				}
 			case "match_priority":
+			case "loc_venue_lat", "loc_venue_long", "loc_edition_city_lat", "loc_edition_city_long", "loc_edition_country_latitude", "loc_edition_country_longitude", "loc_edition_city_state_latitude", "loc_edition_city_state_longitude":
+				if pp, ok := val.(**float64); ok && pp != nil && *pp != nil {
+					rowData[col] = **pp
+				} else {
+					rowData[col] = nil
+				}
+			case "loc_region":
+				if arrPtr, ok := val.(*[]string); ok && arrPtr != nil && *arrPtr != nil {
+					rowData[col] = *arrPtr
+				} else {
+					rowData[col] = nil
+				}
 			default:
 				if ptr, ok := val.(*string); ok && ptr != nil {
 					if strings.TrimSpace(*ptr) == "" {
@@ -1908,12 +1926,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		Duration time.Duration
 	}
 
-	type locationDataResult struct {
-		Locations map[string]map[string]interface{}
-		Err       error
-		Duration  time.Duration
-	}
-
 	type audienceMatchInfoResult struct {
 		MatchInfo map[string]interface{}
 		Err       error
@@ -1927,7 +1939,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	relatedDataChan := make(chan relatedDataResult, 1)
-	locationDataChan := make(chan locationDataResult, 1)
 	audienceMatchInfoChan := make(chan audienceMatchInfoResult, 1)
 
 	hasSearchByEntity := len(filterFields.ParsedSearchByEntity) > 0
@@ -1945,15 +1956,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 			Rows:     rows,
 			Err:      err,
 			Duration: duration,
-		}
-	}()
-
-	go func() {
-
-		locationDataChan <- locationDataResult{
-			Locations: make(map[string]map[string]interface{}),
-			Err:       nil,
-			Duration:  0,
 		}
 	}()
 
@@ -2007,7 +2009,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	relatedDataRes := <-relatedDataChan
-	locationDataRes := <-locationDataChan
 	audienceMatchInfoRes := <-audienceMatchInfoChan
 
 	var entityQualificationsRes entityQualificationsResult
@@ -2022,7 +2023,6 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 	}
 
 	log.Printf("Related data query time: %v", relatedDataRes.Duration)
-	log.Printf("Event location query time: %v", locationDataRes.Duration)
 	log.Printf("Audience match info query time: %v", audienceMatchInfoRes.Duration)
 
 	var eventTrackerMatchInfo map[uint32]map[string]interface{}
@@ -2075,38 +2075,7 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		return out, nil
 	}
 
-	if locationDataRes.Err != nil {
-		log.Printf("Error fetching event locations: %v", locationDataRes.Err)
-		if relatedDataRes.Rows != nil {
-			relatedDataRes.Rows.Close()
-		}
-		out := &ListResult{StatusCode: 500, ErrorMessage: locationDataRes.Err.Error()}
-		if hasPast {
-			out.UniqueEventCount = uniqueEventCount
-		}
-		return out, nil
-	}
-
 	relatedDataRows := relatedDataRes.Rows
-	eventLocationsMap := locationDataRes.Locations
-
-	if len(eventData) > 0 {
-		var editionIds []uint32
-		for _, ev := range eventData {
-			if eid, ok := ev["edition_id"].(uint32); ok {
-				editionIds = append(editionIds, eid)
-			}
-		}
-		if len(editionIds) > 0 {
-			loc, err := s.sharedFunctionService.GetEventLocations(editionIds, filterFields, true)
-			if err != nil {
-				log.Printf("Error fetching event locations by edition: %v", err)
-				eventLocationsMap = make(map[string]map[string]interface{})
-			} else {
-				eventLocationsMap = loc
-			}
-		}
-	}
 
 	defer func() {
 		if relatedDataRows != nil {
@@ -2474,15 +2443,8 @@ func (s *SearchEventService) getListData(pagination models.PaginationDto, sortCl
 		}
 
 		if fieldCtx.Processor.GetRequestedGroups()[ResponseGroupBasic] || len(requestedFieldsSet) == 0 || requestedFieldsSet["eventLocation"] {
-			locationKey := eventID
-			if eid, ok := event["edition_id"].(uint32); ok {
-				locationKey = fmt.Sprintf("%d", eid)
-			}
-			if eventLocation, ok := eventLocationsMap[locationKey]; ok && eventLocation != nil {
-				grouper.AddField("eventLocation", eventLocation)
-			} else {
-				grouper.AddField("eventLocation", nil)
-			}
+			eventLocation := s.sharedFunctionService.BuildEventLocationFromAlleventRow(event)
+			grouper.AddField("eventLocation", eventLocation)
 		}
 
 		if len(requestedFieldsSet) == 0 || requestedFieldsSet["jobComposite"] {

@@ -32,12 +32,16 @@ type PastEditionsResult struct {
 	Count int                        `json:"count"`
 }
 
-func buildPastEditionsCTE(editionTypes []string) string {
+func buildPastEditionsCTE(editionTypes []string, locationSelectSQL string) string {
 	if len(editionTypes) == 0 {
 		return ""
 	}
 	inPlaceholders := strings.Repeat("?, ", len(editionTypes))
 	inPlaceholders = strings.TrimSuffix(inPlaceholders, ", ")
+	locPart := ""
+	if strings.TrimSpace(locationSelectSQL) != "" {
+		locPart = ",\n\t\t\t" + locationSelectSQL
+	}
 	return fmt.Sprintf(`past_editions_cte AS (
 		SELECT
 			ee.edition_uuid,
@@ -45,11 +49,11 @@ func buildPastEditionsCTE(editionTypes []string) string {
 			ee.start_date,
 			ee.end_date,
 			ee.status,
-			ee.event_format
+			ee.event_format%s
 		FROM %s AS ee
 		WHERE ee.edition_type IN (%s)
 		  AND ee.event_id IN (SELECT event_id FROM %s WHERE event_uuid = ?)
-	)`, alleventTable, inPlaceholders, alleventTable)
+	)`, locPart, alleventTable, inPlaceholders, alleventTable)
 }
 
 func buildCountQuery(editionTypes []string) string {
@@ -87,7 +91,9 @@ func (s *PastEditionsService) GetPastEditions(eventId string, limit, offset int,
 	if len(editionTypes) == 0 {
 		editionTypes = []string{"past_edition"}
 	}
-	cteSQL := buildPastEditionsCTE(editionTypes)
+	locExprs := s.sharedFunctionService.AlleventLocationDenormalizedSelectExprs()
+	locationSelectSQL := strings.Join(locExprs, ",\n\t\t\t")
+	cteSQL := buildPastEditionsCTE(editionTypes, locationSelectSQL)
 
 	countQuery := buildCountQuery(editionTypes)
 	listQuery := fmt.Sprintf("WITH %s SELECT * FROM past_editions_cte LIMIT ? OFFSET ?", cteSQL)
@@ -108,7 +114,7 @@ func (s *PastEditionsService) GetPastEditions(eventId string, limit, offset int,
 	log.Printf("Past editions list query: %s", queryForLog(listQuery, listArgs...))
 
 	var count int
-	var listRows []pastEditionRow
+	var listRows []map[string]interface{}
 	var countErr, listErr error
 	var wg sync.WaitGroup
 	wg.Add(2)
@@ -134,7 +140,7 @@ func (s *PastEditionsService) GetPastEditions(eventId string, limit, offset int,
 		return nil, listErr
 	}
 
-	listWithLocations, err := s.attachEventLocations(listRows, editionTypes)
+	listWithLocations, err := s.attachEventLocations(listRows)
 	if err != nil {
 		log.Printf("Past editions attach event locations error: %v", err)
 		return nil, err
@@ -164,7 +170,7 @@ func (s *PastEditionsService) runCountQuery(ctx context.Context, query string, a
 	return int(total), nil
 }
 
-func (s *PastEditionsService) runListQuery(ctx context.Context, query string, args ...interface{}) ([]pastEditionRow, error) {
+func (s *PastEditionsService) runListQuery(ctx context.Context, query string, args ...interface{}) ([]map[string]interface{}, error) {
 	start := time.Now()
 	rows, err := s.clickhouseService.ExecuteQuery(ctx, query, args...)
 	if err != nil {
@@ -176,69 +182,124 @@ func (s *PastEditionsService) runListQuery(ctx context.Context, query string, ar
 	return scanPastEditionsRows(rows)
 }
 
-type pastEditionRow struct {
-	EditionUUID string
-	EditionID   uint32
-	StartDate   time.Time
-	EndDate     time.Time
-	Status      string
-	EventFormat *string
+func pastEditionsScanTargets(columns []string) []interface{} {
+	values := make([]interface{}, len(columns))
+	for i, col := range columns {
+		switch col {
+		case "edition_id", "loc_venue_id", "loc_venue_city", "loc_edition_city", "loc_edition_city_state_id":
+			values[i] = new(uint32)
+		case "start_date", "end_date":
+			values[i] = new(time.Time)
+		case "event_format":
+			values[i] = new(*string)
+		case "loc_region":
+			values[i] = new([]string)
+		case "loc_venue_lat", "loc_venue_long", "loc_edition_city_lat", "loc_edition_city_long", "loc_edition_country_latitude", "loc_edition_country_longitude", "loc_edition_city_state_latitude", "loc_edition_city_state_longitude":
+			values[i] = new(*float64)
+		default:
+			values[i] = new(string)
+		}
+	}
+	return values
 }
 
-func scanPastEditionsRows(rows driver.Rows) ([]pastEditionRow, error) {
-	var result []pastEditionRow
+func pastEditionsRowToMap(columns []string, values []interface{}) map[string]interface{} {
+	row := make(map[string]interface{}, len(columns))
+	for i, col := range columns {
+		val := values[i]
+		switch col {
+		case "edition_uuid":
+			if p, ok := val.(*string); ok && p != nil {
+				row[col] = strings.TrimSpace(*p)
+			}
+		case "edition_id":
+			if p, ok := val.(*uint32); ok && p != nil {
+				row["edition_id"] = *p
+			}
+		case "start_date", "end_date":
+			if p, ok := val.(*time.Time); ok && p != nil {
+				row[col] = *p
+			}
+		case "status":
+			if p, ok := val.(*string); ok && p != nil {
+				row[col] = *p
+			}
+		case "event_format":
+			if p, ok := val.(**string); ok && p != nil {
+				row[col] = *p
+			}
+		case "loc_venue_lat", "loc_venue_long", "loc_edition_city_lat", "loc_edition_city_long", "loc_edition_country_latitude", "loc_edition_country_longitude", "loc_edition_city_state_latitude", "loc_edition_city_state_longitude":
+			if pp, ok := val.(**float64); ok && pp != nil && *pp != nil {
+				row[col] = **pp
+			} else {
+				row[col] = nil
+			}
+		case "loc_region":
+			if arrPtr, ok := val.(*[]string); ok && arrPtr != nil && *arrPtr != nil {
+				row[col] = *arrPtr
+			} else {
+				row[col] = nil
+			}
+		case "loc_venue_id", "loc_venue_city", "loc_edition_city", "loc_edition_city_state_id":
+			if p, ok := val.(*uint32); ok && p != nil {
+				row[col] = *p
+			}
+		default:
+			if ptr, ok := val.(*string); ok && ptr != nil {
+				if strings.TrimSpace(*ptr) == "" {
+					row[col] = nil
+				} else {
+					row[col] = *ptr
+				}
+			}
+		}
+	}
+	return row
+}
+
+func scanPastEditionsRows(rows driver.Rows) ([]map[string]interface{}, error) {
+	var result []map[string]interface{}
 	for rows.Next() {
-		var (
-			editionUUID string
-			editionID   uint32
-			startDate   time.Time
-			endDate     time.Time
-			status      string
-			eventFormat *string
-		)
-		if err := rows.Scan(&editionUUID, &editionID, &startDate, &endDate, &status, &eventFormat); err != nil {
+		columns := rows.Columns()
+		values := pastEditionsScanTargets(columns)
+		if err := rows.Scan(values...); err != nil {
 			return nil, err
 		}
-		result = append(result, pastEditionRow{
-			EditionUUID: editionUUID,
-			EditionID:   editionID,
-			StartDate:   startDate,
-			EndDate:     endDate,
-			Status:      status,
-			EventFormat: eventFormat,
-		})
+		result = append(result, pastEditionsRowToMap(columns, values))
 	}
 	return result, rows.Err()
 }
 
-func (s *PastEditionsService) attachEventLocations(rows []pastEditionRow, editionTypes []string) ([]models.PastEditionsBasic, error) {
+func (s *PastEditionsService) attachEventLocations(rows []map[string]interface{}) ([]models.PastEditionsBasic, error) {
 	list := make([]models.PastEditionsBasic, 0, len(rows))
-	if len(rows) == 0 {
-		return list, nil
-	}
-
-	editionIDs := make([]uint32, 0, len(rows))
-	for _, r := range rows {
-		editionIDs = append(editionIDs, r.EditionID)
-	}
-	if len(editionTypes) == 0 {
-		editionTypes = []string{"past_edition"}
-	}
-	filterFields := models.FilterDataDto{ParsedEditionType: editionTypes}
-	locations, err := s.sharedFunctionService.GetEventLocations(editionIDs, filterFields, true)
-	if err != nil {
-		return nil, err
-	}
-
-	for _, r := range rows {
-		eventLocation := locations[fmt.Sprintf("%d", r.EditionID)]
+	for _, row := range rows {
+		eventLocation := s.sharedFunctionService.BuildEventLocationFromAlleventRow(row)
+		var editionUUID string
+		if u, ok := row["edition_uuid"].(string); ok {
+			editionUUID = u
+		}
+		var startStr, endStr string
+		if t, ok := row["start_date"].(time.Time); ok {
+			startStr = t.Format("2006-01-02")
+		}
+		if t, ok := row["end_date"].(time.Time); ok {
+			endStr = t.Format("2006-01-02")
+		}
+		var status string
+		if st, ok := row["status"].(string); ok {
+			status = st
+		}
+		var formatPtr *string
+		if fp, ok := row["event_format"].(*string); ok {
+			formatPtr = fp
+		}
 		item := models.PastEditionsBasic{
-			Id:            r.EditionUUID,
+			Id:            editionUUID,
 			EventLocation: eventLocation,
-			Status:        r.Status,
-			Format:        formatForResponse(r.EventFormat),
-			Start:         r.StartDate.Format("2006-01-02"),
-			End:           r.EndDate.Format("2006-01-02"),
+			Status:        status,
+			Format:        formatForResponse(formatPtr),
+			Start:         startStr,
+			End:           endStr,
 		}
 		list = append(list, item)
 	}
