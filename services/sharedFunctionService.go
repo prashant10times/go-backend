@@ -498,11 +498,7 @@ func (s *SharedFunctionService) buildCompanyCriteriaCondition(criteria *models.C
 		}
 	}
 	if len(criteria.CompanyWebsite) > 0 {
-		webCol := "company_domain"
-		if nameField == "company_name" {
-			webCol = "website_lc"
-		}
-		if c := s.buildLowerColumnDomainInCondition(webCol, criteria.CompanyWebsite); c != "" {
+		if c := s.buildLowerColumnDomainInCondition("company_domain", criteria.CompanyWebsite); c != "" {
 			parts = append(parts, c)
 		}
 	}
@@ -1278,7 +1274,7 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 			}
 		}
 		if hasOrganizer {
-			if c := s.buildLowerColumnDomainInCondition("website_lc", filterFields.ParsedCompanyWebsite); c != "" {
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
 				result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, c)
 			}
 		}
@@ -10751,7 +10747,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 			}
 		}
 		if hasOrganizer {
-			if c := s.buildLowerColumnDomainInCondition("website_lc", filterFields.ParsedCompanyWebsite); c != "" {
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
 				organizerConditions = append(organizerConditions, c)
 			}
 		}
