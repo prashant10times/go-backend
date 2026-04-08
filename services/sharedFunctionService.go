@@ -322,7 +322,7 @@ func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields m
 }
 
 // matchWebsiteConverter matched company_website with lower(column) LIKE '%term%' (substring).
-// Replaced by matchCompanyDomainExactILIKE: company_domain ILIKE 'term' (exact, case-insensitive).
+// Company website / domain filters use buildLowerColumnDomainInCondition (lower(column) IN (...)).
 //
 // func (s *SharedFunctionService) matchWebsiteConverter(fieldName string, searchTerm string) string {
 // 	escapedTerm := strings.TrimSpace(searchTerm)
@@ -341,18 +341,25 @@ func (s *SharedFunctionService) buildUserNameUserCompanyCondition(filterFields m
 // 	return fmt.Sprintf("lower(%s) LIKE '%%%s%%'", fieldName, strings.ToLower(escapedValue))
 // }
 
-func (s *SharedFunctionService) matchCompanyDomainExactILIKE(searchTerm string) string {
-	// term := strings.TrimSpace(searchTerm)
-	term := s.extractDomain(searchTerm)
-	if term == "" {
+func (s *SharedFunctionService) buildLowerColumnDomainInCondition(column string, websites []string) string {
+	if column == "" || len(websites) == 0 {
 		return ""
 	}
-
-	term = strings.ReplaceAll(term, `\`, `\\`)
-	term = strings.ReplaceAll(term, `%`, `\%`)
-	term = strings.ReplaceAll(term, `_`, `\_`)
-	term = strings.ReplaceAll(term, `'`, `''`)
-	return fmt.Sprintf("company_domain ILIKE '%s'", term)
+	seen := make(map[string]bool)
+	var literals []string
+	for _, w := range websites {
+		d := s.extractDomain(w)
+		if d == "" || seen[d] {
+			continue
+		}
+		seen[d] = true
+		d = strings.ReplaceAll(d, "'", "''")
+		literals = append(literals, fmt.Sprintf("'%s'", d))
+	}
+	if len(literals) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("lower(%s) IN (%s)", column, strings.Join(literals, ", "))
 }
 
 func (s *SharedFunctionService) buildClassifiedCompanyIdsCTE(criteria *models.CompanyCriteria, cteIndex int) string {
@@ -491,14 +498,8 @@ func (s *SharedFunctionService) buildCompanyCriteriaCondition(criteria *models.C
 		}
 	}
 	if len(criteria.CompanyWebsite) > 0 {
-		var webConds []string
-		for _, web := range criteria.CompanyWebsite {
-			if c := s.matchCompanyDomainExactILIKE(web); c != "" {
-				webConds = append(webConds, c)
-			}
-		}
-		if len(webConds) > 0 {
-			parts = append(parts, fmt.Sprintf("(%s)", strings.Join(webConds, " OR ")))
+		if c := s.buildLowerColumnDomainInCondition("company_domain", criteria.CompanyWebsite); c != "" {
+			parts = append(parts, c)
 		}
 	}
 	nameOrWebPart := ""
@@ -1262,40 +1263,19 @@ func (s *SharedFunctionService) buildClickHouseQuery(filterFields models.FilterD
 
 		if hasExhibitor {
 			result.NeedsExhibitorJoin = true
-			var exhibitorConditions []string
-			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				exhibitorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-				if exhibitorCondition != "" {
-					exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
-				}
-			}
-			if len(exhibitorConditions) > 0 {
-				result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, fmt.Sprintf("(%s)", strings.Join(exhibitorConditions, " OR ")))
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				result.ExhibitorWhereConditions = append(result.ExhibitorWhereConditions, c)
 			}
 		}
 		if hasSponsor {
 			result.NeedsSponsorJoin = true
-			var sponsorConditions []string
-			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				sponsorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-				if sponsorCondition != "" {
-					sponsorConditions = append(sponsorConditions, sponsorCondition)
-				}
-			}
-			if len(sponsorConditions) > 0 {
-				result.SponsorWhereConditions = append(result.SponsorWhereConditions, fmt.Sprintf("(%s)", strings.Join(sponsorConditions, " OR ")))
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				result.SponsorWhereConditions = append(result.SponsorWhereConditions, c)
 			}
 		}
 		if hasOrganizer {
-			var organizerConditions []string
-			for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
-				organizerCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-				if organizerCondition != "" {
-					organizerConditions = append(organizerConditions, organizerCondition)
-				}
-			}
-			if len(organizerConditions) > 0 {
-				result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, fmt.Sprintf("(%s)", strings.Join(organizerConditions, " OR ")))
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				result.OrganizerWhereConditions = append(result.OrganizerWhereConditions, c)
 			}
 		}
 	}
@@ -10640,6 +10620,45 @@ func (s *SharedFunctionService) audienceTrackerMatchInfo(eventIds []uint32, jobC
 	return result, nil
 }
 
+func matchFlagOrExprForSQL(conds []string) string {
+	if len(conds) == 0 {
+		return "0"
+	}
+	return "(" + strings.Join(conds, " OR ") + ")"
+}
+
+func (s *SharedFunctionService) appendTrackerEntityQualificationFromMatchSource(
+	data map[uint32][]string,
+	eventID uint32,
+	prefix string,
+	matchSource, companyName, companyWebsite, companyDomain string,
+) {
+	appendDomain := func() {
+		dom := strings.TrimSpace(companyDomain)
+		if dom == "" {
+			dom = s.extractDomain(companyWebsite)
+		}
+		if dom != "" {
+			data[eventID] = append(data[eventID], prefix+dom)
+		}
+	}
+	appendName := func() {
+		if companyName != "" {
+			data[eventID] = append(data[eventID], prefix+companyName)
+		}
+	}
+
+	switch strings.TrimSpace(matchSource) {
+	case "both":
+		appendName()
+		appendDomain()
+	case "domain":
+		appendDomain()
+	case "name":
+		appendName()
+	}
+}
+
 func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 	ctx context.Context,
 	eventIds []uint32,
@@ -10706,8 +10725,14 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 	eventIdsStrJoined := strings.Join(eventIdsStr, ",")
 
 	var exhibitorConditions []string
+	var exhibitorNameConditions []string
+	var exhibitorDomainConditions []string
 	var sponsorConditions []string
+	var sponsorNameConditions []string
+	var sponsorDomainConditions []string
 	var organizerConditions []string
+	var organizerNameConditions []string
+	var organizerDomainConditions []string
 	var visitorConditions []string
 	var speakerConditions []string
 
@@ -10716,18 +10741,21 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 			exhibitorCondition := s.matchPhraseConverter("company_id_name", companyName)
 			if exhibitorCondition != "" {
 				exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
+				exhibitorNameConditions = append(exhibitorNameConditions, exhibitorCondition)
 			}
 		}
 		if hasSponsor {
 			sponsorCondition := s.matchPhraseConverter("company_id_name", companyName)
 			if sponsorCondition != "" {
 				sponsorConditions = append(sponsorConditions, sponsorCondition)
+				sponsorNameConditions = append(sponsorNameConditions, sponsorCondition)
 			}
 		}
 		if hasOrganizer {
 			organizerCondition := s.matchPhraseConverter("company_name", companyName)
 			if organizerCondition != "" {
 				organizerConditions = append(organizerConditions, organizerCondition)
+				organizerNameConditions = append(organizerNameConditions, organizerCondition)
 			}
 		}
 		if hasVisitor {
@@ -10755,23 +10783,23 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 		}
 	}
 
-	for _, companyWebsite := range filterFields.ParsedCompanyWebsite {
+	if len(filterFields.ParsedCompanyWebsite) > 0 {
 		if hasExhibitor {
-			exhibitorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-			if exhibitorCondition != "" {
-				exhibitorConditions = append(exhibitorConditions, exhibitorCondition)
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				exhibitorConditions = append(exhibitorConditions, c)
+				exhibitorDomainConditions = append(exhibitorDomainConditions, c)
 			}
 		}
 		if hasSponsor {
-			sponsorCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-			if sponsorCondition != "" {
-				sponsorConditions = append(sponsorConditions, sponsorCondition)
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				sponsorConditions = append(sponsorConditions, c)
+				sponsorDomainConditions = append(sponsorDomainConditions, c)
 			}
 		}
 		if hasOrganizer {
-			organizerCondition := s.matchCompanyDomainExactILIKE(companyWebsite)
-			if organizerCondition != "" {
-				organizerConditions = append(organizerConditions, organizerCondition)
+			if c := s.buildLowerColumnDomainInCondition("company_domain", filterFields.ParsedCompanyWebsite); c != "" {
+				organizerConditions = append(organizerConditions, c)
+				organizerDomainConditions = append(organizerDomainConditions, c)
 			}
 		}
 	}
@@ -10883,12 +10911,38 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				selectField = "company_id_name as company_name"
 			}
 
-			exhibitorQuery := fmt.Sprintf(`
+			var exhibitorQuery string
+			if hasBothNameAndWebsite {
+				nameExpr := matchFlagOrExprForSQL(exhibitorNameConditions)
+				domainExpr := matchFlagOrExprForSQL(exhibitorDomainConditions)
+				exhibitorQuery = fmt.Sprintf(`
+				SELECT DISTINCT
+					event_id,
+					company_name,
+					company_website,
+					company_domain,
+					multiIf(matched_by_name = 1 AND matched_by_domain = 1, 'both', matched_by_domain = 1, 'domain', matched_by_name = 1, 'name', 'none') AS match_source
+				FROM (
+					SELECT DISTINCT
+						event_id,
+						company_id_name AS company_name,
+						company_website,
+						company_domain,
+						toUInt8(%s) AS matched_by_name,
+						toUInt8(%s) AS matched_by_domain
+					FROM testing_db.event_exhibitor_ch
+					WHERE event_id IN (%s)
+					AND company_id IS NOT NULL AND %s
+				) AS exhibitor_match_src
+			`, nameExpr, domainExpr, eventIdsStrJoined, exhibitorWhereClause)
+			} else {
+				exhibitorQuery = fmt.Sprintf(`
 				SELECT DISTINCT event_id, %s
 				FROM testing_db.event_exhibitor_ch
 				WHERE event_id IN (%s)
 				AND company_id IS NOT NULL AND %s
 			`, selectField, eventIdsStrJoined, exhibitorWhereClause)
+			}
 			log.Printf("Exhibitor query: %s", exhibitorQuery)
 
 			rows, err := s.clickhouseService.ExecuteQuery(ctx, exhibitorQuery)
@@ -10905,21 +10959,12 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				var companyWebsite string
 
 				if hasBothNameAndWebsite {
-					if err := rows.Scan(&eventID, &companyName, &companyWebsite); err != nil {
+					var companyDomain, matchSource string
+					if err := rows.Scan(&eventID, &companyName, &companyWebsite, &companyDomain, &matchSource); err != nil {
 						log.Printf("Error scanning exhibitor row: %v", err)
 						continue
 					}
-					if companyName != "" {
-						entityQualification := fmt.Sprintf("exhibitor_%s", companyName)
-						data[eventID] = append(data[eventID], entityQualification)
-					}
-					if companyWebsite != "" {
-						domain := s.extractDomain(companyWebsite)
-						if domain != "" {
-							entityQualification := fmt.Sprintf("exhibitor_%s", domain)
-							data[eventID] = append(data[eventID], entityQualification)
-						}
-					}
+					s.appendTrackerEntityQualificationFromMatchSource(data, eventID, "exhibitor_", matchSource, companyName, companyWebsite, companyDomain)
 				} else if hasCompanyWebsite {
 					if err := rows.Scan(&eventID, &companyWebsite); err != nil {
 						log.Printf("Error scanning exhibitor row: %v", err)
@@ -10962,12 +11007,38 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				selectField = "company_id_name as company_name"
 			}
 
-			sponsorQuery := fmt.Sprintf(`
+			var sponsorQuery string
+			if hasBothNameAndWebsite {
+				nameExpr := matchFlagOrExprForSQL(sponsorNameConditions)
+				domainExpr := matchFlagOrExprForSQL(sponsorDomainConditions)
+				sponsorQuery = fmt.Sprintf(`
+				SELECT DISTINCT
+					event_id,
+					company_name,
+					company_website,
+					company_domain,
+					multiIf(matched_by_name = 1 AND matched_by_domain = 1, 'both', matched_by_domain = 1, 'domain', matched_by_name = 1, 'name', 'none') AS match_source
+				FROM (
+					SELECT DISTINCT
+						event_id,
+						company_id_name AS company_name,
+						company_website,
+						company_domain,
+						toUInt8(%s) AS matched_by_name,
+						toUInt8(%s) AS matched_by_domain
+					FROM testing_db.event_sponsors_ch
+					WHERE event_id IN (%s)
+					AND company_id IS NOT NULL AND %s
+				) AS sponsor_match_src
+			`, nameExpr, domainExpr, eventIdsStrJoined, sponsorWhereClause)
+			} else {
+				sponsorQuery = fmt.Sprintf(`
 				SELECT DISTINCT event_id, %s
 				FROM testing_db.event_sponsors_ch
 				WHERE event_id IN (%s)
 				AND company_id IS NOT NULL AND %s
 			`, selectField, eventIdsStrJoined, sponsorWhereClause)
+			}
 			log.Printf("Sponsor query: %s", sponsorQuery)
 			rows, err := s.clickhouseService.ExecuteQuery(ctx, sponsorQuery)
 			if err != nil {
@@ -10983,21 +11054,12 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				var companyWebsite string
 
 				if hasBothNameAndWebsite {
-					if err := rows.Scan(&eventID, &companyName, &companyWebsite); err != nil {
+					var companyDomain, matchSource string
+					if err := rows.Scan(&eventID, &companyName, &companyWebsite, &companyDomain, &matchSource); err != nil {
 						log.Printf("Error scanning sponsor row: %v", err)
 						continue
 					}
-					if companyName != "" {
-						entityQualification := fmt.Sprintf("sponsor_%s", companyName)
-						data[eventID] = append(data[eventID], entityQualification)
-					}
-					if companyWebsite != "" {
-						domain := s.extractDomain(companyWebsite)
-						if domain != "" {
-							entityQualification := fmt.Sprintf("sponsor_%s", domain)
-							data[eventID] = append(data[eventID], entityQualification)
-						}
-					}
+					s.appendTrackerEntityQualificationFromMatchSource(data, eventID, "sponsor_", matchSource, companyName, companyWebsite, companyDomain)
 				} else if hasCompanyWebsite {
 					if err := rows.Scan(&eventID, &companyWebsite); err != nil {
 						log.Printf("Error scanning sponsor row: %v", err)
@@ -11040,12 +11102,38 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				selectField = "company_name"
 			}
 
-			organizerQuery := fmt.Sprintf(`
+			var organizerQuery string
+			if hasBothNameAndWebsite {
+				nameExpr := matchFlagOrExprForSQL(organizerNameConditions)
+				domainExpr := matchFlagOrExprForSQL(organizerDomainConditions)
+				organizerQuery = fmt.Sprintf(`
+				SELECT DISTINCT
+					event_id,
+					company_name,
+					company_website,
+					company_domain,
+					multiIf(matched_by_name = 1 AND matched_by_domain = 1, 'both', matched_by_domain = 1, 'domain', matched_by_name = 1, 'name', 'none') AS match_source
+				FROM (
+					SELECT DISTINCT
+						event_id,
+						company_name,
+						company_website,
+						company_domain,
+						toUInt8(%s) AS matched_by_name,
+						toUInt8(%s) AS matched_by_domain
+					FROM testing_db.allevent_ch
+					WHERE event_id IN (%s)
+					AND company_id IS NOT NULL AND %s
+				) AS organizer_match_src
+			`, nameExpr, domainExpr, eventIdsStrJoined, organizerWhereClause)
+			} else {
+				organizerQuery = fmt.Sprintf(`
 				SELECT DISTINCT event_id, %s
 				FROM testing_db.allevent_ch
 				WHERE event_id IN (%s)
 				AND company_id IS NOT NULL AND %s
 			`, selectField, eventIdsStrJoined, organizerWhereClause)
+			}
 			log.Printf("Organizer query: %s", organizerQuery)
 			rows, err := s.clickhouseService.ExecuteQuery(ctx, organizerQuery)
 			if err != nil {
@@ -11061,21 +11149,12 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 				var companyWebsite string
 
 				if hasBothNameAndWebsite {
-					if err := rows.Scan(&eventID, &companyName, &companyWebsite); err != nil {
+					var companyDomain, matchSource string
+					if err := rows.Scan(&eventID, &companyName, &companyWebsite, &companyDomain, &matchSource); err != nil {
 						log.Printf("Error scanning organizer row: %v", err)
 						continue
 					}
-					if companyName != "" {
-						entityQualification := fmt.Sprintf("organizer_%s", companyName)
-						data[eventID] = append(data[eventID], entityQualification)
-					}
-					if companyWebsite != "" {
-						domain := s.extractDomain(companyWebsite)
-						if domain != "" {
-							entityQualification := fmt.Sprintf("organizer_%s", domain)
-							data[eventID] = append(data[eventID], entityQualification)
-						}
-					}
+					s.appendTrackerEntityQualificationFromMatchSource(data, eventID, "organizer_", matchSource, companyName, companyWebsite, companyDomain)
 				} else if hasCompanyWebsite {
 					if err := rows.Scan(&eventID, &companyWebsite); err != nil {
 						log.Printf("Error scanning organizer row: %v", err)
