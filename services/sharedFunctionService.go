@@ -10653,8 +10653,7 @@ func (s *SharedFunctionService) appendTrackerEntityQualificationFromMatchSource(
 	prefix string,
 	matchSource, companyName, companyWebsite, companyDomain string,
 ) {
-	switch strings.TrimSpace(matchSource) {
-	case "domain":
+	appendDomain := func() {
 		dom := strings.TrimSpace(companyDomain)
 		if dom == "" {
 			dom = s.extractDomain(companyWebsite)
@@ -10662,10 +10661,21 @@ func (s *SharedFunctionService) appendTrackerEntityQualificationFromMatchSource(
 		if dom != "" {
 			data[eventID] = append(data[eventID], prefix+dom)
 		}
-	case "name":
+	}
+	appendName := func() {
 		if companyName != "" {
 			data[eventID] = append(data[eventID], prefix+companyName)
 		}
+	}
+
+	switch strings.TrimSpace(matchSource) {
+	case "both":
+		appendName()
+		appendDomain()
+	case "domain":
+		appendDomain()
+	case "name":
+		appendName()
 	}
 }
 
@@ -10934,7 +10944,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					company_name,
 					company_website,
 					company_domain,
-					multiIf(matched_by_domain = 1, 'domain', matched_by_name = 1, 'name', 'none') AS match_source
+					multiIf(matched_by_name = 1 AND matched_by_domain = 1, 'both', matched_by_domain = 1, 'domain', matched_by_name = 1, 'name', 'none') AS match_source
 				FROM (
 					SELECT DISTINCT
 						event_id,
@@ -11030,7 +11040,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					company_name,
 					company_website,
 					company_domain,
-					multiIf(matched_by_domain = 1, 'domain', matched_by_name = 1, 'name', 'none') AS match_source
+					multiIf(matched_by_name = 1 AND matched_by_domain = 1, 'both', matched_by_domain = 1, 'domain', matched_by_name = 1, 'name', 'none') AS match_source
 				FROM (
 					SELECT DISTINCT
 						event_id,
@@ -11125,7 +11135,7 @@ func (s *SharedFunctionService) getEntityQualificationsForCompanyName(
 					company_name,
 					company_website,
 					company_domain,
-					multiIf(matched_by_domain = 1, 'domain', matched_by_name = 1, 'name', 'none') AS match_source
+					multiIf(matched_by_name = 1 AND matched_by_domain = 1, 'both', matched_by_domain = 1, 'domain', matched_by_name = 1, 'name', 'none') AS match_source
 				FROM (
 					SELECT DISTINCT
 						event_id,
