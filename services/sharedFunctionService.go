@@ -7665,9 +7665,6 @@ func (s *SharedFunctionService) getTrendsCountByLongDurationsInternal(
 		FROM preFilterEvent e
 		INNER JOIN testing_db.event_daywiseEconomicImpact_ch ed ON e.event_id = ed.event_id
 		INNER JOIN final_dates fd ON ed.date >= fd.start_date AND ed.date <= fd.end_date
-		FROM preFilterEvent e
-		INNER JOIN testing_db.event_daywiseEconomicImpact_ch ed ON e.event_id = ed.event_id
-		INNER JOIN final_dates fd ON ed.date >= fd.start_date AND ed.date <= fd.end_date
 		%s
 		WHERE %s
 		AND ed.metric = '%s'
