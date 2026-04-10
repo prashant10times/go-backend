@@ -2,6 +2,7 @@ package location
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"search-event-go/middleware"
@@ -9,6 +10,38 @@ import (
 	"search-event-go/services"
 	"strings"
 )
+
+var catalogRegionLabels = []string{
+	"Northern Europe",
+	"Western Europe",
+	"Middle East",
+	"SouthEast Asia",
+	"Latin America",
+	"Oceania",
+	"India Subcontinent",
+	"Southern Africa",
+	"Northern Africa",
+	"Eastern Europe",
+	"North America",
+	"UK",
+	"East Asia",
+	"Antarctica",
+}
+
+func filterCatalogRegionsByQuery(q string) []string {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil
+	}
+	needle := strings.ToLower(q)
+	var out []string
+	for _, label := range catalogRegionLabels {
+		if strings.Contains(strings.ToLower(label), needle) {
+			out = append(out, label)
+		}
+	}
+	return out
+}
 
 type LocationService struct {
 	clickhouseService *services.ClickHouseService
@@ -49,6 +82,44 @@ type LocationDetailWithISO struct {
 	Longitude *float64 `json:"longitude,omitempty"`
 	ISO       *string  `json:"iso,omitempty"`
 	Slug      *string  `json:"slug,omitempty"`
+}
+
+func (l Location) MarshalJSON() ([]byte, error) {
+	if l.LocationType != "REGION" {
+		type loc Location
+		return json.Marshal(loc(l))
+	}
+	slug := ""
+	if l.Slug != nil {
+		slug = *l.Slug
+	}
+	iso := ""
+	if l.ISO != nil {
+		iso = *l.ISO
+	}
+	lat := 0.0
+	if l.Latitude != nil {
+		lat = *l.Latitude
+	}
+	lon := 0.0
+	if l.Longitude != nil {
+		lon = *l.Longitude
+	}
+	return json.Marshal(struct {
+		ID           string   `json:"id"`
+		Name         string   `json:"name"`
+		DisplayName  string   `json:"displayName"`
+		Slug         string   `json:"slug"`
+		LocationType string   `json:"locationType"`
+		Latitude     float64  `json:"latitude"`
+		Longitude    float64  `json:"longitude"`
+		ISO          string   `json:"iso"`
+		Regions      []string `json:"regions"`
+	}{
+		ID: l.ID, Name: l.Name, DisplayName: l.DisplayName, Slug: slug,
+		LocationType: l.LocationType, Latitude: lat, Longitude: lon, ISO: iso,
+		Regions: l.Regions,
+	})
 }
 
 func newRegionAPIResponse(regionLabel string) Location {
@@ -353,6 +424,33 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	}
 	offset := query.ParsedOffset
 
+	var matchedCatalogRegions []string
+	regionsForPage := []string(nil)
+	takeForDB := take
+	offsetForDB := offset
+	if !isVenueQuery && !isRegionQuery && query.ParsedQuery != nil {
+		matchedCatalogRegions = filterCatalogRegionsByQuery(*query.ParsedQuery)
+	}
+	if len(matchedCatalogRegions) > 0 {
+		lenR := len(matchedCatalogRegions)
+		if offset < lenR {
+			end := offset + take
+			if end > lenR {
+				end = lenR
+			}
+			regionsForPage = matchedCatalogRegions[offset:end]
+		}
+		numReg := len(regionsForPage)
+		offsetForDB = offset - lenR
+		if offsetForDB < 0 {
+			offsetForDB = 0
+		}
+		takeForDB = take - numReg
+		if takeForDB < 0 {
+			takeForDB = 0
+		}
+	}
+
 	var selectQuery string
 
 	if isRegionQuery {
@@ -543,7 +641,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			ON location.state_uuid = state.id_uuid 
 			AND state.location_type = 'STATE' 
 			AND state.published = 1%s
-		`, cteSelectFieldsWithRowNum, whereClause, cteOrderByClause, take, offset, finalOrderBy)
+		`, cteSelectFieldsWithRowNum, whereClause, cteOrderByClause, takeForDB, offsetForDB, finalOrderBy)
 	}
 
 	log.Printf("Location query: %s", selectQuery)
@@ -564,6 +662,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			locations = append(locations, newRegionAPIResponse(regionLabel))
 		}
 	} else {
+		var dbLocations []Location
 		for rows.Next() {
 			var loc Location
 			var locationSlug, locationISO *string
@@ -665,8 +764,14 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 				}
 			}
 
-			locations = append(locations, loc)
+			dbLocations = append(dbLocations, loc)
 		}
+		if len(matchedCatalogRegions) > 0 && !isVenueQuery {
+			for _, r := range regionsForPage {
+				locations = append(locations, newRegionAPIResponse(r))
+			}
+		}
+		locations = append(locations, dbLocations...)
 	}
 
 	if err := rows.Err(); err != nil {
