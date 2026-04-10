@@ -2,6 +2,7 @@ package location
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"search-event-go/middleware"
@@ -9,6 +10,38 @@ import (
 	"search-event-go/services"
 	"strings"
 )
+
+var catalogRegionLabels = []string{
+	"Northern Europe",
+	"Western Europe",
+	"Middle East",
+	"SouthEast Asia",
+	"Latin America",
+	"Oceania",
+	"India Subcontinent",
+	"Southern Africa",
+	"Northern Africa",
+	"Eastern Europe",
+	"North America",
+	"UK",
+	"East Asia",
+	"Antarctica",
+}
+
+func filterCatalogRegionsByQuery(q string) []string {
+	q = strings.TrimSpace(q)
+	if q == "" {
+		return nil
+	}
+	needle := strings.ToLower(q)
+	var out []string
+	for _, label := range catalogRegionLabels {
+		if strings.Contains(strings.ToLower(label), needle) {
+			out = append(out, label)
+		}
+	}
+	return out
+}
 
 type LocationService struct {
 	clickhouseService *services.ClickHouseService
@@ -51,6 +84,158 @@ type LocationDetailWithISO struct {
 	Slug      *string  `json:"slug,omitempty"`
 }
 
+func (l Location) MarshalJSON() ([]byte, error) {
+	if l.LocationType != "REGION" {
+		type loc Location
+		return json.Marshal(loc(l))
+	}
+	slug := ""
+	if l.Slug != nil {
+		slug = *l.Slug
+	}
+	iso := ""
+	if l.ISO != nil {
+		iso = *l.ISO
+	}
+	lat := 0.0
+	if l.Latitude != nil {
+		lat = *l.Latitude
+	}
+	lon := 0.0
+	if l.Longitude != nil {
+		lon = *l.Longitude
+	}
+	return json.Marshal(struct {
+		ID           string   `json:"id"`
+		Name         string   `json:"name"`
+		DisplayName  string   `json:"displayName"`
+		Slug         string   `json:"slug"`
+		LocationType string   `json:"locationType"`
+		Latitude     float64  `json:"latitude"`
+		Longitude    float64  `json:"longitude"`
+		ISO          string   `json:"iso"`
+		Regions      []string `json:"regions"`
+	}{
+		ID: l.ID, Name: l.Name, DisplayName: l.DisplayName, Slug: slug,
+		LocationType: l.LocationType, Latitude: lat, Longitude: lon, ISO: iso,
+		Regions: l.Regions,
+	})
+}
+
+func newRegionAPIResponse(regionLabel string) Location {
+	emptyStr := ""
+	z := 0.0
+	return Location{
+		ID:           "",
+		Name:         regionLabel,
+		DisplayName:  regionLabel,
+		Slug:         &emptyStr,
+		LocationType: "REGION",
+		Latitude:     &z,
+		Longitude:    &z,
+		ISO:          &emptyStr,
+		Regions:      []string{regionLabel},
+	}
+}
+
+func buildRegionDistinctSelect(query models.LocationQueryDto, take, offset int) string {
+	baseParts := []string{"location_type = 'COUNTRY'", "published = 1"}
+	if len(query.ParsedLocationIds) > 0 {
+		escapedIDs := make([]string, len(query.ParsedLocationIds))
+		for i, id := range query.ParsedLocationIds {
+			escapedIDs[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(id, "'", "''"))
+		}
+		baseParts = append(baseParts, fmt.Sprintf("id_uuid IN (%s)", strings.Join(escapedIDs, ",")))
+	}
+	if query.ID10x != "" {
+		id10xParts := strings.Split(query.ID10x, ",")
+		escapedID10x := make([]string, 0, len(id10xParts))
+		for _, id10x := range id10xParts {
+			id10x = strings.TrimSpace(id10x)
+			if id10x != "" {
+				escapedID10x = append(escapedID10x, fmt.Sprintf("'%s'", strings.ReplaceAll(id10x, "'", "''")))
+			}
+		}
+		if len(escapedID10x) > 0 {
+			baseParts = append(baseParts, fmt.Sprintf("id_10x IN (%s)", strings.Join(escapedID10x, ",")))
+		}
+	}
+	baseWhere := strings.Join(baseParts, " AND ")
+
+	// Filter and rank only by region_label
+	labelFilter := ""
+	rankSelect := "0 AS search_rank"
+	windowOrder := "region_label ASC"
+
+	if query.ParsedQuery != nil && strings.TrimSpace(*query.ParsedQuery) != "" {
+		queryLower := strings.ToLower(strings.TrimSpace(*query.ParsedQuery))
+		keywords := strings.Fields(queryLower)
+
+		labelConds := make([]string, 0, len(keywords)+1)
+		for _, keyword := range keywords {
+			keyword = strings.TrimSpace(keyword)
+			if keyword != "" {
+				escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
+				labelConds = append(labelConds, fmt.Sprintf("ilike(region_label, '%%%s%%')", escapedKeyword))
+			}
+		}
+		queryPattern := strings.ReplaceAll(queryLower, " ", "%")
+		escapedQueryPattern := strings.ReplaceAll(queryPattern, "'", "''")
+		if escapedQueryPattern != "" {
+			labelConds = append(labelConds, fmt.Sprintf("ilike(region_label, '%%%s%%')", escapedQueryPattern))
+		}
+		if len(labelConds) > 0 {
+			labelFilter = "AND (" + strings.Join(labelConds, " OR ") + ")"
+		}
+
+		escapedQueryLower := strings.ReplaceAll(queryLower, "'", "''")
+		rankCase := "CASE\n"
+		rankCase += fmt.Sprintf("  WHEN lower(region_label) = '%s' THEN 0\n", escapedQueryLower)
+		rankCase += fmt.Sprintf("  WHEN ilike(region_label, '%%%s%%') THEN 1\n", escapedQueryPattern)
+		nextRank := 2
+		for _, keyword := range keywords {
+			keyword = strings.TrimSpace(keyword)
+			if keyword != "" {
+				escapedKeyword := strings.ReplaceAll(keyword, "'", "''")
+				rankCase += fmt.Sprintf("  WHEN ilike(region_label, '%%%s%%') THEN %d\n", escapedKeyword, nextRank)
+				nextRank++
+			}
+		}
+		rankCase += fmt.Sprintf("  ELSE %d\n", nextRank)
+		rankCase += "END"
+		rankSelect = rankCase + " AS search_rank"
+		windowOrder = "search_rank ASC, length(region_label) ASC, region_label ASC"
+	}
+
+	return fmt.Sprintf(`
+WITH expanded AS (
+	SELECT
+		region_label,
+		%s
+	FROM testing_db.location_ch
+	ARRAY JOIN ifNull(regions, []) AS region_label
+	WHERE %s
+	  AND length(trim(region_label)) > 0
+	  %s
+),
+dedup AS (
+	SELECT region_label, min(search_rank) AS search_rank
+	FROM expanded
+	GROUP BY region_label
+),
+ranked AS (
+	SELECT
+		region_label,
+		row_number() OVER (ORDER BY %s) AS rn
+	FROM dedup
+)
+SELECT region_label
+FROM ranked
+ORDER BY rn
+LIMIT %d OFFSET %d
+`, rankSelect, baseWhere, labelFilter, windowOrder, take, offset)
+}
+
 func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interface{}, error) {
 	ctx := context.Background()
 
@@ -60,6 +245,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	var venueSearchWhereClause string
 	var keywordMatchCountExpr string
 	isVenueQuery := query.ParsedLocationType != nil && *query.ParsedLocationType == models.LocationTypeVenue
+	isRegionQuery := query.ParsedLocationType != nil && *query.ParsedLocationType == models.LocationTypeRegion
 
 	if query.Slug != "" {
 		slugParts := strings.Split(query.Slug, ",")
@@ -186,6 +372,9 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 
 		if query.ParsedLocationType != nil {
 			locationType := string(*query.ParsedLocationType)
+			if *query.ParsedLocationType == models.LocationTypeRegion {
+				locationType = "COUNTRY"
+			}
 			if isVenueQuery {
 				whereConditions = append(whereConditions, fmt.Sprintf("l.location_type = '%s'", locationType))
 			} else {
@@ -235,9 +424,38 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	}
 	offset := query.ParsedOffset
 
+	var matchedCatalogRegions []string
+	regionsForPage := []string(nil)
+	takeForDB := take
+	offsetForDB := offset
+	if !isVenueQuery && !isRegionQuery && query.ParsedQuery != nil {
+		matchedCatalogRegions = filterCatalogRegionsByQuery(*query.ParsedQuery)
+	}
+	if len(matchedCatalogRegions) > 0 {
+		lenR := len(matchedCatalogRegions)
+		if offset < lenR {
+			end := offset + take
+			if end > lenR {
+				end = lenR
+			}
+			regionsForPage = matchedCatalogRegions[offset:end]
+		}
+		numReg := len(regionsForPage)
+		offsetForDB = offset - lenR
+		if offsetForDB < 0 {
+			offsetForDB = 0
+		}
+		takeForDB = take - numReg
+		if takeForDB < 0 {
+			takeForDB = 0
+		}
+	}
+
 	var selectQuery string
 
-	if isVenueQuery && query.ParsedQuery != nil && *query.ParsedQuery != "" {
+	if isRegionQuery {
+		selectQuery = buildRegionDistinctSelect(query, take, offset)
+	} else if isVenueQuery && query.ParsedQuery != nil && *query.ParsedQuery != "" {
 		// Build PREWHERE and main WHERE for optimized venue query
 		venueLocationType := "VENUE"
 		if query.ParsedLocationType != nil {
@@ -423,7 +641,7 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 			ON location.state_uuid = state.id_uuid 
 			AND state.location_type = 'STATE' 
 			AND state.published = 1%s
-		`, cteSelectFieldsWithRowNum, whereClause, cteOrderByClause, take, offset, finalOrderBy)
+		`, cteSelectFieldsWithRowNum, whereClause, cteOrderByClause, takeForDB, offsetForDB, finalOrderBy)
 	}
 
 	log.Printf("Location query: %s", selectQuery)
@@ -435,108 +653,125 @@ func (s *LocationService) SearchLocations(query models.LocationQueryDto) (interf
 	defer rows.Close()
 
 	var locations []Location
-	for rows.Next() {
-		var loc Location
-		var locationSlug, locationISO *string
-		var cityIDUUID, cityName, citySlug *string
-		var cityLatitude, cityLongitude *float64
-		var countryIDUUID, countryName, countrySlug, countryISO *string
-		var countryLatitude, countryLongitude *float64
-		var stateIDUUID, stateName, stateSlug, stateCountryID *string
-		var stateLatitude, stateLongitude *float64
+	if isRegionQuery {
+		for rows.Next() {
+			var regionLabel string
+			if err := rows.Scan(&regionLabel); err != nil {
+				return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
+			}
+			locations = append(locations, newRegionAPIResponse(regionLabel))
+		}
+	} else {
+		var dbLocations []Location
+		for rows.Next() {
+			var loc Location
+			var locationSlug, locationISO *string
+			var cityIDUUID, cityName, citySlug *string
+			var cityLatitude, cityLongitude *float64
+			var countryIDUUID, countryName, countrySlug, countryISO *string
+			var countryLatitude, countryLongitude *float64
+			var stateIDUUID, stateName, stateSlug, stateCountryID *string
+			var stateLatitude, stateLongitude *float64
 
-		var locationAddress *string
-		var regions []string
-		if err := rows.Scan(
-			&loc.ID,
-			&loc.Name,
-			&locationSlug,
-			&loc.LocationType,
-			&locationAddress,
-			&loc.Latitude,
-			&loc.Longitude,
-			&locationISO,
-			&regions,
-			&cityIDUUID,
-			&cityName,
-			&cityLatitude,
-			&cityLongitude,
-			&citySlug,
-			&countryIDUUID,
-			&countryName,
-			&countryLatitude,
-			&countryLongitude,
-			&countrySlug,
-			&countryISO,
-			&stateIDUUID,
-			&stateName,
-			&stateLatitude,
-			&stateLongitude,
-			&stateSlug,
-			&stateCountryID,
-		); err != nil {
-			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
-		}
+			var locationAddress *string
+			var regions []string
+			if err := rows.Scan(
+				&loc.ID,
+				&loc.Name,
+				&locationSlug,
+				&loc.LocationType,
+				&locationAddress,
+				&loc.Latitude,
+				&loc.Longitude,
+				&locationISO,
+				&regions,
+				&cityIDUUID,
+				&cityName,
+				&cityLatitude,
+				&cityLongitude,
+				&citySlug,
+				&countryIDUUID,
+				&countryName,
+				&countryLatitude,
+				&countryLongitude,
+				&countrySlug,
+				&countryISO,
+				&stateIDUUID,
+				&stateName,
+				&stateLatitude,
+				&stateLongitude,
+				&stateSlug,
+				&stateCountryID,
+			); err != nil {
+				return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
+			}
 
-		loc.Slug = locationSlug
-		if len(regions) > 0 {
-			loc.Regions = regions
-		}
-		if loc.LocationType == "VENUE" {
-			loc.Address = locationAddress
-		}
+			loc.Slug = locationSlug
+			if len(regions) > 0 {
+				loc.Regions = regions
+			}
+			if loc.LocationType == "VENUE" {
+				loc.Address = locationAddress
+			}
 
-		displayNameParts := []string{loc.Name}
-		if cityName != nil && *cityName != "" {
-			displayNameParts = append(displayNameParts, *cityName)
-		}
-		if stateName != nil && *stateName != "" {
-			displayNameParts = append(displayNameParts, *stateName)
-		}
-		if countryName != nil && *countryName != "" {
-			displayNameParts = append(displayNameParts, *countryName)
-		}
-		loc.DisplayName = strings.Join(displayNameParts, ", ")
+			displayNameParts := []string{loc.Name}
+			if cityName != nil && *cityName != "" {
+				displayNameParts = append(displayNameParts, *cityName)
+			}
+			if stateName != nil && *stateName != "" {
+				displayNameParts = append(displayNameParts, *stateName)
+			}
+			if countryName != nil && *countryName != "" {
+				displayNameParts = append(displayNameParts, *countryName)
+			}
+			loc.DisplayName = strings.Join(displayNameParts, ", ")
 
-		if loc.LocationType == "COUNTRY" && locationISO != nil && *locationISO != "" {
-			loc.ISO = locationISO
-		}
+			if loc.LocationType == "COUNTRY" && locationISO != nil && *locationISO != "" {
+				loc.ISO = locationISO
+			}
 
-		// Add city for VENUE locations
-		if loc.LocationType == "VENUE" && cityIDUUID != nil && *cityIDUUID != "" && cityName != nil {
-			loc.City = &LocationDetail{
-				ID:        *cityIDUUID,
-				Name:      *cityName,
-				Latitude:  cityLatitude,
-				Longitude: cityLongitude,
-				Slug:      citySlug,
+			// Add city for VENUE locations
+			if loc.LocationType == "VENUE" && cityIDUUID != nil && *cityIDUUID != "" && cityName != nil {
+				loc.City = &LocationDetail{
+					ID:        *cityIDUUID,
+					Name:      *cityName,
+					Latitude:  cityLatitude,
+					Longitude: cityLongitude,
+					Slug:      citySlug,
+				}
+			}
+
+			// Add state for VENUE and CITY locations
+			if (loc.LocationType == "VENUE" || loc.LocationType == "CITY") && stateIDUUID != nil && *stateIDUUID != "" && stateName != nil {
+				loc.State = &LocationDetail{
+					ID:        *stateIDUUID,
+					Name:      *stateName,
+					Latitude:  stateLatitude,
+					Longitude: stateLongitude,
+					Slug:      stateSlug,
+				}
+			}
+
+			// Add country for VENUE, CITY, and STATE locations
+			if (loc.LocationType == "VENUE" || loc.LocationType == "CITY" || loc.LocationType == "STATE") && countryIDUUID != nil && *countryIDUUID != "" && countryName != nil {
+				loc.Country = &LocationDetailWithISO{
+					ID:        *countryIDUUID,
+					Name:      *countryName,
+					Latitude:  countryLatitude,
+					Longitude: countryLongitude,
+					ISO:       countryISO,
+					Slug:      countrySlug,
+				}
+			}
+
+			dbLocations = append(dbLocations, loc)
+		}
+		if len(matchedCatalogRegions) > 0 && !isVenueQuery {
+			for _, r := range regionsForPage {
+				locations = append(locations, newRegionAPIResponse(r))
 			}
 		}
-
-		// Add state for VENUE and CITY locations
-		if (loc.LocationType == "VENUE" || loc.LocationType == "CITY") && stateIDUUID != nil && *stateIDUUID != "" && stateName != nil {
-			loc.State = &LocationDetail{
-				ID:        *stateIDUUID,
-				Name:      *stateName,
-				Latitude:  stateLatitude,
-				Longitude: stateLongitude,
-				Slug:      stateSlug,
-			}
-		}
-
-		// Add country for VENUE, CITY, and STATE locations
-		if (loc.LocationType == "VENUE" || loc.LocationType == "CITY" || loc.LocationType == "STATE") && countryIDUUID != nil && *countryIDUUID != "" && countryName != nil {
-			loc.Country = &LocationDetailWithISO{
-				ID:        *countryIDUUID,
-				Name:      *countryName,
-				Latitude:  countryLatitude,
-				Longitude: countryLongitude,
-				ISO:       countryISO,
-				Slug:      countrySlug,
-			}
-		}
-
-		locations = append(locations, loc)
+		locations = append(locations, dbLocations...)
 	}
 
 	if err := rows.Err(); err != nil {
