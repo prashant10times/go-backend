@@ -26,6 +26,11 @@ type Designation struct {
 }
 
 func (s *DesignationService) GetDesignation(query models.SearchDesignationDto) (interface{}, error) {
+	if query.ParsedIsDepartment == nil && query.ParsedIsRole == nil && query.ParsedIsDesignation == nil {
+		defaultTrue := true
+		query.ParsedIsDesignation = &defaultTrue
+	}
+
 	if (query.ParsedIsDepartment != nil && *query.ParsedIsDepartment) ||
 		(query.ParsedIsRole != nil && *query.ParsedIsRole) ||
 		(query.ParsedIsDesignation != nil && *query.ParsedIsDesignation) {
@@ -115,7 +120,25 @@ func (s *DesignationService) getDesignationsFromDesignationTableFallback(query m
 func (s *DesignationService) getDesignationsFromDesignationTable(query models.SearchDesignationDto) (interface{}, error) {
 	ctx := context.Background()
 
+	isDesignationRequested := query.ParsedIsDesignation != nil && *query.ParsedIsDesignation
+	isDepartmentRequested := query.ParsedIsDepartment != nil && *query.ParsedIsDepartment
+	isRoleRequested := query.ParsedIsRole != nil && *query.ParsedIsRole
+
+	name := query.Name
+	if name == "" {
+		name = ""
+	}
+	nameLower := strings.ToLower(name)
+	escapedName := strings.ReplaceAll(nameLower, "'", "''")
+
+	response := map[string]interface{}{
+	}
+
 	if len(query.ParsedIDs) > 0 {
+		if !isDesignationRequested {
+			return response, nil
+		}
+
 		escapedIDs := make([]string, len(query.ParsedIDs))
 		for i, id := range query.ParsedIDs {
 			escapedIDs[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(id, "'", "''"))
@@ -149,163 +172,166 @@ func (s *DesignationService) getDesignationsFromDesignationTable(query models.Se
 			}
 			designations = append(designations, designation)
 		}
-
 		if err := rows.Err(); err != nil {
 			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
 		}
-
 		if len(designations) == 0 {
 			return nil, middleware.NewNotFoundError("No record found", "")
 		}
 
-		return designations, nil
+		response["designation"] = designations
+		return response, nil
 	}
 
-	name := query.Name
-	if name == "" {
-		name = ""
-	}
-	nameLower := strings.ToLower(name)
-	escapedName := strings.ReplaceAll(nameLower, "'", "''")
+	// Run only the requested queries.
+	if isDesignationRequested {
+		designationQuery := fmt.Sprintf(`
+			SELECT
+				display_name,
+				designation_uuid as id
+			FROM testing_db.event_designation_ch
+			WHERE display_name != '' AND (
+				lower(display_name) LIKE '%s%%'
+				OR lower(display_name) LIKE '%% %s%%'
+			)
+			%s
+			GROUP BY display_name, designation_uuid
+			ORDER BY position(lower(display_name), '%s'), length(display_name), display_name ASC
+			LIMIT %d OFFSET %d
+		`, escapedName, escapedName,
+			func() string {
+				if len(name) < 1 {
+					return "AND length(display_name) > 5"
+				}
+				return ""
+			}(),
+			escapedName, query.ParsedTake, query.ParsedSkip)
 
-	designationQuery := fmt.Sprintf(`
-		SELECT
-			display_name,
-			designation_uuid as id
-		FROM testing_db.event_designation_ch
-		WHERE display_name != '' AND (
-			lower(display_name) LIKE '%s%%' 
-			OR lower(display_name) LIKE '%% %s%%'
-		)
-		%s
-		GROUP BY display_name, designation_uuid
-		ORDER BY position(lower(display_name), '%s'), length(display_name), display_name ASC
-		LIMIT %d OFFSET %d
-	`, escapedName, escapedName,
-		func() string {
-			if len(name) < 1 {
-				return "AND length(display_name) > 5"
-			}
-			return ""
-		}(),
-		escapedName, query.ParsedTake, query.ParsedSkip)
-
-	log.Printf("Designation query (designation search): %s", designationQuery)
-
-	departmentQuery := fmt.Sprintf(`
-		SELECT
-			any(designation_uuid) as id,
-			department as name
-		FROM testing_db.event_designation_ch
-		WHERE department != '' AND lower(department) LIKE '%%%s%%'
-		GROUP BY department
-		ORDER BY length(department) ASC, department ASC
-		LIMIT %d OFFSET %d
-	`, escapedName, query.ParsedTake, query.ParsedSkip)
-
-	log.Printf("Designation query (department search): %s", departmentQuery)
-
-	roleQuery := fmt.Sprintf(`
-		SELECT
-			any(designation_uuid) as id,
-			role as name
-		FROM testing_db.event_designation_ch
-		WHERE role != '' AND lower(role) LIKE '%%%s%%'
-		AND length(role) > 1
-		GROUP BY role
-		ORDER BY length(role) ASC, role ASC
-		LIMIT %d OFFSET %d
-	`, escapedName, query.ParsedTake, query.ParsedSkip)
-
-	log.Printf("Designation query (role search): %s", roleQuery)
-
-	type queryResult struct {
-		designations []map[string]string
-		departments  []map[string]string
-		roles        []map[string]string
-		err          error
-	}
-
-	resultChan := make(chan queryResult, 1)
-
-	go func() {
-		var result queryResult
+		log.Printf("Designation query (designation search): %s", designationQuery)
 
 		desRows, err := s.clickhouseService.ExecuteQuery(ctx, designationQuery)
 		if err != nil {
-			result.err = err
-			resultChan <- result
-			return
+			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
 		}
 		defer desRows.Close()
 
+		var designations []map[string]string
 		for desRows.Next() {
 			var id, name string
 			if err := desRows.Scan(&name, &id); err != nil {
-				result.err = err
-				resultChan <- result
-				return
+				return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
 			}
-			result.designations = append(result.designations, map[string]string{
+			designations = append(designations, map[string]string{
 				"id":   id,
 				"name": strings.TrimSpace(name),
 			})
 		}
+		if err := desRows.Err(); err != nil {
+			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
+		}
+		response["designation"] = designations
+	}
+
+	if isDepartmentRequested {
+		departmentQuery := fmt.Sprintf(`
+			SELECT
+				any(designation_uuid) as id,
+				department as name
+			FROM testing_db.event_designation_ch
+			WHERE department != '' AND lower(department) LIKE '%%%s%%'
+			GROUP BY department
+			ORDER BY length(department) ASC, department ASC
+			LIMIT %d OFFSET %d
+		`, escapedName, query.ParsedTake, query.ParsedSkip)
+
+		log.Printf("Designation query (department search): %s", departmentQuery)
 
 		deptRows, err := s.clickhouseService.ExecuteQuery(ctx, departmentQuery)
 		if err != nil {
-			result.err = err
-			resultChan <- result
-			return
+			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
 		}
 		defer deptRows.Close()
 
+		var departments []map[string]string
 		for deptRows.Next() {
 			var id, name string
 			if err := deptRows.Scan(&id, &name); err != nil {
-				result.err = err
-				resultChan <- result
-				return
+				return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
 			}
-			result.departments = append(result.departments, map[string]string{
+			departments = append(departments, map[string]string{
 				"id":   id,
 				"name": strings.TrimSpace(name),
 			})
 		}
+		if err := deptRows.Err(); err != nil {
+			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
+		}
+		response["department"] = departments
+	}
+
+	if isRoleRequested {
+		roleQuery := fmt.Sprintf(`
+			SELECT
+				any(designation_uuid) as id,
+				role as name
+			FROM testing_db.event_designation_ch
+			WHERE role != '' AND lower(role) LIKE '%%%s%%'
+			AND length(role) > 1
+			GROUP BY role
+			ORDER BY length(role) ASC, role ASC
+			LIMIT %d OFFSET %d
+		`, escapedName, query.ParsedTake, query.ParsedSkip)
+
+		log.Printf("Designation query (role search): %s", roleQuery)
 
 		roleRows, err := s.clickhouseService.ExecuteQuery(ctx, roleQuery)
 		if err != nil {
-			result.err = err
-			resultChan <- result
-			return
+			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
 		}
 		defer roleRows.Close()
 
+		var roles []map[string]string
 		for roleRows.Next() {
 			var id, name string
 			if err := roleRows.Scan(&id, &name); err != nil {
-				result.err = err
-				resultChan <- result
-				return
+				return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
 			}
-			result.roles = append(result.roles, map[string]string{
+			roles = append(roles, map[string]string{
 				"id":   id,
 				"name": strings.TrimSpace(name),
 			})
 		}
-
-		resultChan <- result
-	}()
-
-	result := <-resultChan
-	if result.err != nil {
-		return nil, middleware.NewInternalServerError("Something went wrong", result.err.Error())
+		if err := roleRows.Err(); err != nil {
+			return nil, middleware.NewInternalServerError("Something went wrong", err.Error())
+		}
+		response["role"] = roles
 	}
 
-	response := map[string]interface{}{
-		"designation": result.designations,
-		"department":  result.departments,
-		"role":        result.roles,
+	// Match previous behavior: if nothing is found for requested queries, return not found.
+	if len(response) == 0 ||
+		(isDesignationRequested && response["designation"] != nil && len(response["designation"].([]map[string]string)) == 0) ||
+		(isDepartmentRequested && response["department"] != nil && len(response["department"].([]map[string]string)) == 0) ||
+		(isRoleRequested && response["role"] != nil && len(response["role"].([]map[string]string)) == 0) {
+		// If all requested slices ended up empty, treat as not found.
+		allEmpty := true
+		if isDesignationRequested {
+			if v, ok := response["designation"].([]map[string]string); ok && len(v) > 0 {
+				allEmpty = false
+			}
+		}
+		if isDepartmentRequested {
+			if v, ok := response["department"].([]map[string]string); ok && len(v) > 0 {
+				allEmpty = false
+			}
+		}
+		if isRoleRequested {
+			if v, ok := response["role"].([]map[string]string); ok && len(v) > 0 {
+				allEmpty = false
+			}
+		}
+		if allEmpty {
+			return nil, middleware.NewNotFoundError("No record found", "")
+		}
 	}
 
 	return response, nil
