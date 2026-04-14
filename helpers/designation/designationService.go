@@ -194,12 +194,11 @@ func (s *DesignationService) getDesignationsFromDesignationTable(query models.Se
 
 	departmentQuery := fmt.Sprintf(`
 		SELECT
-			designation_uuid as id,
+			any(designation_uuid) as id,
 			department as name
 		FROM testing_db.event_designation_ch
 		WHERE department != '' AND lower(department) LIKE '%%%s%%'
-		AND department != ''
-		GROUP BY designation_uuid, department
+		GROUP BY department
 		ORDER BY length(department) ASC, department ASC
 		LIMIT %d OFFSET %d
 	`, escapedName, query.ParsedTake, query.ParsedSkip)
@@ -208,11 +207,10 @@ func (s *DesignationService) getDesignationsFromDesignationTable(query models.Se
 
 	roleQuery := fmt.Sprintf(`
 		SELECT
-			designation_uuid as id,
+			any(designation_uuid) as id,
 			role as name
 		FROM testing_db.event_designation_ch
 		WHERE role != '' AND lower(role) LIKE '%%%s%%'
-		AND role != ''
 		AND length(role) > 1
 		GROUP BY designation_uuid, role
 		ORDER BY length(role) ASC, role ASC
