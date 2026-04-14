@@ -212,7 +212,7 @@ func (s *DesignationService) getDesignationsFromDesignationTable(query models.Se
 		FROM testing_db.event_designation_ch
 		WHERE role != '' AND lower(role) LIKE '%%%s%%'
 		AND length(role) > 1
-		GROUP BY designation_uuid, role
+		GROUP BY role
 		ORDER BY length(role) ASC, role ASC
 		LIMIT %d OFFSET %d
 	`, escapedName, query.ParsedTake, query.ParsedSkip)
