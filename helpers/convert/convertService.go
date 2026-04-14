@@ -79,7 +79,7 @@ func (s *ConvertService) ConvertIds(query models.ConvertSchemaDto) (map[string]i
 
 	go func() {
 		log.Printf("Getting DEPARTMENT ID's Data")
-		data, err := s.convertDesignationIds(ctx, query.ParsedDepartmentIds)
+		data, err := s.convertDepartmentIds(ctx, query.ParsedDepartmentIds)
 		departmentChan <- conversionResult{data: data, err: err}
 	}()
 
@@ -904,16 +904,15 @@ func (s *ConvertService) convertDepartmentIds(ctx context.Context, uuids []strin
 
 	query := fmt.Sprintf(`
 		SELECT 
-			d1.designation_uuid,
-			d1.designation_id as id,
-			d1.display_name as name,
-			d1.role,
-			d1.department
-		FROM testing_db.event_designation_ch AS d1
-		INNER JOIN testing_db.event_designation_ch AS d2 
-			ON d1.department = d2.department
-		WHERE d2.designation_uuid IN (%s)
-		GROUP BY d1.designation_uuid, d1.designation_id, d1.display_name, d1.role, d1.department
+			designation_uuid,
+			designation_id as id,
+			display_name as name,
+			role,
+			department,
+			department_id as departmentId
+		FROM testing_db.event_designation_ch
+		WHERE designation_uuid IN (%s)
+		GROUP BY designation_uuid, designation_id, display_name, role, department, departmentId
 	`, strings.Join(quotedUUIDs, ","))
 
 	log.Printf("convertDepartmentIds query: %s", query)
@@ -927,8 +926,9 @@ func (s *ConvertService) convertDepartmentIds(ctx context.Context, uuids []strin
 	for rows.Next() {
 		var designationUUID, name, role, department string
 		var designationID *uint32
+		var departmentId *uint32
 
-		if err := rows.Scan(&designationUUID, &designationID, &name, &role, &department); err != nil {
+		if err := rows.Scan(&designationUUID, &designationID, &name, &role, &department, &departmentId); err != nil {
 			return nil, err
 		}
 
@@ -940,6 +940,10 @@ func (s *ConvertService) convertDepartmentIds(ctx context.Context, uuids []strin
 
 		if designationID != nil {
 			designationData["id"] = *designationID
+		}
+
+		if departmentId != nil {
+			designationData["departmentId"] = *departmentId
 		}
 
 		if existing, exists := result[designationUUID]; exists {
